@@ -10,11 +10,11 @@ El Modo TDD Estricto es un protocolo que transforma cómo `sdd-apply` escribe c�
 
 **Diferencia clave:**
 
-| Sin TDD | Con TDD Estricto |
-|---------|-------------------|
+| Sin TDD                          | Con TDD Estricto                               |
+| -------------------------------- | ---------------------------------------------- |
 | Escribir código → escribir tests | Escribir test → escribir código → refactorizar |
-| Tests verifican que funciona | Tests **diseñan** cómo funciona |
-| Cobertura variable | Cobertura alta por construcción |
+| Tests verifican que funciona     | Tests **diseñan** cómo funciona                |
+| Cobertura variable               | Cobertura alta por construcción                |
 
 ---
 
@@ -26,11 +26,11 @@ El Modo TDD Estricto es un protocolo que transforma cómo `sdd-apply` escribe c�
 
 Estas tres leyes son inviolables. Cada una protege contra un anti-patrón:
 
-| Ley | Protege contra |
-|-----|----------------|
-| 1ª | Código sin especificación (no se sabe qué debería hacer) |
-| 2ª | Tests sobredimensionados que son frágiles y difíciles de mantener |
-| 3ª | Código especulativo que agrega complejidad innecesaria |
+| Ley   | Protege contra                                                    |
+| ----- | ----------------------------------------------------------------- |
+| 1ª    | Código sin especificación (no se sabe qué debería hacer)          |
+| 2ª    | Tests sobredimensionados que son frágiles y difíciles de mantener |
+| 3ª    | Código especulativo que agrega complejidad innecesaria            |
 
 ---
 
@@ -171,12 +171,12 @@ Escribir el **MÍNIMO** código para que pase:
 
 **CUIDADO con GREEN que pasa trivialmente:**
 
-| Situación | ¿Es un GREEN real? |
-|-----------|-------------------|
-| Test pasa porque el componente no se renderiza | ❌ No |
-| Test pasa porque un loop itera 0 veces | ❌ No |
-| Test pasa porque el setup no triggerea el code path | ❌ No |
-| Código de producción EJECUTÓ y produjo el output esperado | ✅ Sí |
+| Situación                                                 | ¿Es un GREEN real?  |
+| --------------------------------------------------------- | ------------------- |
+| Test pasa porque el componente no se renderiza            | ❌ No                |
+| Test pasa porque un loop itera 0 veces                    | ❌ No                |
+| Test pasa porque el setup no triggerea el code path       | ❌ No                |
+| Código de producción EJECUTÓ y produjo el output esperado | ✅ Sí                |
 
 **Omitir triangulación SOLO cuando TODO esto es verdad:**
 - La tarea es puramente estructural (config, constantes, exports de tipos)
@@ -292,16 +292,16 @@ Cuando Strict TDD está activo, `sdd-verify` carga `strict-tdd-verify.md` que ag
 
 ### TDD Compliance Check
 
-Lee el artefacto `apply-progress` y verifica que TDD fue realmente seguido:
+Lee la respuesta de la fase apply (return envelope) y verifica que TDD fue realmente seguido:
 
-| Verificación | Qué chequea |
-|--------------|-------------|
-| TDD Evidence reported | ¿Existe la tabla "TDD Cycle Evidence" en apply-progress? |
-| All tasks have tests | ¿Cada tarea tiene archivo de test? |
-| RED confirmed | ¿Los archivos de test referenciados existen en el codebase? |
-| GREEN confirmed | ¿Los tests pasan cuando se ejecutan ahora? |
-| Triangulation adequate | ¿Las tareas con múltiples escenarios tienen múltiples test cases? |
-| Safety Net for modified files | ¿Los archivos modificados tuvieron safety net? |
+| Verificación                  | Qué chequea                                                       |
+| ----------------------------- | ----------------------------------------------------------------- |
+| TDD Evidence reported         | ¿Existe la tabla "TDD Cycle Evidence" en la respuesta del apply?  |
+| All tasks have tests          | ¿Cada tarea tiene archivo de test?                                |
+| RED confirmed                 | ¿Los archivos de test referenciados existen en el codebase?       |
+| GREEN confirmed               | ¿Los tests pasan cuando se ejecutan ahora?                        |
+| Triangulation adequate        | ¿Las tareas con múltiples escenarios tienen múltiples test cases? |
+| Safety Net for modified files | ¿Los archivos modificados tuvieron safety net?                    |
 
 Si NO se encuentra tabla de TDD evidence → CRITICAL: el protocolo no fue seguido.
 
@@ -326,10 +326,10 @@ FOR EACH archivo creado o modificado en este cambio:
 
 Ejecuta herramientas de calidad **solo sobre archivos modificados**, solo si están disponibles:
 
-| Herramienta | Qué ejecuta | Severidad |
-|-------------|-------------|-----------|
-| Linter | `eslint`, `ruff`, `golangci-lint`, etc. en archivos cambiados | WARNING para errores |
-| Type Checker | `tsc --noEmit`, `mypy`, etc. (filtrar output a archivos cambiados) | WARNING para errores |
+| Herramienta   | Qué ejecuta                                                        | Severidad            |
+| ------------- | ------------------------------------------------------------------ | -------------------- |
+| Linter        | `eslint`, `ruff`, `golangci-lint`, etc. en archivos cambiados      | WARNING para errores |
+| Type Checker  | `tsc --noEmit`, `mypy`, etc. (filtrar output a archivos cambiados) | WARNING para errores |
 
 Si las herramientas no están disponibles, simplemente se reporta "Not available" — no es falla.
 
@@ -367,21 +367,21 @@ La fase `sdd-apply` DEBE incluir esta tabla en su resumen de retorno:
 
 ### TDD Cycle Evidence
 
-| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
-|------|-----------|-------|------------|-----|-------|-------------|----------|
-| 1.1 | `path/test.ext` | Unit | ✅ 5/5 | ✅ Written | ✅ Passed | ✅ 3 cases | ✅ Clean |
-| 1.2 | `path/test.ext` | Integration | N/A (new) | ✅ Written | ✅ Passed | ➖ Single | ✅ Clean |
-| 1.3 | `path/test.ext` | Unit | ✅ 2/2 | ✅ Written | ✅ Passed | ✅ 2 cases | ➖ None needed |
+| Task   | Test File       | Layer       | Safety Net   | RED       | GREEN    | TRIANGULATE   | REFACTOR      |
+| ------ | --------------- | ----------- | ------------ | --------- | -------- | ------------- | ------------- |
+| 1.1    | `path/test.ext` | Unit        | ✅ 5/5        | ✅ Written | ✅ Passed | ✅ 3 cases     | ✅ Clean       |
+| 1.2    | `path/test.ext` | Integration | N/A (new)    | ✅ Written | ✅ Passed | ➖ Single      | ✅ Clean       |
+| 1.3    | `path/test.ext` | Unit        | ✅ 2/2        | ✅ Written | ✅ Passed | ✅ 2 cases     | ➖ None needed |
 
 **Definición de columnas:**
 
-| Columna | Significado |
-|---------|-------------|
-| **Safety Net** | Tests pre-existentes ejecutados antes de modificar. "N/A (new)" para archivos nuevos. |
-| **RED** | Test escrito primero, referenciando código que no existe aún. Siempre "✅ Written". |
-| **GREEN** | Tests ejecutados y pasando tras implementación mínima. Debe mostrar resultado de ejecución. |
+| Columna         | Significado                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| **Safety Net**  | Tests pre-existentes ejecutados antes de modificar. "N/A (new)" para archivos nuevos.       |
+| **RED**         | Test escrito primero, referenciando código que no existe aún. Siempre "✅ Written".          |
+| **GREEN**       | Tests ejecutados y pasando tras implementación mínima. Debe mostrar resultado de ejecución. |
 | **TRIANGULATE** | Test cases adicionales para forzar lógica real. "➖ Single" si spec tiene un solo escenario. |
-| **REFACTOR** | Código mejorado con tests aún pasando. "➖ None needed" si el código ya estaba limpio. |
+| **REFACTOR**    | Código mejorado con tests aún pasando. "➖ None needed" si el código ya estaba limpio.       |
 
 ---
 

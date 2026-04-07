@@ -31,12 +31,12 @@ Read the project to understand:
 
 Scan the project for ALL testing infrastructure. This determines what testing modes are available.
 
-| Category | What to detect | Examples |
-|----------|---------------|----------|
-| Test runner | Primary test framework | jest, vitest, mocha, ava, pytest, go test, cargo test |
-| Test layers | Available test types | unit (test runner exists), integration (@testing-library, httptest, WebApplicationFactory), e2e (playwright, cypress, selenium) |
-| Coverage tool | Code coverage reporter | istanbul/nyc, c8, vitest --coverage, coverage.py, pytest-cov, go test -cover, coverlet |
-| Quality tools | Linter/type-checker/formatter | eslint, pylint, ruff, clippy, tsc --noEmit, mypy, prettier, black, gofmt |
+| Category      | What to detect                | Examples                                                                                                                        |
+| ------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Test runner   | Primary test framework        | jest, vitest, mocha, ava, pytest, go test, cargo test                                                                           |
+| Test layers   | Available test types          | unit (test runner exists), integration (@testing-library, httptest, WebApplicationFactory), e2e (playwright, cypress, selenium) |
+| Coverage tool | Code coverage reporter        | istanbul/nyc, c8, vitest --coverage, coverage.py, pytest-cov, go test -cover, coverlet                                          |
+| Quality tools | Linter/type-checker/formatter | eslint, pylint, ruff, clippy, tsc --noEmit, mypy, prettier, black, gofmt                                                        |
 
 For each: record `{tool name, command}` or `NOT AVAILABLE`. Check `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Makefile` as applicable.
 
@@ -47,10 +47,10 @@ Determine whether Strict TDD Mode should be enabled. The resolution follows a pr
 ```
 1. Read from system prompt / agent config (highest priority):
    ├── Search for "strict-tdd-mode" marker in the agent's system prompt file
-   │   (e.g., CLAUDE.md, GEMINI.md, .cursorrules, etc.)
+   │   (copilot-instructions.md for Copilot, CLAUDE.md for Claude Code)
    ├── If found and says "enabled" → strict_tdd: true
    ├── If found and says "disabled" → strict_tdd: false
-   └── This is the preference set by the user in the agent TUI or config
+   └── This is the preference set by the user in the agent config
 
 2. If no marker found, check openspec config:
    ├── Read openspec/config.yaml → strict_tdd field
@@ -162,8 +162,8 @@ If mode is `openspec`, also write this as a section in `openspec/config.yaml` un
 
 Follow the same logic as the `skill-registry` skill (`skills/skill-registry/SKILL.md`):
 
-1. Scan user skills: glob `*/SKILL.md` across ALL known skill directories. **User-level**: `~/.claude/skills/`, `~/.config/opencode/skills/`, `~/.gemini/skills/`, `~/.cursor/skills/`, `~/.copilot/skills/`, parent of this skill file. **Project-level**: `.claude/skills/`, `.gemini/skills/`, `.agent/skills/`, `skills/`. Skip `sdd-*`, `_shared`, `skill-registry`. Deduplicate by name (project-level wins). Read frontmatter triggers.
-2. Scan project conventions: check for `agents.md`, `AGENTS.md`, `CLAUDE.md` (project-level), `.cursorrules`, `GEMINI.md`, `copilot-instructions.md` in the project root. If an index file is found (e.g., `agents.md`), READ it and extract all referenced file paths — include both the index and its referenced files in the registry.
+1. Scan user skills: glob `*/SKILL.md` across ALL known skill directories listed in `skill-registry/SKILL.md` Step 1. Skip `sdd-*`, `_shared`, `skill-registry`. Deduplicate by name (project-level wins). Read frontmatter triggers.
+2. Scan project conventions: check for `agents.md`, `AGENTS.md`, `CLAUDE.md` (project-level), `copilot-instructions.md` in the project root. If an index file is found (e.g., `agents.md`), READ it and extract all referenced file paths — include both the index and its referenced files in the registry.
 3. **ALWAYS write `.atl/skill-registry.md`** in the project root (create `.atl/` if needed). This file is mode-independent — it's infrastructure, not an SDD artifact.
 
 See `skills/skill-registry/SKILL.md` for the full registry format and scanning details.
@@ -233,4 +233,4 @@ Ready for /sdd-explore <topic> or /sdd-new <change-name>.
 - ALWAYS detect testing capabilities — this is not optional
 - ALWAYS persist testing capabilities as a separate observation/section — downstream phases depend on it
 - If Strict TDD Mode is requested but no test runner exists, set strict_tdd: false and explain why
-- Return a structured envelope with: `status`, `executive_summary`, `detailed_report` (optional), `artifacts`, `next_recommended`, and `risks`
+- Return a structured envelope with: `status`, `executive_summary`, `detailed_report` (optional), `artifacts`, `next_recommended`, `risks`, and `skill_resolution`

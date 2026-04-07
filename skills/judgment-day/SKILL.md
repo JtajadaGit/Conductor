@@ -60,9 +60,10 @@ Present findings as a structured verdict table (see Output Format).
 ### Pattern 3: Fix and Re-judge
 
 1. If **confirmed issues** exist → launch a **Fix Agent** sub-agent (separate from judges)
-2. After Fix Agent completes → re-launch **both judges in parallel** (same blind protocol, fresh sub-agents)
-3. **After 2 fix iterations**, if issues remain → present findings to user and ASK: "¿Querés que siga iterando? / Should I continue iterating?" If YES → continue fix+judge cycle. If NO → JUDGMENT: ESCALATED.
-4. If both judges return clean → JUDGMENT: APPROVED ✅
+2. If **only suspect issues** remain (no confirmed) → do NOT launch a Fix Agent. Report suspects to user for triage. JUDGMENT: NEEDS TRIAGE. The user decides whether to fix manually or ignore.
+3. After Fix Agent completes → re-launch **both judges in parallel** (same blind protocol, fresh sub-agents)
+4. **After 2 fix iterations**, if issues remain → present findings to user and ASK: "¿Querés que siga iterando? / Should I continue iterating?" If YES → continue fix+judge cycle. If NO → JUDGMENT: ESCALATED.
+5. If both judges return clean → JUDGMENT: APPROVED ✅
 
 > In non-interactive environments (e.g., Copilot CLI), escalate automatically after 2 iterations instead of asking.
 
@@ -90,7 +91,11 @@ Synthesize verdict
 │   └── JUDGMENT: APPROVED ✅ (stop here)
 │
 ├── Issues found (confirmed, suspect, or contradictions)?
-│   └── Launch Fix Agent sub-agent with confirmed issues list
+│   ├── Only suspect issues (no confirmed)?
+│   │   └── JUDGMENT: NEEDS TRIAGE — report suspects to user, do NOT launch Fix Agent
+│   │
+│   └── Confirmed issues exist?
+│       └── Launch Fix Agent sub-agent with confirmed issues list
 │       ▼
 │       ⚠️  BLOCKING: Your NEXT action MUST be re-launching judges.
 │       ⚠️  Do NOT push, commit, or message the user.
@@ -273,7 +278,7 @@ This is a self-correction mechanism. Do NOT ignore fallback reports.
 
 These rules cannot be skipped, overridden, or deprioritized under any circumstances:
 
-1. **MUST NOT** declare `JUDGMENT: APPROVED` until Round 2 judges BOTH return CLEAN
+1. **MUST NOT** declare `JUDGMENT: APPROVED` after fixes have been applied until Round 2 judges BOTH return CLEAN. If Round 1 finds zero issues (both judges clean), APPROVED is valid without Round 2.
 2. **MUST NOT** run `git push`, `git commit`, or any code-modifying action after fixes until re-judgment completes
 3. **MUST NOT** save a session summary or tell the user "done" until every JD reaches a terminal state (APPROVED or ESCALATED)
 4. **After the Fix Agent returns**, your IMMEDIATE next action is launching Round 2 judges in parallel. No other action (push, summary, user message) may come first.

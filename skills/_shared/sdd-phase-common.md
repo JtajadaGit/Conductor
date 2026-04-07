@@ -7,13 +7,12 @@ Executor boundary: every SDD phase agent is an EXECUTOR, not an orchestrator. Do
 ## A. Skill Loading
 
 1. Check if the orchestrator injected a `## Project Standards (auto-resolved)` block in your launch prompt. If yes, follow those rules — they are pre-digested compact rules from the skill registry. **Do NOT read any SKILL.md files.**
-2. If no Project Standards block was provided, check for `SKILL: Load` instructions. If present, load those exact skill files.
-3. If neither was provided, search for the skill registry as a fallback:
+2. If no Project Standards block was provided, search for the skill registry as a fallback:
    a. Read `.atl/skill-registry.md` from the project root if it exists
    b. From the registry's **Compact Rules** section, apply rules whose triggers match your current task.
-4. If no registry exists, proceed with your phase skill only.
+3. If no registry exists, proceed with your phase skill only.
 
-NOTE: the preferred path is (1) — compact rules pre-injected by the orchestrator. Paths (2) and (3) are fallbacks for backwards compatibility. Searching the registry is SKILL LOADING, not delegation. If `## Project Standards` is present, IGNORE any `SKILL: Load` instructions — they are redundant.
+NOTE: the preferred path is (1) — compact rules pre-injected by the orchestrator. Path (2) is a fallback for when the orchestrator lost its cache (e.g., after compaction). If `## Project Standards` is present, the registry is redundant — do NOT read it.
 
 ## B. Artifact Retrieval (OpenSpec Mode)
 

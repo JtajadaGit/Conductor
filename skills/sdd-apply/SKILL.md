@@ -94,7 +94,7 @@ Update `tasks.md` — change `- [ ]` to `- [x]` for completed tasks:
 > Progress is tracked by marking tasks as `[x]` in `tasks.md` (openspec mode) or reported inline via the return envelope (none mode). There is no separate `apply-progress` artifact file.
 
 Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
-- artifact: `apply-progress`
+- artifact: `apply-progress` (tracked via `[x]` marks in `tasks.md` + inline return envelope; no separate file)
 - Also update the tasks artifact with `[x]` marks via file edit (openspec).
 
 ### Step 7: Return Summary

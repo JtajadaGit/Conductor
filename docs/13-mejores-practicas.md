@@ -183,14 +183,14 @@ judgment day                     ← revisión adversarial paralela
 
 ### Resumen de estrategias
 
-| Estrategia | Ahorro | Impacto en calidad |
-|-----------|--------|-------------------|
-| `/sdd-ff` para planificación | Reduce overhead conversacional | Ninguno |
-| Omitir explore | -1 request | Aceptable si el cambio es claro |
-| Batches grandes en apply | -1-2 requests | Menor recuperación ante errores |
-| Evitar re-verify sin cambios | -1 request por iteración | Ninguno |
-| Modelo sonnet en lugar de opus | Reducción significativa | Menor profundidad arquitectónica |
-| Delegación directa sin SDD | Solo 1 request | Adecuado para tareas simples |
+| Estrategia                     | Ahorro                         | Impacto en calidad               |
+| ------------------------------ | ------------------------------ | -------------------------------- |
+| `/sdd-ff` para planificación   | Reduce overhead conversacional | Ninguno                          |
+| Omitir explore                 | -1 request                     | Aceptable si el cambio es claro  |
+| Batches grandes en apply       | -1-2 requests                  | Menor recuperación ante errores  |
+| Evitar re-verify sin cambios   | -1 request por iteración       | Ninguno                          |
+| Modelo sonnet en lugar de opus | Reducción significativa        | Menor profundidad arquitectónica |
+| Delegación directa sin SDD     | Solo 1 request                 | Adecuado para tareas simples     |
 
 ### Regla general
 
@@ -316,18 +316,18 @@ Para nuevos miembros del equipo que se incorporan a un proyecto con Conductor:
 
 ### Referencia rápida de comandos
 
-| Quiero... | Comando |
-|-----------|---------|
-| Inicializar Conductor | `/sdd-init` |
-| Explorar una idea | `/sdd-explore <tema>` |
-| Iniciar un cambio nuevo | `/sdd-new <nombre>` |
-| Planificación rápida completa | `/sdd-ff <nombre>` |
-| Avanzar al siguiente paso | `/sdd-continue` |
-| Implementar las tareas | `/sdd-apply <nombre>` |
-| Verificar la implementación | `/sdd-verify <nombre>` |
-| Archivar el cambio | `/sdd-archive <nombre>` |
-| Revisión adversarial | `judgment day` |
-| Actualizar skills | `/skill-registry` |
+| Quiero...                     | Comando                 |
+| ----------------------------- | ----------------------- |
+| Inicializar Conductor         | `/sdd-init`             |
+| Explorar una idea             | `/sdd-explore <tema>`   |
+| Iniciar un cambio nuevo       | `/sdd-new <nombre>`     |
+| Planificación rápida completa | `/sdd-ff <nombre>`      |
+| Avanzar al siguiente paso     | `/sdd-continue`         |
+| Implementar las tareas        | `/sdd-apply <nombre>`   |
+| Verificar la implementación   | `/sdd-verify <nombre>`  |
+| Archivar el cambio            | `/sdd-archive <nombre>` |
+| Revisión adversarial          | `judgment day`          |
+| Actualizar skills             | `/skill-registry`       |
 
 ---
 

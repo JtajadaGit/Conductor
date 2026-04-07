@@ -79,12 +79,12 @@ description: >
 
 ## Naming Conventions
 
-| Type | Pattern | Examples |
-|------|---------|----------|
-| Generic skill | `{technology}` | `{language}`, `{test-framework}`, `{type-checker}` |
-| Project-specific | `{project}-{component}` | `myapp-api`, `myapp-ui` |
-| Testing skill | `{project}-test-{component}` | `myapp-test-sdk`, `myapp-test-api` |
-| Workflow skill | `{action}-{target}` | `skill-creator`, `{tool}-{action}` |
+| Type             | Pattern                      | Examples                                           |
+| ---------------- | ---------------------------- | -------------------------------------------------- |
+| Generic skill    | `{technology}`               | `{language}`, `{test-framework}`, `{type-checker}` |
+| Project-specific | `{project}-{component}`      | `myapp-api`, `myapp-ui`                            |
+| Testing skill    | `{project}-test-{component}` | `myapp-test-sdk`, `myapp-test-api`                 |
+| Workflow skill   | `{action}-{target}`          | `skill-creator`, `{tool}-{action}`                 |
 
 ---
 
@@ -104,10 +104,10 @@ Link to external guides?    → references/ (with local path)
 
 ## Frontmatter Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Skill identifier (lowercase, hyphens) |
-| `description` | Yes | What + Trigger in one block |
+| Field         | Required   | Description                           |
+| ------------- | ---------- | ------------------------------------- |
+| `name`        | Yes        | Skill identifier (lowercase, hyphens) |
+| `description` | Yes        | What + Trigger in one block           |
 
 ---
 

@@ -10,12 +10,12 @@ Referencia completa de todos los comandos disponibles en Conductor.
 
 Para tareas que no justifican el flujo SDD completo.
 
-| Acción | Ejemplo | Requests |
-|--------|---------|----------|
-| Pregunta | "¿Cómo funciona el auth middleware?" | 0 |
-| Fix puntual | "Corrige el null check en utils.ts línea 42" | 1 |
-| Cambio mecánico | "Añade el campo phone al modelo Contact" | 1 |
-| Refactor simple | "Renombra getUserById a findUserById en todo el proyecto" | 1 |
+| Acción          | Ejemplo                                                   | Requests   |
+| --------------- | --------------------------------------------------------- | ---------- |
+| Pregunta        | "¿Cómo funciona el auth middleware?"                      | 0          |
+| Fix puntual     | "Corrige el null check en utils.ts línea 42"              | 1          |
+| Cambio mecánico | "Añade el campo phone al modelo Contact"                  | 1          |
+| Refactor simple | "Renombra getUserById a findUserById en todo el proyecto" | 1          |
 
 No necesitas ningún comando `/sdd-*`. Simplemente describe la tarea al agente.
 
@@ -23,22 +23,22 @@ No necesitas ningún comando `/sdd-*`. Simplemente describe la tarea al agente.
 
 ## Tabla de referencia rápida
 
-| Comando | Tipo | Modelo | Descripción |
-|---------|------|--------|-------------|
-| `/sdd-init` | Skill | sonnet | Inicializa SDD en el proyecto |
-| `/sdd-explore <tema>` | Skill | sonnet | Explora e investiga antes de comprometerse |
-| `/sdd-new <cambio>` | Meta | — | Inicia un cambio nuevo (explore + propose) |
-| `/sdd-propose [cambio]` | Skill | opus | Genera propuesta de cambio |
-| `/sdd-continue [cambio]` | Meta | — | Ejecuta la siguiente fase pendiente |
-| `/sdd-ff [cambio]` | Meta | — | Fast-forward: propose → spec → design → tasks |
-| `/sdd-spec [cambio]` | Skill | sonnet | Escribe especificaciones |
-| `/sdd-design [cambio]` | Skill | opus | Crea diseño técnico |
-| `/sdd-tasks [cambio]` | Skill | sonnet | Desglosa en tareas implementables |
-| `/sdd-apply [cambio]` | Skill | sonnet | Implementa tareas en batches |
-| `/sdd-verify [cambio]` | Skill | sonnet | Verifica implementación contra specs |
-| `/sdd-archive [cambio]` | Skill | haiku | Archiva cambio completado |
-| `/skill-registry` | Skill | sonnet | Genera/actualiza registro de skills |
-| `/judgment-day [cambio]` | Skill | sonnet | Revisión adversarial paralela |
+| Comando                  | Tipo   | Modelo   | Descripción                                   |
+| ------------------------ | ------ | -------- | --------------------------------------------- |
+| `/sdd-init`              | Skill  | sonnet   | Inicializa SDD en el proyecto                 |
+| `/sdd-explore <tema>`    | Skill  | sonnet   | Explora e investiga antes de comprometerse    |
+| `/sdd-new <cambio>`      | Meta   | —        | Inicia un cambio nuevo (explore + propose)    |
+| `/sdd-propose [cambio]`  | Skill  | opus     | Genera propuesta de cambio                    |
+| `/sdd-continue [cambio]` | Meta   | —        | Ejecuta la siguiente fase pendiente           |
+| `/sdd-ff [cambio]`       | Meta   | —        | Fast-forward: propose → spec → design → tasks |
+| `/sdd-spec [cambio]`     | Skill  | sonnet   | Escribe especificaciones                      |
+| `/sdd-design [cambio]`   | Skill  | opus     | Crea diseño técnico                           |
+| `/sdd-tasks [cambio]`    | Skill  | sonnet   | Desglosa en tareas implementables             |
+| `/sdd-apply [cambio]`    | Skill  | sonnet   | Implementa tareas en batches                  |
+| `/sdd-verify [cambio]`   | Skill  | sonnet   | Verifica implementación contra specs          |
+| `/sdd-archive [cambio]`  | Skill  | haiku    | Archiva cambio completado                     |
+| `/skill-registry`        | Skill  | sonnet   | Genera/actualiza registro de skills           |
+| `/judgment-day [cambio]` | Skill  | sonnet   | Revisión adversarial paralela                 |
 
 > **Tipo Skill**: se ejecuta como sub-agente directo.
 > **Tipo Meta**: el orquestador lo descompone en múltiples fases.
@@ -506,13 +506,13 @@ Orquestador: 🔨 Aplicando batch 1/3: api-paginación
 
 **Costo detallado**:
 
-| Operación | Requests |
-|-----------|----------|
-| Round 1: 2 jueces paralelos | 2 |
-| Agente de corrección | 1 |
-| Round 2: 2 re-jueces | 2 |
-| **Total por round completo** | **3-5** |
-| Si escala a 2 iteraciones | 8-10 |
+| Operación                    | Requests   |
+| ---------------------------- | ---------- |
+| Round 1: 2 jueces paralelos  | 2          |
+| Agente de corrección         | 1          |
+| Round 2: 2 re-jueces         | 2          |
+| **Total por round completo** | **3-5**    |
+| Si escala a 2 iteraciones    | 8-10       |
 
 **¿Cuándo usarlo?**
 - Cambios de alto impacto o riesgo
@@ -529,12 +529,12 @@ Orquestador: 🔨 Aplicando batch 1/3: api-paginación
 
 Es importante entender la diferencia:
 
-| Característica | Meta-comando | Skill |
-|----------------|-------------|-------|
-| **Quién lo ejecuta** | El orquestador directamente | Un sub-agente especializado |
-| **Autocompletado** | No aparece | Sí aparece |
-| **Costo** | Suma de las fases que lanza | 1 premium request |
-| **Ejemplos** | `/sdd-new`, `/sdd-continue`, `/sdd-ff` | `/sdd-init`, `/sdd-apply`, `/sdd-verify` |
+| Característica       | Meta-comando                           | Skill                                    |
+| -------------------- | -------------------------------------- | ---------------------------------------- |
+| **Quién lo ejecuta** | El orquestador directamente            | Un sub-agente especializado              |
+| **Autocompletado**   | No aparece                             | Sí aparece                               |
+| **Costo**            | Suma de las fases que lanza            | 1 premium request                        |
+| **Ejemplos**         | `/sdd-new`, `/sdd-continue`, `/sdd-ff` | `/sdd-init`, `/sdd-apply`, `/sdd-verify` |
 
 Los **meta-comandos** son atajos de conveniencia que el orquestador descompone en múltiples skills. No tienen costo adicional más allá de las fases que lanzan internamente.
 
@@ -544,22 +544,22 @@ Los **meta-comandos** son atajos de conveniencia que el orquestador descompone e
 
 Además de los comandos slash, puedes activar ciertas funciones con lenguaje natural:
 
-| Frase | Acción |
-|-------|--------|
-| `"update skills"` | Ejecuta `/skill-registry` |
-| `"skill registry"` | Ejecuta `/skill-registry` |
-| `"actualizar skills"` | Ejecuta `/skill-registry` |
-| `"update registry"` | Ejecuta `/skill-registry` |
-| `"judgment day"` | Ejecuta `/judgment-day` |
-| `"judgment-day"` | Ejecuta `/judgment-day` |
-| `"review adversarial"` | Ejecuta `/judgment-day` |
-| `"dual review"` | Ejecuta `/judgment-day` |
-| `"doble review"` | Ejecuta `/judgment-day` |
-| `"juzgar"` | Ejecuta `/judgment-day` |
-| `"que lo juzguen"` | Ejecuta `/judgment-day` |
-| `"sdd init"` | Ejecuta `/sdd-init` |
-| `"iniciar sdd"` | Ejecuta `/sdd-init` |
-| `"openspec init"` | Ejecuta `/sdd-init` |
+| Frase                  | Acción                    |
+| ---------------------- | ------------------------- |
+| `"update skills"`      | Ejecuta `/skill-registry` |
+| `"skill registry"`     | Ejecuta `/skill-registry` |
+| `"actualizar skills"`  | Ejecuta `/skill-registry` |
+| `"update registry"`    | Ejecuta `/skill-registry` |
+| `"judgment day"`       | Ejecuta `/judgment-day`   |
+| `"judgment-day"`       | Ejecuta `/judgment-day`   |
+| `"review adversarial"` | Ejecuta `/judgment-day`   |
+| `"dual review"`        | Ejecuta `/judgment-day`   |
+| `"doble review"`       | Ejecuta `/judgment-day`   |
+| `"juzgar"`             | Ejecuta `/judgment-day`   |
+| `"que lo juzguen"`     | Ejecuta `/judgment-day`   |
+| `"sdd init"`           | Ejecuta `/sdd-init`       |
+| `"iniciar sdd"`        | Ejecuta `/sdd-init`       |
+| `"openspec init"`      | Ejecuta `/sdd-init`       |
 
 ---
 
@@ -645,57 +645,58 @@ Para tareas que no justifican planificación formal, simplemente describe lo que
 ## Grafo de dependencias completo
 
 ```
-                    ┌──────────┐
-                    │ explore  │ (opcional)
-                    └────┬─────┘
-                         │
-                         ▼
-                    ┌──────────┐
-                    │ propose  │
-                    └────┬─────┘
-                         │
-                    ┌────┴─────┐
-                    ▼          ▼
-              ┌────────┐ ┌────────┐
-              │  spec  │ │ design │
-              └────┬───┘ └────┬───┘
-                   │          │
-                   ▼          │
-              ┌────────┐      │
-              │ tasks  │◀─────┘
-              └────┬───┘
-                   │
-                   ▼
-              ┌────────┐
-              │ apply  │ ← (puede requerir múltiples batches)
-              └────┬───┘
-                   │
-                   ▼
-              ┌────────┐
-              │ verify │ ← (si falla → apply → verify de nuevo)
-              └────┬───┘
-                   │
-                   ▼
-              ┌─────────┐
-              │ archive │
-              └─────────┘
+                      ┌─────────┐
+                      │ explore │ (opcional)
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ propose │
+                      └────┬────┘
+                           │
+                ┌──────────┴──────────┐
+                ▼                     ▼
+           ┌─────────┐          ┌─────────┐
+           │  spec   │          │ design  │    ← paralelos
+           └────┬────┘          └────┬────┘
+                │                    │
+                └─────────┬──────────┘
+                          ▼
+                      ┌─────────┐
+                      │  tasks  │
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │  apply  │ (múltiples batches)
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ verify  │ (si falla → apply → verify)
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ archive │
+                      └─────────┘
 ```
 
 ---
 
 ## Asignación de modelos por fase
 
-| Fase | Modelo | Razón |
-|------|--------|-------|
-| Orquestador | opus (alta capacidad) | Coordinación y decisiones |
-| `sdd-explore` | sonnet (estándar) | Lectura de código, no decisiones arquitectónicas |
-| `sdd-propose` | opus (alta capacidad) | Decisiones arquitectónicas |
-| `sdd-spec` | sonnet (estándar) | Escritura estructurada |
-| `sdd-design` | opus (alta capacidad) | Decisiones de arquitectura |
-| `sdd-tasks` | sonnet (estándar) | Desglose mecánico |
-| `sdd-apply` | sonnet (estándar) | Implementación |
-| `sdd-verify` | sonnet (estándar) | Validación contra spec |
-| `sdd-archive` | haiku (ligero) | Copia y cierre mecánico |
+| Fase          | Modelo                | Razón                                            |
+| ------------- | --------------------- | ------------------------------------------------ |
+| Orquestador   | opus (alta capacidad) | Coordinación y decisiones                        |
+| `sdd-explore` | sonnet (estándar)     | Lectura de código, no decisiones arquitectónicas |
+| `sdd-propose` | opus (alta capacidad) | Decisiones arquitectónicas                       |
+| `sdd-spec`    | sonnet (estándar)     | Escritura estructurada                           |
+| `sdd-design`  | opus (alta capacidad) | Decisiones de arquitectura                       |
+| `sdd-tasks`   | sonnet (estándar)     | Desglose mecánico                                |
+| `sdd-apply`   | sonnet (estándar)     | Implementación                                   |
+| `sdd-verify`  | sonnet (estándar)     | Validación contra spec                           |
+| `sdd-archive` | haiku (ligero)        | Copia y cierre mecánico                          |
 
 > En plataformas que no usan nomenclatura Claude (opus/sonnet/haiku), se usa el equivalente en capacidad: modelo de alta capacidad para opus, estándar para sonnet, ligero para haiku.
 

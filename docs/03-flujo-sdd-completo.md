@@ -31,51 +31,49 @@ Cada fase la ejecuta un **sub-agente especializado** con instrucciones optimizad
 El pipeline SDD sigue un DAG (grafo acíclico dirigido) donde cada fase depende de las anteriores:
 
 ```
-                    ┌───────────┐
-                    │  explore  │ (opcional)
-                    └─────┬─────┘
-                          │
+                      ┌─────────┐
+                      │ explore │ (opcional)
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ propose │
+                      └────┬────┘
+                           │
+                ┌──────────┴──────────┐
+                ▼                     ▼
+           ┌─────────┐          ┌─────────┐
+           │  spec   │          │ design  │    ← paralelos
+           └────┬────┘          └────┬────┘
+                │                    │
+                └─────────┬──────────┘
                           ▼
-                    ┌───────────┐
-                    │  propose  │
-                    └─────┬─────┘
-                          │
-                ┌─────────┴─────────┐
-                │                   │
-                ▼                   ▼
-          ┌───────────┐       ┌───────────┐
-          │   spec    │       │  design   │
-          └─────┬─────┘       └─────┬─────┘
-                │                   │
-                └─────────┬─────────┘
-                          │
-                          ▼
-                    ┌───────────┐
-                    │   tasks   │
-                    └─────┬─────┘
-                          │
-                          ▼
-                    ┌───────────┐
-                    │   apply   │ (puede correr en batches)
-                    └─────┬─────┘
-                          │
-                          ▼
-                    ┌───────────┐
-                    │  verify   │
-                    └─────┬─────┘
-                          │
-                          ▼
-                    ┌───────────┐
-                    │  archive  │
-                    └───────────┘
+                      ┌─────────┐
+                      │  tasks  │
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │  apply  │ (puede correr en batches)
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ verify  │
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ archive │
+                      └─────────┘
 ```
 
 **Forma compacta:**
 
 ```
-proposal → specs ──→ tasks → apply → verify → archive
-             ↑          ↑
-             └─ design ─┘
+  proposal ──▶ spec ────┐
+      │                 ├──▶ tasks ──▶ apply ──▶ verify ──▶ archive
+      └────▶ design ────┘
 ```
 
 ---
@@ -119,13 +117,13 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### Tabla de decisión rápida
 
-| Señal | Acción | Coste |
-|-------|--------|-------|
-| Pregunta sobre el código | Respuesta directa | 0 requests |
-| Bug puntual, 1-2 archivos | Delegación directa | 1 request |
-| Feature pequeña, 3-5 archivos | `/sdd-ff` + apply | 5-7 requests |
-| Feature mediana | `/sdd-new` → ciclo completo | 10-15 requests |
-| Cambio crítico | SDD + Judgment Day | 13-20 requests |
+| Señal                         | Acción                      | Coste          |
+| ----------------------------- | --------------------------- | -------------- |
+| Pregunta sobre el código      | Respuesta directa           | 0 requests     |
+| Bug puntual, 1-2 archivos     | Delegación directa          | 1 request      |
+| Feature pequeña, 3-5 archivos | `/sdd-ff` + apply           | 5-7 requests   |
+| Feature mediana               | `/sdd-new` → ciclo completo | 10-15 requests |
+| Cambio crítico                | SDD + Judgment Day          | 13-20 requests |
 
 ### Reglas del grafo
 
@@ -141,14 +139,14 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### 🔍 Explore
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Investigar el codebase, comparar enfoques, clarificar requisitos antes de comprometerse |
-| **Lee** | Nada (artefactos previos) — lee código fuente del proyecto directamente |
-| **Produce** | `exploration.md` (solo si está ligado a un cambio nombrado) |
-| **Budget de palabras** | Sin límite estricto (es investigación), pero conciso |
-| **Modelo** | sonnet (lectura estructural, no arquitectónica) |
-| **Reglas clave** | No modifica código existente. Lee código real, nunca adivina. Si la solicitud es demasiado vaga, pide clarificación. |
+| Atributo               | Valor                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Investigar el codebase, comparar enfoques, clarificar requisitos antes de comprometerse                              |
+| **Lee**                | Nada (artefactos previos) — lee código fuente del proyecto directamente                                              |
+| **Produce**            | `exploration.md` (solo si está ligado a un cambio nombrado)                                                          |
+| **Budget de palabras** | Sin límite estricto (es investigación), pero conciso                                                                 |
+| **Modelo**             | sonnet (lectura estructural, no arquitectónica)                                                                      |
+| **Reglas clave**       | No modifica código existente. Lee código real, nunca adivina. Si la solicitud es demasiado vaga, pide clarificación. |
 
 **Formato de salida**: Estado actual del sistema, áreas afectadas, enfoques comparados con pros/cons/esfuerzo, recomendación y riesgos.
 
@@ -156,14 +154,14 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### 📋 Propose
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Definir el cambio: intent, alcance, enfoque, riesgos y plan de rollback |
-| **Lee** | Exploración (opcional, si existe) |
-| **Produce** | `proposal.md` |
-| **Budget de palabras** | < 400 palabras |
-| **Modelo** | opus (decisiones arquitectónicas) |
-| **Reglas clave** | Toda propuesta DEBE tener plan de rollback y criterios de éxito. Usar bullet points y tablas sobre prosa. |
+| Atributo               | Valor                                                                                                     |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Definir el cambio: intent, alcance, enfoque, riesgos y plan de rollback                                   |
+| **Lee**                | Exploración (opcional, si existe)                                                                         |
+| **Produce**            | `proposal.md`                                                                                             |
+| **Budget de palabras** | < 400 palabras                                                                                            |
+| **Modelo**             | opus (decisiones arquitectónicas)                                                                         |
+| **Reglas clave**       | Toda propuesta DEBE tener plan de rollback y criterios de éxito. Usar bullet points y tablas sobre prosa. |
 
 **Secciones del artefacto**: Intent, Scope (In/Out), Approach, Affected Areas, Risks, Rollback Plan, Dependencies, Success Criteria.
 
@@ -171,14 +169,14 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### 📝 Spec
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Definir QUÉ debe cumplir el código — requisitos y escenarios testables |
-| **Lee** | Propuesta (requerido) |
-| **Produce** | `specs/{domain}/spec.md` (delta specs o spec completo para dominios nuevos) |
-| **Budget de palabras** | < 650 palabras |
-| **Modelo** | sonnet (escritura estructurada) |
-| **Reglas clave** | Formato Given/When/Then obligatorio. Keywords RFC 2119 (MUST, SHALL, SHOULD, MAY). Cada requisito DEBE tener al menos un escenario. Specs describen QUÉ, nunca CÓMO. |
+| Atributo               | Valor                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Definir QUÉ debe cumplir el código — requisitos y escenarios testables                                                                                               |
+| **Lee**                | Propuesta (requerido)                                                                                                                                                |
+| **Produce**            | `specs/{domain}/spec.md` (delta specs o spec completo para dominios nuevos)                                                                                          |
+| **Budget de palabras** | < 650 palabras                                                                                                                                                       |
+| **Modelo**             | sonnet (escritura estructurada)                                                                                                                                      |
+| **Reglas clave**       | Formato Given/When/Then obligatorio. Keywords RFC 2119 (MUST, SHALL, SHOULD, MAY). Cada requisito DEBE tener al menos un escenario. Specs describen QUÉ, nunca CÓMO. |
 
 **Tipos de delta**: ADDED Requirements, MODIFIED Requirements, REMOVED Requirements. Si no existe spec previo para el dominio, se crea una spec completa.
 
@@ -186,14 +184,14 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### 🏛️ Design
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Definir CÓMO se implementará — arquitectura, decisiones técnicas, flujo de datos |
-| **Lee** | Propuesta (requerido) |
-| **Produce** | `design.md` |
-| **Budget de palabras** | < 800 palabras |
-| **Modelo** | opus (decisiones de arquitectura) |
-| **Reglas clave** | Leer código real antes de diseñar. Cada decisión DEBE tener rationale. Seguir patrones existentes del proyecto. Diagramas ASCII simples. |
+| Atributo               | Valor                                                                                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Definir CÓMO se implementará — arquitectura, decisiones técnicas, flujo de datos                                                         |
+| **Lee**                | Propuesta (requerido)                                                                                                                    |
+| **Produce**            | `design.md`                                                                                                                              |
+| **Budget de palabras** | < 800 palabras                                                                                                                           |
+| **Modelo**             | opus (decisiones de arquitectura)                                                                                                        |
+| **Reglas clave**       | Leer código real antes de diseñar. Cada decisión DEBE tener rationale. Seguir patrones existentes del proyecto. Diagramas ASCII simples. |
 
 **Secciones del artefacto**: Technical Approach, Architecture Decisions (con alternatives y rationale), Data Flow, File Changes (tabla), Interfaces/Contracts, Testing Strategy, Migration/Rollout, Open Questions.
 
@@ -201,14 +199,14 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### ✅ Tasks
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Desglosar el cambio en tareas concretas, accionables y verificables |
-| **Lee** | Spec + Design (requeridos) |
-| **Produce** | `tasks.md` |
-| **Budget de palabras** | < 530 palabras |
-| **Modelo** | sonnet (desglose mecánico) |
-| **Reglas clave** | Cada tarea referencia rutas concretas de archivos. Formato checklist con 1-2 líneas por tarea. Orden por dependencia. Numeración jerárquica (1.1, 1.2, 2.1, ...). |
+| Atributo               | Valor                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Desglosar el cambio en tareas concretas, accionables y verificables                                                                                               |
+| **Lee**                | Spec + Design (requeridos)                                                                                                                                        |
+| **Produce**            | `tasks.md`                                                                                                                                                        |
+| **Budget de palabras** | < 530 palabras                                                                                                                                                    |
+| **Modelo**             | sonnet (desglose mecánico)                                                                                                                                        |
+| **Reglas clave**       | Cada tarea referencia rutas concretas de archivos. Formato checklist con 1-2 líneas por tarea. Orden por dependencia. Numeración jerárquica (1.1, 1.2, 2.1, ...). |
 
 **Organización por fases**:
 
@@ -229,14 +227,14 @@ Phase 5: Cleanup (si aplica)
 
 ### 🔨 Apply
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Implementar las tareas escribiendo código real |
-| **Lee** | Tasks + Spec + Design |
-| **Produce** | Código implementado + `apply-progress` (progreso de tareas) |
-| **Budget de palabras** | N/A (produce código, no documentación) |
-| **Modelo** | sonnet (implementación) |
-| **Reglas clave** | Leer specs antes de implementar (son los criterios de aceptación). Seguir las decisiones del diseño. Marcar tareas como `[x]` conforme se completan. Reportar desviaciones del diseño. |
+| Atributo               | Valor                                                                                                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Implementar las tareas escribiendo código real                                                                                                                                         |
+| **Lee**                | Tasks + Spec + Design                                                                                                                                                                  |
+| **Produce**            | Código implementado + progreso en `tasks.md` (marcas `[x]`)                                                                                                                            |
+| **Budget de palabras** | N/A (produce código, no documentación)                                                                                                                                                 |
+| **Modelo**             | sonnet (implementación)                                                                                                                                                                |
+| **Reglas clave**       | Leer specs antes de implementar (son los criterios de aceptación). Seguir las decisiones del diseño. Marcar tareas como `[x]` conforme se completan. Reportar desviaciones del diseño. |
 
 **Modos de implementación**:
 - **Standard**: implementa tareas siguiendo spec y design
@@ -248,14 +246,14 @@ Apply corre en **batches**: el orquestador decide cuántas tareas asignar por ba
 
 ### 🔬 Verify
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Validar que la implementación cumple las specs, sigue el diseño y pasa los tests |
-| **Lee** | Spec + Tasks (+ código implementado) |
-| **Produce** | `verify-report.md` |
-| **Budget de palabras** | Sin límite (el reporte debe ser exhaustivo) |
-| **Modelo** | sonnet (validación contra spec) |
-| **Reglas clave** | SIEMPRE ejecutar tests reales. Un escenario solo es COMPLIANT cuando un test que lo cubre ha PASADO. No corregir issues, solo reportarlos. |
+| Atributo               | Valor                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Propósito**          | Validar que la implementación cumple las specs, sigue el diseño y pasa los tests                                                           |
+| **Lee**                | Spec + Tasks (+ código implementado)                                                                                                       |
+| **Produce**            | `verify-report.md`                                                                                                                         |
+| **Budget de palabras** | Sin límite (el reporte debe ser exhaustivo)                                                                                                |
+| **Modelo**             | sonnet (validación contra spec)                                                                                                            |
+| **Reglas clave**       | SIEMPRE ejecutar tests reales. Un escenario solo es COMPLIANT cuando un test que lo cubre ha PASADO. No corregir issues, solo reportarlos. |
 
 **Checks que ejecuta**:
 
@@ -275,14 +273,14 @@ Apply corre en **batches**: el orquestador decide cuántas tareas asignar por ba
 
 ### 📦 Archive
 
-| Atributo | Valor |
-|----------|-------|
-| **Propósito** | Cerrar el ciclo: sincronizar delta specs a specs principales, mover a archivo |
-| **Lee** | Todos los artefactos |
-| **Produce** | `archive-report` + specs principales actualizados |
-| **Budget de palabras** | N/A (operación mecánica) |
-| **Modelo** | haiku (copiar y cerrar) |
-| **Reglas clave** | NUNCA archivar un cambio con issues CRITICAL en verificación. Sincronizar deltas ANTES de mover al archivo. El archivo es un audit trail: nunca modificar cambios archivados. |
+| Atributo               | Valor                                                                                                                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Cerrar el ciclo: sincronizar delta specs a specs principales, mover a archivo                                                                                                 |
+| **Lee**                | Todos los artefactos                                                                                                                                                          |
+| **Produce**            | `archive-report` + specs principales actualizados                                                                                                                             |
+| **Budget de palabras** | N/A (operación mecánica)                                                                                                                                                      |
+| **Modelo**             | haiku (copiar y cerrar)                                                                                                                                                       |
+| **Reglas clave**       | NUNCA archivar un cambio con issues CRITICAL en verificación. Sincronizar deltas ANTES de mover al archivo. El archivo es un audit trail: nunca modificar cambios archivados. |
 
 **Operaciones**:
 1. Merge de delta specs → main specs (`openspec/specs/{domain}/spec.md`)
@@ -468,28 +466,28 @@ proyecto/
 - No es posible recuperar estado tras compactación
 - Es el modo por defecto
 
-| Aspecto | `openspec` | `none` |
-|---------|-----------|--------|
-| Artefactos | Archivos en disco | Inline en conversación |
-| Recuperación | ✅ Vía `state.yaml` | ❌ Estado perdido |
-| Audit trail | ✅ Carpeta de archivo | ❌ No persistente |
-| Archivos del proyecto | Sí (carpeta `openspec/`) | No |
-| Recomendado para | Features sustanciales | Tareas rápidas |
+| Aspecto               | `openspec`               | `none`                 |
+| --------------------- | ------------------------ | ---------------------- |
+| Artefactos            | Archivos en disco        | Inline en conversación |
+| Recuperación          | ✅ Vía `state.yaml`       | ❌ Estado perdido       |
+| Audit trail           | ✅ Carpeta de archivo     | ❌ No persistente       |
+| Archivos del proyecto | Sí (carpeta `openspec/`) | No                     |
+| Recomendado para      | Features sustanciales    | Tareas rápidas         |
 
 ---
 
 ## 7. Artefactos Generados
 
-| Fase | Artefacto | Ubicación (openspec) | Formato |
-|------|-----------|---------------------|---------|
-| explore | `exploration.md` | `openspec/changes/{name}/exploration.md` | Markdown: estado actual, enfoques, recomendación |
-| propose | `proposal.md` | `openspec/changes/{name}/proposal.md` | Markdown: intent, scope, approach, risks, rollback |
-| spec | `spec.md` (delta o completo) | `openspec/changes/{name}/specs/{domain}/spec.md` | Markdown: requisitos RFC 2119 + escenarios GWT |
-| design | `design.md` | `openspec/changes/{name}/design.md` | Markdown: decisiones, data flow, file changes |
-| tasks | `tasks.md` | `openspec/changes/{name}/tasks.md` | Markdown: checklist jerárquico por fases |
-| apply | código + progreso | Archivos del proyecto + `tasks.md` actualizado | Código + checklist con `[x]` |
-| verify | `verify-report.md` | `openspec/changes/{name}/verify-report.md` | Markdown: matrices de compliance, veredicto |
-| archive | specs actualizados | `openspec/specs/{domain}/spec.md` + carpeta archivada | Specs mergeados + audit trail |
+| Fase    | Artefacto                    | Ubicación (openspec)                                  | Formato                                            |
+| ------- | ---------------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| explore | `exploration.md`             | `openspec/changes/{name}/exploration.md`              | Markdown: estado actual, enfoques, recomendación   |
+| propose | `proposal.md`                | `openspec/changes/{name}/proposal.md`                 | Markdown: intent, scope, approach, risks, rollback |
+| spec    | `spec.md` (delta o completo) | `openspec/changes/{name}/specs/{domain}/spec.md`      | Markdown: requisitos RFC 2119 + escenarios GWT     |
+| design  | `design.md`                  | `openspec/changes/{name}/design.md`                   | Markdown: decisiones, data flow, file changes      |
+| tasks   | `tasks.md`                   | `openspec/changes/{name}/tasks.md`                    | Markdown: checklist jerárquico por fases           |
+| apply   | código + progreso            | Archivos del proyecto + `tasks.md` actualizado        | Código + checklist con `[x]`                       |
+| verify  | `verify-report.md`           | `openspec/changes/{name}/verify-report.md`            | Markdown: matrices de compliance, veredicto        |
+| archive | specs actualizados           | `openspec/specs/{domain}/spec.md` + carpeta archivada | Specs mergeados + audit trail                      |
 
 ---
 

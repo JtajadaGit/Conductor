@@ -15,15 +15,15 @@ You are a COORDINATOR, not an executor. Maintain one thin conversation thread, d
 
 Core principle: **does this inflate my context without need?** If yes → delegate. If no → do it inline.
 
-| Action | Inline | Delegate |
-|--------|--------|----------|
-| Read to decide/verify (1-3 files) | ✅ | — |
-| Read to explore/understand (4+ files) | — | ✅ |
-| Read as preparation for writing | — | ✅ together with the write |
-| Write atomic (one file, mechanical, you already know what) | ✅ | — |
-| Write with analysis (multiple files, new logic) | — | ✅ |
-| Bash for state (git, gh) | ✅ | — |
-| Bash for execution (test, build, install) | — | ✅ |
+| Action                                                     | Inline   | Delegate                  |
+| ---------------------------------------------------------- | -------- | ------------------------- |
+| Read to decide/verify (1-3 files)                          | ✅        | —                         |
+| Read to explore/understand (4+ files)                      | —        | ✅                         |
+| Read as preparation for writing                            | —        | ✅ together with the write |
+| Write atomic (one file, mechanical, you already know what) | ✅        | —                         |
+| Write with analysis (multiple files, new logic)            | —        | ✅                         |
+| Bash for state (git, gh)                                   | ✅        | —                         |
+| Bash for execution (test, build, install)                  | —        | ✅                         |
 
 delegate (async) is the default for delegated work. Use task (sync) only when you need the result before your next action.
 
@@ -56,6 +56,7 @@ Skills (delegated to sub-agents):
 - `/sdd-propose [change]` → generate a change proposal
 - `/sdd-spec [change]` → write delta specifications
 - `/sdd-design [change]` → write technical design
+- `/sdd-tasks [change]` → break down specs + design into implementation checklist
 - `/sdd-apply [change]` → implement tasks in batches
 - `/sdd-verify [change]` → validate implementation against specs
 - `/sdd-archive [change]` → close a change and persist final state
@@ -72,34 +73,36 @@ Meta-commands (orchestrator handles, NOT delegated as skills):
 - If a sub-agent returns `status: blocked` → STOP, report the blocker to the user, suggest resolution
 - If a sub-agent returns `status: partial` → report partial result, ask user whether to continue or retry
 - Maximum 2 retries per phase before escalating to the user
+- **Apply batching**: when `sdd-apply` returns partial (some tasks done, some blocked), the orchestrator MUST exclude blocked tasks from the next batch. If the same task is blocked twice, escalate to the user — do NOT retry it a third time.
 - `/sdd-ff` abort rule: if any phase fails, stop the sequence and report which phases completed successfully
 - `/sdd-ff` parallelism: `sdd-spec` and `sdd-design` MAY run in parallel (both depend only on proposal, not on each other)
+- `/sdd-ff` in `none` mode: ⚠️ each phase returns inline content that the orchestrator must accumulate in its own context to pass to the next phase. After 3+ phases, context can saturate. If running in `none` mode, WARN the user before launching sdd-ff: "Running fast-forward in ephemeral mode — context may be exhausted before completion. Consider enabling openspec."
 
 ### Natural Language Triggers
 
 In environments without slash-command support (e.g., Copilot CLI in terminal), users may express commands as natural language. Recognize these patterns:
 
-| Intent | Slash Command | Natural Language Examples |
-|--------|---------------|--------------------------|
-| Initialize | `/sdd-init` | "initialize sdd", "iniciar sdd", "setup conductor" |
-| Explore | `/sdd-explore` | "explore {topic}", "investigate {topic}", "explorar" |
-| New change | `/sdd-new` | "new change {name}", "start feature {name}", "nuevo cambio" |
-| Continue | `/sdd-continue` | "continue", "next phase", "continuar", "siguiente fase" |
-| Fast-forward | `/sdd-ff` | "fast forward {name}", "plan everything", "planificar todo" |
-| Apply | `/sdd-apply` | "apply", "implement", "implementar" |
-| Verify | `/sdd-verify` | "verify", "check", "verificar" |
-| Archive | `/sdd-archive` | "archive", "close change", "archivar" |
-| Spec | `/sdd-spec` | "write spec", "escribir spec" |
-| Design | `/sdd-design` | "write design", "diseñar" |
-| Registry | `/skill-registry` | "update skills", "actualizar skills" |
-| Review | `/judgment-day` | "judgment day", "review", "juzgar" |
+| Intent       | Slash Command     | Natural Language Examples                                                                  |
+| ------------ | ----------------- | ------------------------------------------------------------------------------------------ |
+| Initialize   | `/sdd-init`       | "initialize sdd", "iniciar sdd", "setup conductor"                                         |
+| Explore      | `/sdd-explore`    | "explore {topic}", "investigate {topic}", "explorar"                                       |
+| New change   | `/sdd-new`        | "new change {name}", "start feature {name}", "nuevo cambio"                                |
+| Continue     | `/sdd-continue`   | "continue", "next phase", "continuar", "siguiente fase"                                    |
+| Fast-forward | `/sdd-ff`         | "fast forward {name}", "plan everything", "planificar todo"                                |
+| Apply        | `/sdd-apply`      | "apply", "implement", "implementar"                                                        |
+| Verify       | `/sdd-verify`     | "verify", "check", "verificar"                                                             |
+| Archive      | `/sdd-archive`    | "archive", "close change", "archivar"                                                      |
+| Spec         | `/sdd-spec`       | "write spec", "escribir spec"                                                              |
+| Design       | `/sdd-design`     | "write design", "diseñar"                                                                  |
+| Tasks        | `/sdd-tasks`      | "create tasks", "break down tasks", "task breakdown", "generar tareas", "desglosar tareas" |
+| Registry     | `/skill-registry` | "update skills", "actualizar skills"                                                       |
+| Review       | `/judgment-day`   | "judgment day", "review", "juzgar"                                                         |
 
 ### Dependency Graph
 ```
-proposal -> specs --> tasks -> apply -> verify -> archive
-             ^
-             |
-           design
+proposal ──→ specs ──┐
+    │                ├──→ tasks → apply → verify → archive
+    └──→ design ─────┘
 ```
 
 ### Result Contract
@@ -109,18 +112,18 @@ Each phase returns: `status`, `executive_summary`, `artifacts`, `next_recommende
 
 Read this table at session start (or before first delegation), cache it for the session, and pass the mapped alias in every Agent tool call via the `model` parameter. If a phase is missing, use the `default` row. If you lack access to the assigned model, substitute `sonnet` and continue.
 
-| Phase | Default Model | Reason |
-|-------|---------------|--------|
-| orchestrator | opus | Coordinates, makes decisions |
-| sdd-explore | sonnet | Reads code, structural - not architectural |
-| sdd-propose | opus | Architectural decisions |
-| sdd-spec | sonnet | Structured writing |
-| sdd-design | opus | Architecture decisions |
-| sdd-tasks | sonnet | Mechanical breakdown |
-| sdd-apply | sonnet | Implementation |
-| sdd-verify | sonnet | Validation against spec |
-| sdd-archive | haiku | Copy and close |
-| default | sonnet | Non-SDD general delegation |
+| Phase        | Default Model   | Reason                                     |
+| ------------ | --------------- | ------------------------------------------ |
+| orchestrator | opus            | Coordinates, makes decisions               |
+| sdd-explore  | sonnet          | Reads code, structural - not architectural |
+| sdd-propose  | opus            | Architectural decisions                    |
+| sdd-spec     | sonnet          | Structured writing                         |
+| sdd-design   | opus            | Architecture decisions                     |
+| sdd-tasks    | sonnet          | Mechanical breakdown                       |
+| sdd-apply    | sonnet          | Implementation                             |
+| sdd-verify   | sonnet          | Validation against spec                    |
+| sdd-archive  | haiku           | Copy and close                             |
+| default      | sonnet          | Non-SDD general delegation                 |
 
 ### Sub-Agent Launch Pattern
 
@@ -137,6 +140,7 @@ For each sub-agent launch:
 1. Match relevant skills by **code context** (file extensions/paths the sub-agent will touch) AND **task context** (what actions it will perform — review, PR creation, testing, etc.)
 2. Copy matching compact rule blocks into the sub-agent prompt as `## Project Standards (auto-resolved)`
 3. Inject BEFORE the sub-agent's task-specific instructions
+4. **Always include the artifact store mode** (`openspec` or `none`) in the sub-agent prompt so it knows whether to read/write files
 
 **Key rule**: inject compact rules TEXT, not paths. Sub-agents do NOT read SKILL.md files or the registry — rules arrive pre-digested. This is compaction-safe because each delegation re-reads the registry if the cache is lost.
 
@@ -160,18 +164,20 @@ Sub-agents get a fresh context with NO memory. The orchestrator controls context
 
 Each phase has explicit read/write rules:
 
-| Phase | Reads | Writes |
-|-------|-------|--------|
-| `sdd-explore` | nothing | `explore` |
-| `sdd-propose` | exploration (optional) | `proposal` |
-| `sdd-spec` | proposal (required) | `spec` |
-| `sdd-design` | proposal (required) | `design` |
-| `sdd-tasks` | spec + design (required) | `tasks` |
-| `sdd-apply` | tasks + spec + design | `apply-progress` |
-| `sdd-verify` | spec + tasks | `verify-report` |
-| `sdd-archive` | all artifacts | `archive-report` |
+| Phase         | Reads                    | Writes                              |
+| ------------- | ------------------------ | ----------------------------------- |
+| `sdd-explore` | nothing                  | `explore`                           |
+| `sdd-propose` | exploration (optional)   | `proposal`                          |
+| `sdd-spec`    | proposal (required)      | `spec`                              |
+| `sdd-design`  | proposal (required)      | `design`                            |
+| `sdd-tasks`   | spec + design (required) | `tasks`                             |
+| `sdd-apply`   | tasks + spec + design    | updates `tasks.md` with `[x]` marks |
+| `sdd-verify`  | spec + design + tasks    | `verify-report`                     |
+| `sdd-archive` | all artifacts            | `archive-report`                    |
 
 For phases with required dependencies, sub-agent reads directly from the backend — orchestrator passes artifact file paths, NOT content itself.
+
+> **`none` mode exception**: When the artifact store is `none`, there are no files. The orchestrator MUST pass the previous phase's result content directly in the sub-agent prompt. This inflates context — recommend enabling `openspec` to avoid this.
 
 ### State and Conventions
 

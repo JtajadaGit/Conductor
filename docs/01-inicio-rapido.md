@@ -8,12 +8,12 @@ Guía paso a paso para tener Conductor funcionando en tu proyecto en menos de 5 
 
 ## Requisitos previos
 
-| Requisito | Descripción |
-|-----------|-------------|
-| **Plataforma IA** | Licencia activa de **GitHub Copilot** (plan Individual, Business o Enterprise) **o** acceso a **Claude Code** (Anthropic) |
-| **Editor** | VS Code con extensión GitHub Copilot **o** Claude Code en terminal |
-| **Git** | Repositorio git inicializado en tu proyecto |
-| **Proyecto existente** | Conductor se integra en proyectos existentes — no genera proyectos desde cero |
+| Requisito              | Descripción                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **Plataforma IA**      | Licencia activa de **GitHub Copilot** (plan Individual, Business o Enterprise) **o** acceso a **Claude Code** (Anthropic) |
+| **Editor**             | VS Code con extensión GitHub Copilot **o** Claude Code en terminal                                                        |
+| **Git**                | Repositorio git inicializado en tu proyecto                                                                               |
+| **Proyecto existente** | Conductor se integra en proyectos existentes — no genera proyectos desde cero                                             |
 
 > **Nota**: No necesitas ambas plataformas. Elige la que uses y copia solo la configuración correspondiente.
 
@@ -284,12 +284,12 @@ Desde aquí tienes dos opciones:
 
 ### Señales de que NO está funcionando
 
-| Síntoma | Causa probable | Solución |
-|---------|----------------|----------|
-| El agente no reconoce `/sdd-init` | Archivos de configuración no copiados | Verifica que `.github/` o `.claude/` existen |
-| El agente ejecuta código directamente | Instrucciones del orquestador no cargadas | Verifica el archivo de instrucciones principal |
-| No se crean artefactos en disco | Persistencia en modo `none` | Habilita OpenSpec: "activa openspec" |
-| Los sub-agentes no siguen convenciones | Skill registry no generado | Ejecuta `/skill-registry` o `/sdd-init` |
+| Síntoma                                | Causa probable                            | Solución                                       |
+| -------------------------------------- | ----------------------------------------- | ---------------------------------------------- |
+| El agente no reconoce `/sdd-init`      | Archivos de configuración no copiados     | Verifica que `.github/` o `.claude/` existen   |
+| El agente ejecuta código directamente  | Instrucciones del orquestador no cargadas | Verifica el archivo de instrucciones principal |
+| No se crean artefactos en disco        | Persistencia en modo `none`               | Habilita OpenSpec: "activa openspec"           |
+| Los sub-agentes no siguen convenciones | Skill registry no generado                | Ejecuta `/skill-registry` o `/sdd-init`        |
 
 ---
 

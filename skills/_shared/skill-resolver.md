@@ -33,13 +33,13 @@ Use the `Trigger` field in the registry's User Skills table to match. Skills who
 
 **B. Task Context** — what ACTIONS will the sub-agent perform?
 
-| Sub-agent action | Match skills with triggers mentioning... |
-|-----------------|------------------------------------------|
-| Create a PR | "PR", "pull request" |
-| Write/review code | The specific framework/language |
-| Create issue tracker tickets | "issue", "epic", "task" |
-| Write comments | "comment" |
-| Run tests | "test", "testing", "spec" |
+| Sub-agent action             | Match skills with triggers mentioning...   |
+| ---------------------------- | ------------------------------------------ |
+| Create a PR                  | "PR", "pull request"                       |
+| Write/review code            | The specific framework/language            |
+| Create issue tracker tickets | "issue", "epic", "task"                    |
+| Write comments               | "comment"                                  |
+| Run tests                    | "test", "testing", "spec"                  |
 
 ### Step 3: Inject into Sub-Agent Prompt
 

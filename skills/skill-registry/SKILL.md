@@ -25,12 +25,12 @@ This is the foundation of the **Skill Resolver Protocol** (see `_shared/skill-re
 1. Glob for `*/SKILL.md` files across ALL known skill directories. Check every path below — scan ALL that exist, not just the first match:
 
    **User-level (global skills):**
-   - `~/.copilot/skills/` — Github Copilot
+   - `~/.copilot/skills/` — GitHub Copilot
    - `~/.claude/skills/` — Claude Code
    - The parent directory of this skill file (catch-all for any tool)
 
    **Project-level (workspace skills):**
-   - `{project-root}/.github/skills/` — Github Copilot
+   - `{project-root}/.github/skills/` — GitHub Copilot
    - `{project-root}/.claude/skills/` — Claude Code
    - `{project-root}/skills/` — Generic
 
@@ -67,11 +67,9 @@ Format per skill:
 1. Check the project root for convention files. Look for:
    - `agents.md` or `AGENTS.md`
    - `CLAUDE.md` (only project-level, not `~/.claude/CLAUDE.md`)
-   - `.cursorrules`
-   - `GEMINI.md`
    - `copilot-instructions.md`
 2. **If an index file is found** (e.g., `agents.md`, `AGENTS.md`): READ its contents and extract all referenced file paths. These index files typically list project conventions with paths — extract every referenced path and include it in the registry table alongside the index file itself.
-3. For non-index files (`.cursorrules`, `CLAUDE.md`, etc.): record the file directly.
+3. For non-index files (`CLAUDE.md`, `copilot-instructions.md`): record the file directly.
 4. The final table should include the index file AND all paths it references — zero extra hops for sub-agents.
 
 ### Step 3: Write the Registry

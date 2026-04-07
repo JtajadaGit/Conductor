@@ -35,19 +35,19 @@ El orquestador no lanza trabajo en paralelo automáticamente salvo en casos expl
 
 ## Costo por Tipo de Operación
 
-| Operación | Premium Requests | Modelo | Costo relativo |
-|-----------|-----------------|--------|----------------|
-| **Delegación directa** (bug, refactor puntual, pregunta) | **1** | sonnet | 💰💰 |
-| Conversación con orquestador | 1 continua | opus | 💰💰💰 |
-| `/sdd-init` | 1 | sonnet | 💰💰 |
-| `/sdd-explore` | 1 | sonnet | 💰💰 |
-| `/sdd-propose` | 1 | opus | 💰💰💰 |
-| `/sdd-spec` | 1 | sonnet | 💰💰 |
-| `/sdd-design` | 1 | opus | 💰💰💰 |
-| `/sdd-tasks` | 1 | sonnet | 💰💰 |
-| `/sdd-apply` (por batch) | 1 | sonnet | 💰💰 |
-| `/sdd-verify` | 1 | sonnet | 💰💰 |
-| `/sdd-archive` | 1 | haiku | 💰 |
+| Operación                                                | Premium Requests  | Modelo   | Costo relativo   |
+| -------------------------------------------------------- | ----------------- | -------- | ---------------- |
+| **Delegación directa** (bug, refactor puntual, pregunta) | **1**             | sonnet   | 💰💰               |
+| Conversación con orquestador                             | 1 continua        | opus     | 💰💰💰              |
+| `/sdd-init`                                              | 1                 | sonnet   | 💰💰               |
+| `/sdd-explore`                                           | 1                 | sonnet   | 💰💰               |
+| `/sdd-propose`                                           | 1                 | opus     | 💰💰💰              |
+| `/sdd-spec`                                              | 1                 | sonnet   | 💰💰               |
+| `/sdd-design`                                            | 1                 | opus     | 💰💰💰              |
+| `/sdd-tasks`                                             | 1                 | sonnet   | 💰💰               |
+| `/sdd-apply` (por batch)                                 | 1                 | sonnet   | 💰💰               |
+| `/sdd-verify`                                            | 1                 | sonnet   | 💰💰               |
+| `/sdd-archive`                                           | 1                 | haiku    | 💰                |
 
 **Leyenda de costo:**
 - 💰 = Bajo (modelos rápidos/ligeros)
@@ -66,17 +66,17 @@ init + explore + propose + spec + design + tasks + apply×3 + verify = ~11 reque
 
 ### Desglose
 
-| Fase | Requests | Notas |
-|------|----------|-------|
-| init | 1 | Solo la primera vez por proyecto |
-| explore | 1 | Omitible si ya conoces el cambio |
-| propose | 1 | Decisión arquitectónica |
-| spec | 1 | Especificaciones formales |
-| design | 1 | Diseño técnico |
-| tasks | 1 | Desglose de tareas |
-| apply (×3 batches) | 3 | Features medios: 3 batches típico |
-| verify | 1 | Validación final |
-| **Total** | **~11** | |
+| Fase               | Requests   | Notas                             |
+| ------------------ | ---------- | --------------------------------- |
+| init               | 1          | Solo la primera vez por proyecto  |
+| explore            | 1          | Omitible si ya conoces el cambio  |
+| propose            | 1          | Decisión arquitectónica           |
+| spec               | 1          | Especificaciones formales         |
+| design             | 1          | Diseño técnico                    |
+| tasks              | 1          | Desglose de tareas                |
+| apply (×3 batches) | 3          | Features medios: 3 batches típico |
+| verify             | 1          | Validación final                  |
+| **Total**          | **~11**    |                                   |
 
 ### Variaciones
 
@@ -90,11 +90,11 @@ init + explore + propose + spec + design + tasks + apply×3 + verify = ~11 reque
 
 Los meta-comandos son atajos que descomponen en fases individuales. No tienen costo adicional.
 
-| Meta-comando | Fases que lanza | Requests |
-|-------------|----------------|----------|
-| `/sdd-new <cambio>` | explore + propose | 2 |
-| `/sdd-ff <cambio>` | propose + spec + design + tasks | 4 |
-| `/sdd-continue` | siguiente fase pendiente | 1 |
+| Meta-comando        | Fases que lanza                 | Requests   |
+| ------------------- | ------------------------------- | ---------- |
+| `/sdd-new <cambio>` | explore + propose               | 2          |
+| `/sdd-ff <cambio>`  | propose + spec + design + tasks | 4          |
+| `/sdd-continue`     | siguiente fase pendiente        | 1          |
 
 `/sdd-ff` es especialmente eficiente: ejecuta cuatro fases en secuencia con mínima intervención del orquestador, reduciendo el overhead conversacional.
 
@@ -104,13 +104,13 @@ Los meta-comandos son atajos que descomponen en fases individuales. No tienen co
 
 Judgment Day es el protocolo de revisión adversarial paralela. Lanza dos agentes jueces de forma simultánea, sintetiza hallazgos, aplica correcciones y re-juzga.
 
-| Operación | Requests |
-|-----------|----------|
-| Round 1: 2 jueces paralelos | 2 |
-| Fix agent (correcciones) | 1 |
-| Round 2: 2 re-jueces | 2 |
-| **Total por ciclo** | **3–5** |
-| Si escala a 2 iteraciones | 8–10 |
+| Operación                   | Requests   |
+| --------------------------- | ---------- |
+| Round 1: 2 jueces paralelos | 2          |
+| Fix agent (correcciones)    | 1          |
+| Round 2: 2 re-jueces        | 2          |
+| **Total por ciclo**         | **3–5**    |
+| Si escala a 2 iteraciones   | 8–10       |
 
 Judgment Day tiene un costo mayor que una verificación simple, pero está diseñado para cambios de alto impacto donde la calidad justifica la revisión exhaustiva. Se recomienda para:
 
@@ -127,12 +127,12 @@ No es necesario en cada ciclo SDD; reservar para cambios donde un bug sería cos
 
 Conductor impone límites de palabras compactos para cada artefacto. Esto no es arbitrario: los artefactos son leídos por fases downstream, y artefactos más cortos significan **menos tokens de contexto** en cada request posterior.
 
-| Artefacto | Presupuesto | Justificación |
-|-----------|-------------|---------------|
-| `proposal.md` | < 400 palabras | Herramienta de pensamiento, no documentación |
-| `spec.md` | < 650 palabras | Scenarios de 3-5 líneas; la spec no es un manual |
-| `design.md` | < 800 palabras | Tablas y diagramas sobre prosa extensa |
-| `tasks.md` | < 530 palabras | Checklist con 1-2 líneas por tarea |
+| Artefacto     | Presupuesto    | Justificación                                    |
+| ------------- | -------------- | ------------------------------------------------ |
+| `proposal.md` | < 400 palabras | Herramienta de pensamiento, no documentación     |
+| `spec.md`     | < 650 palabras | Scenarios de 3-5 líneas; la spec no es un manual |
+| `design.md`   | < 800 palabras | Tablas y diagramas sobre prosa extensa           |
+| `tasks.md`    | < 530 palabras | Checklist con 1-2 líneas por tarea               |
 
 ### Impacto en tokens downstream
 
@@ -151,12 +151,12 @@ Un artefacto inflado se paga en cada fase que lo lee aguas abajo. Mantener artef
 
 Cuando el orquestador lanza un sub-agente, inyecta en el prompt las reglas compactas de los skills relevantes.
 
-| Concepto | Valor típico |
-|----------|-------------|
-| Tokens por skill inyectado | 50–150 tokens |
-| Skills típicos por delegación | 3–5 |
-| Overhead total por sub-agente | 400–600 tokens |
-| Contexto del código base | 5.000–50.000 tokens |
+| Concepto                      | Valor típico        |
+| ----------------------------- | ------------------- |
+| Tokens por skill inyectado    | 50–150 tokens       |
+| Skills típicos por delegación | 3–5                 |
+| Overhead total por sub-agente | 400–600 tokens      |
+| Contexto del código base      | 5.000–50.000 tokens |
 
 El overhead de skills es **insignificante** comparado con el contexto del código. Pero es una inversión con retorno: 400-600 tokens de reglas evitan que el sub-agente tome decisiones inconsistentes, lo que de otro modo generaría ciclos de corrección mucho más costosos.
 
@@ -166,10 +166,10 @@ El overhead de skills es **insignificante** comparado con el contexto del códig
 
 Los módulos de testing estricto (`strict-tdd.md` y `strict-tdd-verify.md`) están diseñados con carga condicional:
 
-| Módulo | Tamaño | Consumo cuando inactivo |
-|--------|--------|------------------------|
-| `strict-tdd.md` | ~280 líneas | **0 tokens** |
-| `strict-tdd-verify.md` | ~260 líneas | **0 tokens** |
+| Módulo                 | Tamaño      | Consumo cuando inactivo  |
+| ---------------------- | ----------- | ------------------------ |
+| `strict-tdd.md`        | ~280 líneas | **0 tokens**             |
+| `strict-tdd-verify.md` | ~260 líneas | **0 tokens**             |
 
 Solo se cargan cuando:
 1. `strict_tdd: true` está configurado en el proyecto, **Y**
@@ -224,10 +224,10 @@ Para tareas que no justifican el ciclo SDD completo —bugfixes simples, refacto
 
 ### Escenario: Feature de tamaño medio
 
-| Enfoque | Requests estimados | Calidad |
-|---------|-------------------|---------|
-| **Manual sin estructura** | 15-25 | ⚠️ Variable |
-| **SDD estructurado** | 10-15 | ✅ Consistente |
+| Enfoque                   | Requests estimados  | Calidad       |
+| ------------------------- | ------------------- | ------------- |
+| **Manual sin estructura** | 15-25               | ⚠️ Variable   |
+| **SDD estructurado**      | 10-15               | ✅ Consistente |
 
 ### Por qué SDD puede ser más económico
 
@@ -265,11 +265,11 @@ La elección de modelo es el factor de mayor impacto en el costo por request.
 
 ### Comparación por nivel
 
-| Nivel | Modelo | Costo relativo | Calidad | Uso en Conductor |
-|-------|--------|----------------|---------|------------------|
-| Alto | opus | 💰💰💰 | Excelente en arquitectura y juicio | Orquestador, propose, design |
-| Estándar | sonnet | 💰💰 | Óptimo para ejecución y análisis | explore, spec, tasks, apply, verify |
-| Rápido | haiku | 💰 | Suficiente para mecánica | archive |
+| Nivel    | Modelo   | Costo relativo   | Calidad                            | Uso en Conductor                    |
+| -------- | -------- | ---------------- | ---------------------------------- | ----------------------------------- |
+| Alto     | opus     | 💰💰💰              | Excelente en arquitectura y juicio | Orquestador, propose, design        |
+| Estándar | sonnet   | 💰💰               | Óptimo para ejecución y análisis   | explore, spec, tasks, apply, verify |
+| Rápido   | haiku    | 💰                | Suficiente para mecánica           | archive                             |
 
 ### Si no tienes acceso a opus
 
@@ -298,14 +298,14 @@ Solo haiku (no recomendado):
 
 ## Resumen de Costos
 
-| Flujo | Requests | Modelos | Cuándo usarlo |
-|-------|----------|---------|---------------|
-| Delegación simple | 1 | sonnet | Tareas pequeñas, preguntas |
-| `/sdd-new` | 2 | sonnet + opus | Iniciar un cambio nuevo |
-| `/sdd-ff` | 4 | opus + sonnet×3 | Planificación rápida |
-| Ciclo SDD completo | 10-15 | mixto | Features medianos |
-| Judgment Day | 3-5 | sonnet×2-4 + sonnet | Revisión crítica |
-| Ciclo SDD + Judgment Day | 13-20 | mixto | Features críticos |
+| Flujo                    | Requests   | Modelos             | Cuándo usarlo              |
+| ------------------------ | ---------- | ------------------- | -------------------------- |
+| Delegación simple        | 1          | sonnet              | Tareas pequeñas, preguntas |
+| `/sdd-new`               | 2          | sonnet + opus       | Iniciar un cambio nuevo    |
+| `/sdd-ff`                | 4          | opus + sonnet×3     | Planificación rápida       |
+| Ciclo SDD completo       | 10-15      | mixto               | Features medianos          |
+| Judgment Day             | 3-5        | sonnet×2-4 + sonnet | Revisión crítica           |
+| Ciclo SDD + Judgment Day | 13-20      | mixto               | Features críticos          |
 
 ---
 

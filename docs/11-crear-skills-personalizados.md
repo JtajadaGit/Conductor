@@ -53,10 +53,10 @@ description: >
 ---
 ```
 
-| Campo | Requerido | Descripción |
-|-------|-----------|-------------|
-| `name` | Sí | Identificador de la skill (minúsculas, guiones) |
-| `description` | Sí | Qué hace + cuándo activarla (trigger) en un solo bloque |
+| Campo         | Requerido   | Descripción                                             |
+| ------------- | ----------- | ------------------------------------------------------- |
+| `name`        | Sí          | Identificador de la skill (minúsculas, guiones)         |
+| `description` | Sí          | Qué hace + cuándo activarla (trigger) en un solo bloque |
 
 El `description` debe incluir siempre la palabra **Trigger:** seguida de las condiciones de activación. El orquestador usa este trigger para decidir cuándo inyectar la skill.
 
@@ -142,12 +142,12 @@ Comandos que el agente puede ejecutar para generar, validar o testear su trabajo
 
 ## Convenciones de Nombres
 
-| Tipo | Patrón | Ejemplos |
-|------|--------|----------|
-| Skill genérica | `{tecnología}` | `react`, `fastapi`, `golang` |
-| Específica del proyecto | `{proyecto}-{componente}` | `myapp-auth`, `myapp-api` |
-| Testing | `{proyecto}-test-{componente}` | `myapp-test-sdk`, `myapp-test-api` |
-| Workflow | `{acción}-{objetivo}` | `deploy-staging`, `skill-creator` |
+| Tipo                    | Patrón                         | Ejemplos                           |
+| ----------------------- | ------------------------------ | ---------------------------------- |
+| Skill genérica          | `{tecnología}`                 | `react`, `fastapi`, `golang`       |
+| Específica del proyecto | `{proyecto}-{componente}`      | `myapp-auth`, `myapp-api`          |
+| Testing                 | `{proyecto}-test-{componente}` | `myapp-test-sdk`, `myapp-test-api` |
+| Workflow                | `{acción}-{objetivo}`          | `deploy-staging`, `skill-creator`  |
 
 ### Reglas
 
@@ -184,13 +184,13 @@ Las compact rules se generan automáticamente al ejecutar `/skill-registry` o `s
 
 ### Principios de compact rules
 
-| Principio | Descripción |
-|-----------|-------------|
-| Accionable | Cada línea es una regla ejecutable, no una observación |
-| Sin explicaciones | No "porque...", solo "haz esto" |
-| Priorizada | Las reglas más importantes primero |
-| 5-15 líneas | Más de 15 líneas indica que la skill intenta cubrir demasiado |
-| Sin contexto redundante | No repetir lo que el agente ya sabe por defecto |
+| Principio               | Descripción                                                   |
+| ----------------------- | ------------------------------------------------------------- |
+| Accionable              | Cada línea es una regla ejecutable, no una observación        |
+| Sin explicaciones       | No "porque...", solo "haz esto"                               |
+| Priorizada              | Las reglas más importantes primero                            |
+| 5-15 líneas             | Más de 15 líneas indica que la skill intenta cubrir demasiado |
+| Sin contexto redundante | No repetir lo que el agente ya sabe por defecto               |
 
 ---
 

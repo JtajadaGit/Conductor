@@ -18,10 +18,10 @@ OpenSpec cumple tres funciones:
 
 Conductor opera en uno de dos modos de persistencia. El modo se resuelve al inicio de cada sesión.
 
-| Modo | Almacenamiento | Archivos de proyecto | Recuperable |
-|------|---------------|---------------------|-------------|
-| `openspec` | Filesystem (`openspec/`) | Sí, crea y modifica archivos | ✅ Sí |
-| `none` | Ninguno (inline) | No, nunca modifica archivos | ❌ No |
+| Modo       | Almacenamiento           | Archivos de proyecto         | Recuperable   |
+| ---------- | ------------------------ | ---------------------------- | ------------- |
+| `openspec` | Filesystem (`openspec/`) | Sí, crea y modifica archivos | ✅ Sí          |
+| `none`     | Ninguno (inline)         | No, nunca modifica archivos  | ❌ No          |
 
 ### Modo `openspec`
 
@@ -146,13 +146,13 @@ testing:
 
 ### Campos principales
 
-| Campo | Descripción |
-|-------|-------------|
-| `schema` | Siempre `spec-driven` |
-| `context` | Resumen del stack técnico (máximo 10 líneas) |
-| `strict_tdd` | Si el modo TDD estricto está habilitado |
-| `rules` | Reglas específicas por fase SDD |
-| `testing` | Capacidades de testing detectadas por sdd-init |
+| Campo        | Descripción                                    |
+| ------------ | ---------------------------------------------- |
+| `schema`     | Siempre `spec-driven`                          |
+| `context`    | Resumen del stack técnico (máximo 10 líneas)   |
+| `strict_tdd` | Si el modo TDD estricto está habilitado        |
+| `rules`      | Reglas específicas por fase SDD                |
+| `testing`    | Capacidades de testing detectadas por sdd-init |
 
 Las `rules` de cada fase se inyectan en el sub-agente correspondiente, guiando cómo debe producir su artefacto.
 
@@ -196,12 +196,12 @@ phases:
 
 ### Campos
 
-| Campo | Descripción |
-|-------|-------------|
-| `change` | Nombre del cambio |
-| `created` | Fecha de creación |
-| `current_phase` | Fase actualmente en ejecución |
-| `phases` | Estado de cada fase (`pending`, `in_progress`, `done`, `skipped`) |
+| Campo           | Descripción                                                       |
+| --------------- | ----------------------------------------------------------------- |
+| `change`        | Nombre del cambio                                                 |
+| `created`       | Fecha de creación                                                 |
+| `current_phase` | Fase actualmente en ejecución                                     |
+| `phases`        | Estado de cada fase (`pending`, `in_progress`, `done`, `skipped`) |
 
 ### Función principal
 
@@ -227,15 +227,7 @@ Continúa desde batch 3
 Un cambio sigue un ciclo predecible desde su creación hasta su archivado:
 
 ```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│  Creado   │───▶│Planifica-│───▶│Implemen- │───▶│Verificado│
-│           │    │  ción    │    │  tación  │    │          │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘
-                                                      │
-                                                      ▼
-                                                ┌──────────┐
-                                                │Archivado │
-                                                └──────────┘
+  Creado ──▶ Planificación ──▶ Implementación ──▶ Verificado ──▶ Archivado
 ```
 
 ### Detalle por etapa
@@ -288,36 +280,28 @@ La compactación de contexto es un evento inevitable en conversaciones largas. T
 ### Mecanismo de recuperación
 
 ```
-                    ┌─────────────────────────┐
-                    │  Conversación larga      │
-                    │  (contexto se compacta)  │
-                    └────────────┬────────────┘
-                                 │
-                                 ▼
-                    ┌─────────────────────────┐
-                    │  Orquestador detecta     │
-                    │  pérdida de contexto     │
-                    └────────────┬────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-              ┌─────┤  ¿Modo openspec?        ├─────┐
-              │     └─────────────────────────┘     │
-              │ Sí                                  │ No
-              ▼                                     ▼
-   Lee state.yaml                        No recuperable
-   Reconstruye estado                    Informa al usuario
-   Continúa flujo
+  Conversación larga (contexto se compacta)
+          │
+          ▼
+  Orquestador detecta pérdida de contexto
+          │
+          ├── Modo openspec? ── SÍ ──▶ Lee state.yaml
+          │                            Reconstruye estado
+          │                            Continúa flujo
+          │
+          └── Modo none? ──────────▶ No recuperable
+                                     Informa al usuario
 ```
 
 ### Qué se recupera
 
-| Elemento | ¿Recuperable? | Cómo |
-|----------|--------------|------|
-| Fase actual del cambio | ✅ | `state.yaml` → `current_phase` |
-| Artefactos completados | ✅ | Archivos en `openspec/changes/{cambio}/` |
-| Progreso de batches en apply | ✅ | `state.yaml` → `batches_completed` |
-| Contexto de la conversación | ❌ | Perdido tras compactación |
-| Skills cacheadas | ⚠️ | Se re-leen del skill registry |
+| Elemento                     | ¿Recuperable?  | Cómo                                     |
+| ---------------------------- | -------------- | ---------------------------------------- |
+| Fase actual del cambio       | ✅              | `state.yaml` → `current_phase`           |
+| Artefactos completados       | ✅              | Archivos en `openspec/changes/{cambio}/` |
+| Progreso de batches en apply | ✅              | `state.yaml` → `batches_completed`       |
+| Contexto de la conversación  | ❌              | Perdido tras compactación                |
+| Skills cacheadas             | ⚠️             | Se re-leen del skill registry            |
 
 ### Recuperación del skill registry
 
@@ -331,38 +315,38 @@ Las reglas de frontera definen quién puede leer y escribir qué archivos. Son c
 
 ### Orquestador
 
-| Acción | Permitido | Ejemplo |
-|--------|-----------|---------|
-| Leer `state.yaml` | ✅ | Para recuperación tras compactación |
-| Escribir `state.yaml` | ✅ | Después de cada transición de fase |
-| Leer git status/log | ✅ | Para decisiones de coordinación |
-| Leer artefactos SDD | ❌ | Delega esta lectura al sub-agente |
-| Escribir artefactos SDD | ❌ | Solo los sub-agentes escriben artefactos |
-| Leer/escribir código fuente | ❌ | Siempre delega |
+| Acción                      | Permitido   | Ejemplo                                  |
+| --------------------------- | ----------- | ---------------------------------------- |
+| Leer `state.yaml`           | ✅           | Para recuperación tras compactación      |
+| Escribir `state.yaml`       | ✅           | Después de cada transición de fase       |
+| Leer git status/log         | ✅           | Para decisiones de coordinación          |
+| Leer artefactos SDD         | ❌           | Delega esta lectura al sub-agente        |
+| Escribir artefactos SDD     | ❌           | Solo los sub-agentes escriben artefactos |
+| Leer/escribir código fuente | ❌           | Siempre delega                           |
 
 ### Sub-agentes
 
-| Acción | Permitido | Ejemplo |
-|--------|-----------|---------|
-| Leer artefactos SDD | ✅ | Según tabla de dependencias de fase |
-| Escribir su artefacto | ✅ | `proposal.md`, `spec.md`, etc. |
-| Leer código fuente | ✅ | Para análisis e implementación |
-| Escribir código fuente | ✅ | Solo en fase `apply` |
-| Leer `state.yaml` | ❌ | Solo el orquestador gestiona el estado |
-| Escribir fuera de `openspec/` | ❌ | Excepto código fuente en `apply` |
+| Acción                        | Permitido   | Ejemplo                                |
+| ----------------------------- | ----------- | -------------------------------------- |
+| Leer artefactos SDD           | ✅           | Según tabla de dependencias de fase    |
+| Escribir su artefacto         | ✅           | `proposal.md`, `spec.md`, etc.         |
+| Leer código fuente            | ✅           | Para análisis e implementación         |
+| Escribir código fuente        | ✅           | Solo en fase `apply`                   |
+| Leer `state.yaml`             | ❌           | Solo el orquestador gestiona el estado |
+| Escribir fuera de `openspec/` | ❌           | Excepto código fuente en `apply`       |
 
 ### Tabla de dependencias de lectura por fase
 
-| Fase | Lee artefactos |
-|------|---------------|
-| `sdd-explore` | Nada |
-| `sdd-propose` | Exploración (opcional) |
-| `sdd-spec` | Propuesta (obligatorio) |
-| `sdd-design` | Propuesta (obligatorio) |
-| `sdd-tasks` | Spec + Design (obligatorio) |
-| `sdd-apply` | Tasks + Spec + Design |
-| `sdd-verify` | Spec + Tasks |
-| `sdd-archive` | Todos los artefactos |
+| Fase          | Lee artefactos              |
+| ------------- | --------------------------- |
+| `sdd-explore` | Nada                        |
+| `sdd-propose` | Exploración (opcional)      |
+| `sdd-spec`    | Propuesta (obligatorio)     |
+| `sdd-design`  | Propuesta (obligatorio)     |
+| `sdd-tasks`   | Spec + Design (obligatorio) |
+| `sdd-apply`   | Tasks + Spec + Design       |
+| `sdd-verify`  | Spec + Tasks                |
+| `sdd-archive` | Todos los artefactos        |
 
 ---
 

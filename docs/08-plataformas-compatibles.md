@@ -30,19 +30,22 @@ Conductor/
 Al copiar a tu proyecto, cada plataforma espera sus archivos en rutas específicas:
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  Tu Proyecto                     │
-│                                                  │
-│  .claude/           .github/                     │
-│  ├── CLAUDE.md      ├── copilot-instructions.md  │
-│  └── skills/        └── skills/                  │
-│      ├── sdd-init/      ├── sdd-init/            │
-│      ├── sdd-apply/     ├── sdd-apply/           │
-│      └── ...            └── ...                  │
-│                                                  │
-│  openspec/          .atl/                        │
-│  └── (artefactos)   └── skill-registry.md        │
-└─────────────────────────────────────────────────┘
+tu-proyecto/
+├── .claude/                    ← Claude Code
+│   ├── CLAUDE.md
+│   └── skills/
+│       ├── sdd-init/
+│       ├── sdd-apply/
+│       └── ...
+├── .github/                    ← GitHub Copilot
+│   ├── copilot-instructions.md
+│   └── skills/
+│       ├── sdd-init/
+│       ├── sdd-apply/
+│       └── ...
+├── openspec/                   ← Artefactos SDD
+└── .atl/
+    └── skill-registry.md       ← Registro de skills
 ```
 
 Las skills tienen contenido idéntico en ambas carpetas desplegadas. Solo el archivo de configuración del orquestador difiere entre plataformas. Al desplegar desde Conductor, se copia `instructions/{orquestador}` al directorio de la plataforma y `skills/` al directorio de skills que la plataforma espera.
@@ -53,11 +56,11 @@ Las skills tienen contenido idéntico en ambas carpetas desplegadas. Solo el arc
 
 ### Configuración
 
-| Elemento | Ubicación |
-|----------|-----------|
-| Instrucciones del orquestador | `.claude/CLAUDE.md` |
-| Skills | `.claude/skills/{skill-name}/SKILL.md` |
-| Convenciones compartidas | `.claude/skills/_shared/` |
+| Elemento                      | Ubicación                              |
+| ----------------------------- | -------------------------------------- |
+| Instrucciones del orquestador | `.claude/CLAUDE.md`                    |
+| Skills                        | `.claude/skills/{skill-name}/SKILL.md` |
+| Convenciones compartidas      | `.claude/skills/_shared/`              |
 
 ### Cómo funciona
 
@@ -69,22 +72,22 @@ Las skills se descubren automáticamente por su estructura de directorio. Cada c
 
 Claude Code utiliza los nombres nativos de los modelos de Anthropic:
 
-| Alias | Modelo | Uso en Conductor |
-|-------|--------|------------------|
-| `opus` | Claude Opus | Orquestador, propose, design |
+| Alias    | Modelo        | Uso en Conductor                    |
+| -------- | ------------- | ----------------------------------- |
+| `opus`   | Claude Opus   | Orquestador, propose, design        |
 | `sonnet` | Claude Sonnet | explore, spec, tasks, apply, verify |
-| `haiku` | Claude Haiku | archive |
+| `haiku`  | Claude Haiku  | archive                             |
 
 ### Delegación
 
 Claude Code utiliza el patrón `delegate (async)` como mecanismo de delegación principal. Cada sub-agente se lanza de forma asíncrona con un contexto fresco. El orquestador puede continuar procesando mientras el sub-agente trabaja, o esperar su resultado si lo necesita antes de continuar.
 
 ```
-Orquestador ─── delegate(async) ──→ Sub-agente (contexto fresco)
-     │                                      │
-     │          ← resultado ────────────────┘
-     ▼
-Siguiente acción
+  Orquestador ── delegate(async) ──▶ Sub-agente (contexto fresco)
+       │                                     │
+       │           ◀── resultado ────────────┘
+       ▼
+  Siguiente acción
 ```
 
 ### Setup
@@ -101,11 +104,11 @@ Siguiente acción
 
 ### Configuración
 
-| Elemento | Ubicación |
-|----------|-----------|
-| Instrucciones del orquestador | `.github/copilot-instructions.md` |
-| Skills | `.github/skills/{skill-name}/SKILL.md` |
-| Convenciones compartidas | `~/.copilot/skills/_shared/` |
+| Elemento                      | Ubicación                              |
+| ----------------------------- | -------------------------------------- |
+| Instrucciones del orquestador | `.github/copilot-instructions.md`      |
+| Skills                        | `.github/skills/{skill-name}/SKILL.md` |
+| Convenciones compartidas      | `~/.copilot/skills/_shared/`           |
 
 ### Cómo funciona
 
@@ -117,11 +120,11 @@ Las skills se registran en el skill registry y se invocan a través de Copilot C
 
 En Copilot, los modelos se mapean por nivel de capacidad:
 
-| Nivel en Conductor | Equivalente en Copilot | Uso |
-|---------------------|------------------------|-----|
-| `opus` (alta capacidad) | Modelo de alta capacidad | Orquestador, propose, design |
-| `sonnet` (estándar) | Modelo estándar | explore, spec, tasks, apply, verify |
-| `haiku` (rápido) | Modelo rápido/ligero | archive |
+| Nivel en Conductor      | Equivalente en Copilot   | Uso                                 |
+| ----------------------- | ------------------------ | ----------------------------------- |
+| `opus` (alta capacidad) | Modelo de alta capacidad | Orquestador, propose, design        |
+| `sonnet` (estándar)     | Modelo estándar          | explore, spec, tasks, apply, verify |
+| `haiku` (rápido)        | Modelo rápido/ligero     | archive                             |
 
 > Nota: Las instrucciones del orquestador incluyen una nota explícita: "In Copilot, use the model equivalent in capability: high-capability model for opus roles, standard model for sonnet roles, and fast/lightweight model for haiku roles."
 
@@ -129,12 +132,12 @@ En Copilot, los modelos se mapean por nivel de capacidad:
 
 VS Code Copilot utiliza la herramienta `task` para lanzar sub-agentes. Existen cuatro tipos de agente:
 
-| Tipo | Descripción | Uso típico en Conductor |
-|------|-------------|-------------------------|
-| `explore` | Búsqueda y análisis de código (modelo rápido) | sdd-explore, investigación de codebase |
-| `task` | Ejecución de comandos (tests, builds) | sdd-verify, ejecución de tests |
-| `general-purpose` | Agente completo con todas las herramientas | sdd-apply, sdd-spec, sdd-design |
-| `code-review` | Revisión de cambios de código | judgment-day (jueces) |
+| Tipo              | Descripción                                   | Uso típico en Conductor                |
+| ----------------- | --------------------------------------------- | -------------------------------------- |
+| `explore`         | Búsqueda y análisis de código (modelo rápido) | sdd-explore, investigación de codebase |
+| `task`            | Ejecución de comandos (tests, builds)         | sdd-verify, ejecución de tests         |
+| `general-purpose` | Agente completo con todas las herramientas    | sdd-apply, sdd-spec, sdd-design        |
+| `code-review`     | Revisión de cambios de código                 | judgment-day (jueces)                  |
 
 ### Setup en VS Code
 
@@ -153,11 +156,11 @@ VS Code Copilot utiliza la herramienta `task` para lanzar sub-agentes. Existen c
 
 Copilot CLI utiliza la misma configuración que Copilot en VS Code:
 
-| Elemento | Ubicación |
-|----------|-----------|
-| Instrucciones del orquestador | `.github/copilot-instructions.md` |
-| Skills | `.github/skills/{skill-name}/SKILL.md` |
-| Convenciones compartidas | `~/.copilot/skills/_shared/` |
+| Elemento                      | Ubicación                              |
+| ----------------------------- | -------------------------------------- |
+| Instrucciones del orquestador | `.github/copilot-instructions.md`      |
+| Skills                        | `.github/skills/{skill-name}/SKILL.md` |
+| Convenciones compartidas      | `~/.copilot/skills/_shared/`           |
 
 ### Cómo funciona
 
@@ -177,13 +180,13 @@ Copilot CLI tiene acceso a un conjunto amplio de herramientas nativas:
 
 ### Diferencias con VS Code
 
-| Aspecto | VS Code | CLI |
-|---------|---------|-----|
-| Interfaz | Chat visual integrado | Terminal de texto |
-| Interactividad | Conversación bidireccional | Ejecución autónoma |
-| Herramientas IDE | Completas (diagnostics, selection) | Limitadas (cached) |
-| Skill invocation | Chat interactivo | Automática por trigger |
-| Sesiones | Persistentes en VS Code | Por ejecución |
+| Aspecto          | VS Code                            | CLI                    |
+| ---------------- | ---------------------------------- | ---------------------- |
+| Interfaz         | Chat visual integrado              | Terminal de texto      |
+| Interactividad   | Conversación bidireccional         | Ejecución autónoma     |
+| Herramientas IDE | Completas (diagnostics, selection) | Limitadas (cached)     |
+| Skill invocation | Chat interactivo                   | Automática por trigger |
+| Sesiones         | Persistentes en VS Code            | Por ejecución          |
 
 La principal diferencia operativa es que Copilot CLI ejecuta en modo no-interactivo. No se detiene a preguntar: toma decisiones razonables y avanza. Esto lo hace ideal para tareas de automatización, CI/CD y flujos batch.
 
@@ -191,19 +194,19 @@ La principal diferencia operativa es que Copilot CLI ejecuta en modo no-interact
 
 ## Tabla Comparativa
 
-| Característica | Claude Code | Copilot VS Code | Copilot CLI |
-|----------------|-------------|------------------|-------------|
-| Archivo de config | `.claude/CLAUDE.md` | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
-| Ruta de skills | `.claude/skills/` | `.github/skills/` | `.github/skills/` |
-| Skills de usuario | `~/.claude/skills/` | `~/.copilot/skills/` | `~/.copilot/skills/` |
-| Mecanismo de delegación | `delegate (async)` | `task` tool | `task` tool |
-| Modelos (alto) | opus | alta capacidad | alta capacidad |
-| Modelos (estándar) | sonnet | estándar | estándar |
-| Modelos (rápido) | haiku | rápido/ligero | rápido/ligero |
-| Modo de ejecución | Interactivo | Interactivo | Autónomo |
-| Skill registry | `.atl/skill-registry.md` | `.atl/skill-registry.md` | `.atl/skill-registry.md` |
-| OpenSpec | Soportado | Soportado | Soportado |
-| Judgment Day | Soportado | Soportado | Soportado |
+| Característica          | Claude Code              | Copilot VS Code                   | Copilot CLI                       |
+| ----------------------- | ------------------------ | --------------------------------- | --------------------------------- |
+| Archivo de config       | `.claude/CLAUDE.md`      | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
+| Ruta de skills          | `.claude/skills/`        | `.github/skills/`                 | `.github/skills/`                 |
+| Skills de usuario       | `~/.claude/skills/`      | `~/.copilot/skills/`              | `~/.copilot/skills/`              |
+| Mecanismo de delegación | `delegate (async)`       | `task` tool                       | `task` tool                       |
+| Modelos (alto)          | opus                     | alta capacidad                    | alta capacidad                    |
+| Modelos (estándar)      | sonnet                   | estándar                          | estándar                          |
+| Modelos (rápido)        | haiku                    | rápido/ligero                     | rápido/ligero                     |
+| Modo de ejecución       | Interactivo              | Interactivo                       | Autónomo                          |
+| Skill registry          | `.atl/skill-registry.md` | `.atl/skill-registry.md`          | `.atl/skill-registry.md`          |
+| OpenSpec                | Soportado                | Soportado                         | Soportado                         |
+| Judgment Day            | Soportado                | Soportado                         | Soportado                         |
 
 ---
 

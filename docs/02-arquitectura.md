@@ -11,26 +11,25 @@ Conductor no es un codebase tradicional: es una **capa de orquestación** que de
 La arquitectura se basa en un principio fundamental: **separar la coordinación de la ejecución**. Un agente orquestador mantiene la conversación con el usuario y toma decisiones de alto nivel, mientras que sub-agentes especializados realizan todo el trabajo real — leer código, escribir implementaciones, verificar resultados.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                     USUARIO                         │
-│              (conversación natural)                  │
-└─────────────────────┬───────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│               ORQUESTADOR (opus)                    │
-│  • Mantiene hilo de conversación delgado            │
-│  • Toma decisiones arquitectónicas                  │
-│  • Delega TODO el trabajo de ejecución              │
-│  • Sintetiza resultados para el usuario             │
-└──────┬──────────┬──────────┬──────────┬─────────────┘
-       │          │          │          │
-       ▼          ▼          ▼          ▼
-   ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
-   │explore │ │propose │ │ apply  │ │verify  │
-   │(sonnet)│ │(opus)  │ │(sonnet)│ │(sonnet)│
-   └────────┘ └────────┘ └────────┘ └────────┘
-   Sub-agentes: contexto fresco, sin memoria
+              ┌─────────────────────────────────────┐
+              │   USUARIO (conversación natural)     │
+              └──────────────────┬──────────────────┘
+                                 │
+                                 ▼
+              ┌─────────────────────────────────────┐
+              │         ORQUESTADOR (opus)           │
+              │  • Mantiene hilo de conversación     │
+              │  • Toma decisiones arquitectónicas   │
+              │  • Delega TODO el trabajo            │
+              │  • Sintetiza resultados              │
+              └───┬────────┬────────┬────────┬──────┘
+                  │        │        │        │
+                  ▼        ▼        ▼        ▼
+              ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
+              │explor│ │propos│ │apply │ │verify│
+              │(sonn)│ │(opus)│ │(sonn)│ │(sonn)│
+              └──────┘ └──────┘ └──────┘ └──────┘
+              Sub-agentes: contexto fresco, sin memoria
 ```
 
 ---
@@ -66,12 +65,12 @@ Cada sub-agente:
 
 ### ¿Por qué este patrón?
 
-| Problema | Solución Agent Teams |
-|----------|---------------------|
-| **Inflación de contexto** | El orquestador se mantiene delgado; el trabajo pesado ocurre en contextos desechables |
+| Problema                     | Solución Agent Teams                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Inflación de contexto**    | El orquestador se mantiene delgado; el trabajo pesado ocurre en contextos desechables                        |
 | **Pérdida por compactación** | Si el orquestador pierde contexto, puede recuperarlo del filesystem; los sub-agentes son efímeros por diseño |
-| **Falta de especialización** | Cada sub-agente recibe instrucciones optimizadas para su fase y el modelo adecuado para su tarea |
-| **Costo descontrolado** | Trabajo mecánico usa modelos baratos (haiku); decisiones arquitectónicas usan modelos potentes (opus) |
+| **Falta de especialización** | Cada sub-agente recibe instrucciones optimizadas para su fase y el modelo adecuado para su tarea             |
+| **Costo descontrolado**      | Trabajo mecánico usa modelos baratos (haiku); decisiones arquitectónicas usan modelos potentes (opus)        |
 
 ---
 
@@ -89,25 +88,25 @@ Antes de que el orquestador use herramientas de lectura, edición o escritura so
 
 ### Qué PUEDE hacer el orquestador
 
-| Acción | Permitido |
-|--------|-----------|
-| Respuestas cortas al usuario | ✅ |
-| Coordinar fases y secuencias | ✅ |
-| Mostrar resúmenes | ✅ |
-| Pedir decisiones al usuario | ✅ |
-| Rastrear estado (git, todos) | ✅ |
-| Leer 1-3 archivos para decidir/verificar | ✅ |
-| Escritura atómica (un archivo, mecánica, ya sabe qué escribir) | ✅ |
+| Acción                                                         | Permitido   |
+| -------------------------------------------------------------- | ----------- |
+| Respuestas cortas al usuario                                   | ✅           |
+| Coordinar fases y secuencias                                   | ✅           |
+| Mostrar resúmenes                                              | ✅           |
+| Pedir decisiones al usuario                                    | ✅           |
+| Rastrear estado (git, todos)                                   | ✅           |
+| Leer 1-3 archivos para decidir/verificar                       | ✅           |
+| Escritura atómica (un archivo, mecánica, ya sabe qué escribir) | ✅           |
 
 ### Qué se DELEGA siempre
 
-| Acción | Delegado |
-|--------|----------|
-| Leer 4+ archivos para explorar/entender | ✅ → sub-agente |
-| Leer archivos como preparación para escritura | ✅ → junto con la escritura |
-| Escribir código con análisis (múltiples archivos, lógica nueva) | ✅ → sub-agente |
-| Ejecutar tests, builds, instalaciones | ✅ → sub-agente |
-| Análisis de código | ✅ → sub-agente |
+| Acción                                                          | Delegado                   |
+| --------------------------------------------------------------- | -------------------------- |
+| Leer 4+ archivos para explorar/entender                         | ✅ → sub-agente             |
+| Leer archivos como preparación para escritura                   | ✅ → junto con la escritura |
+| Escribir código con análisis (múltiples archivos, lógica nueva) | ✅ → sub-agente             |
+| Ejecutar tests, builds, instalaciones                           | ✅ → sub-agente             |
+| Análisis de código                                              | ✅ → sub-agente             |
 
 ### Anti-patrones (NUNCA hacer esto)
 
@@ -123,18 +122,18 @@ Antes de que el orquestador use herramientas de lectura, edición o escritura so
 
 La asignación de modelos es el factor de mayor impacto en el equilibrio calidad-costo del sistema. Cada fase recibe el modelo apropiado para su naturaleza:
 
-| Fase | Modelo | Tier | Razón |
-|------|--------|------|-------|
-| `orchestrator` | opus | 🔴 Alta capacidad | Coordina, toma decisiones de alto nivel |
-| `sdd-propose` | opus | 🔴 Alta capacidad | Decisiones arquitectónicas que afectan todo el cambio |
-| `sdd-design` | opus | 🔴 Alta capacidad | Decisiones de arquitectura y trade-offs técnicos |
-| `sdd-explore` | sonnet | 🟡 Estándar | Lee código, análisis estructural — no arquitectónico |
-| `sdd-spec` | sonnet | 🟡 Estándar | Escritura estructurada de requisitos |
-| `sdd-tasks` | sonnet | 🟡 Estándar | Desglose mecánico de tareas |
-| `sdd-apply` | sonnet | 🟡 Estándar | Implementación de código |
-| `sdd-verify` | sonnet | 🟡 Estándar | Validación contra especificaciones |
-| `sdd-archive` | haiku | 🟢 Rápido/económico | Copiar artefactos y cerrar — operación mecánica |
-| `default` | sonnet | 🟡 Estándar | Delegación general no-SDD |
+| Fase           | Modelo   | Tier               | Razón                                                 |
+| -------------- | -------- | ------------------ | ----------------------------------------------------- |
+| `orchestrator` | opus     | 🔴 Alta capacidad   | Coordina, toma decisiones de alto nivel               |
+| `sdd-propose`  | opus     | 🔴 Alta capacidad   | Decisiones arquitectónicas que afectan todo el cambio |
+| `sdd-design`   | opus     | 🔴 Alta capacidad   | Decisiones de arquitectura y trade-offs técnicos      |
+| `sdd-explore`  | sonnet   | 🟡 Estándar         | Lee código, análisis estructural — no arquitectónico  |
+| `sdd-spec`     | sonnet   | 🟡 Estándar         | Escritura estructurada de requisitos                  |
+| `sdd-tasks`    | sonnet   | 🟡 Estándar         | Desglose mecánico de tareas                           |
+| `sdd-apply`    | sonnet   | 🟡 Estándar         | Implementación de código                              |
+| `sdd-verify`   | sonnet   | 🟡 Estándar         | Validación contra especificaciones                    |
+| `sdd-archive`  | haiku    | 🟢 Rápido/económico | Copiar artefactos y cerrar — operación mecánica       |
+| `default`      | sonnet   | 🟡 Estándar         | Delegación general no-SDD                             |
 
 ### Estrategia de optimización de costos
 
@@ -181,21 +180,21 @@ Se hace en DOS dimensiones:
 
 **A. Contexto de código** — ¿qué archivos va a tocar el sub-agente?
 
-| Patrón de archivo | Skills que matchean |
-|--------------------|--------------------|
-| `.ts`, `.tsx` | Skills de TypeScript, React |
-| `app/**`, `pages/**` | Skills de framework/routing |
-| `*.test.*`, `*.spec.*` | Skills de testing |
-| Archivos de estilo | Skills de CSS/styling |
+| Patrón de archivo      | Skills que matchean         |
+| ---------------------- | --------------------------- |
+| `.ts`, `.tsx`          | Skills de TypeScript, React |
+| `app/**`, `pages/**`   | Skills de framework/routing |
+| `*.test.*`, `*.spec.*` | Skills de testing           |
+| Archivos de estilo     | Skills de CSS/styling       |
 
 **B. Contexto de tarea** — ¿qué ACCIONES va a realizar?
 
-| Acción del sub-agente | Matchea skills con triggers que mencionan... |
-|-----------------------|---------------------------------------------|
-| Crear un PR | "PR", "pull request" |
-| Escribir/revisar código | El framework/lenguaje específico |
-| Ejecutar tests | "test", "testing", "spec" |
-| Crear issues | "issue", "epic", "task" |
+| Acción del sub-agente   | Matchea skills con triggers que mencionan...  |
+| ----------------------- | --------------------------------------------- |
+| Crear un PR             | "PR", "pull request"                          |
+| Escribir/revisar código | El framework/lenguaje específico              |
+| Ejecutar tests          | "test", "testing", "spec"                     |
+| Crear issues            | "issue", "epic", "task"                       |
 
 ### Inyección en el Sub-agente
 
@@ -222,12 +221,12 @@ Esta sección va **ANTES** de las instrucciones específicas de la tarea, para q
 
 Los sub-agentes reportan cómo resolvieron sus skills en el campo `skill_resolution` del sobre de retorno:
 
-| Valor | Significado | Acción del orquestador |
-|-------|-------------|----------------------|
-| `injected` | Recibió `## Project Standards` del orquestador | ✅ Todo bien |
+| Valor               | Significado                                             | Acción del orquestador             |
+| ------------------- | ------------------------------------------------------- | ---------------------------------- |
+| `injected`          | Recibió `## Project Standards` del orquestador          | ✅ Todo bien                        |
 | `fallback-registry` | No recibió estándares, cargó del registro por su cuenta | ⚠️ Re-leer registro inmediatamente |
-| `fallback-path` | No recibió estándares, cargó vía `SKILL: Load` | ⚠️ Re-leer registro inmediatamente |
-| `none` | No cargó ningún skill | ⚠️ Re-leer registro inmediatamente |
+| `fallback-path`     | No recibió estándares, cargó vía `SKILL: Load`          | ⚠️ Re-leer registro inmediatamente |
+| `none`              | No cargó ningún skill                                   | ⚠️ Re-leer registro inmediatamente |
 
 Si el orquestador detecta cualquier valor distinto de `injected`, DEBE:
 1. Re-leer el registro de skills inmediatamente (pudo perderse por compactación)
@@ -239,67 +238,52 @@ Si el orquestador detecta cualquier valor distinto de `injected`, DEBE:
 ## 6. Diagrama de Flujo de una Delegación
 
 ```
-┌──────────────┐
-│   Solicitud  │
-│  del Usuario │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────────────────────────────────────────────────┐
-│                    ORQUESTADOR                           │
-│                                                          │
-│  1. Interpretar solicitud                                │
-│  2. Decidir: ¿delegar o responder directo?               │
-│  3. Si delegar:                                          │
-│     a. Matchear skills relevantes (code + task context)  │
-│     b. Seleccionar modelo apropiado (tabla de asignación)│
-│     c. Componer prompt: Project Standards + instrucciones│
-│     d. Lanzar sub-agente                                 │
-└──────────────────────┬───────────────────────────────────┘
+  Solicitud del Usuario
+          │
+          ▼
+  ┌─ ORQUESTADOR ──────────────────────────────────┐
+  │  1. Interpretar solicitud                       │
+  │  2. ¿Delegar o responder directo?               │
+  │  3. Si delegar:                                 │
+  │     a. Matchear skills (code + task context)    │
+  │     b. Seleccionar modelo (tabla de asignación) │
+  │     c. Componer prompt: Standards + instrucciones│
+  │     d. Lanzar sub-agente                        │
+  └────────────────────┬───────────────────────────┘
                        │
                        ▼
-┌──────────────────────────────────────────────────────────┐
-│                    SUB-AGENTE                            │
-│                                                          │
-│  Contexto fresco:                                        │
-│  ┌─────────────────────────────────────┐                 │
-│  │ ## Project Standards (auto-resolved)│ ← Skills        │
-│  │ {compact rules inyectadas}          │                 │
-│  ├─────────────────────────────────────┤                 │
-│  │ Instrucciones de tarea              │ ← Fase/acción   │
-│  ├─────────────────────────────────────┤                 │
-│  │ Rutas a artefactos (si SDD)        │ ← Dependencias  │
-│  └─────────────────────────────────────┘                 │
-│                                                          │
-│  Ejecuta trabajo → Produce resultado                     │
-└──────────────────────┬───────────────────────────────────┘
+  ┌─ SUB-AGENTE (contexto fresco) ─────────────────┐
+  │                                                 │
+  │  ┌ ## Project Standards (auto-resolved) ┐       │
+  │  │ {compact rules inyectadas}           │ Skills│
+  │  ├──────────────────────────────────────┤       │
+  │  │ Instrucciones de tarea               │ Fase  │
+  │  ├──────────────────────────────────────┤       │
+  │  │ Rutas a artefactos (si SDD)         │ Deps  │
+  │  └─────────────────────────────────────┘       │
+  │                                                 │
+  │  Ejecuta trabajo → Produce resultado            │
+  └────────────────────┬───────────────────────────┘
                        │
                        ▼
-┌──────────────────────────────────────────────────────────┐
-│                 SOBRE DE RETORNO                         │
-│                                                          │
-│  • status: success | partial | blocked                   │
-│  • executive_summary: resumen de 1-3 oraciones           │
-│  • artifacts: lista de artefactos escritos                │
-│  • next_recommended: siguiente fase recomendada          │
-│  • risks: riesgos descubiertos                           │
-│  • skill_resolution: injected | fallback-* | none        │
-└──────────────────────┬───────────────────────────────────┘
+  ┌─ SOBRE DE RETORNO ─────────────────────────────┐
+  │  • status: success | partial | blocked          │
+  │  • executive_summary                            │
+  │  • artifacts                                    │
+  │  • next_recommended                             │
+  │  • risks                                        │
+  │  • skill_resolution: injected | fallback | none │
+  └────────────────────┬───────────────────────────┘
                        │
                        ▼
-┌──────────────────────────────────────────────────────────┐
-│                    ORQUESTADOR                           │
-│                                                          │
-│  1. Verificar skill_resolution (auto-corrección)         │
-│  2. Sintetizar resultado para el usuario                 │
-│  3. Decidir siguiente paso                               │
-└──────────────────────┬───────────────────────────────────┘
+  ┌─ ORQUESTADOR ──────────────────────────────────┐
+  │  1. Verificar skill_resolution (auto-corrección)│
+  │  2. Sintetizar resultado para el usuario        │
+  │  3. Decidir siguiente paso                      │
+  └────────────────────┬───────────────────────────┘
                        │
                        ▼
-┌──────────────┐
-│   Respuesta  │
-│  al Usuario  │
-└──────────────┘
+  Respuesta al Usuario
 ```
 
 ---
@@ -308,15 +292,15 @@ Si el orquestador detecta cualquier valor distinto de `injected`, DEBE:
 
 Todo sub-agente DEBE devolver un sobre estructurado con estos campos:
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| `status` | `success` \| `partial` \| `blocked` | Estado de la ejecución |
-| `executive_summary` | string (1-3 oraciones) | Resumen conciso de lo realizado |
-| `detailed_report` | string (opcional) | Informe completo de la fase |
-| `artifacts` | lista de rutas/claves | Artefactos escritos o generados |
-| `next_recommended` | string | Siguiente fase SDD recomendada, o "none" |
-| `risks` | lista o "None" | Riesgos descubiertos durante la ejecución |
-| `skill_resolution` | string | Cómo se cargaron los skills (ver [sección 5](#5-protocolo-de-resolución-de-skills)) |
+| Campo               | Tipo                   | Descripción                                                                         |           |                        |
+| ------------------- | ---------------------- | ----------------------------------------------------------------------------------- | --------- | ---------------------- |
+| `status`            | `success` \            | `partial` \                                                                         | `blocked` | Estado de la ejecución |
+| `executive_summary` | string (1-3 oraciones) | Resumen conciso de lo realizado                                                     |           |                        |
+| `detailed_report`   | string (opcional)      | Informe completo de la fase                                                         |           |                        |
+| `artifacts`         | lista de rutas/claves  | Artefactos escritos o generados                                                     |           |                        |
+| `next_recommended`  | string                 | Siguiente fase SDD recomendada, o "none"                                            |           |                        |
+| `risks`             | lista o "None"         | Riesgos descubiertos durante la ejecución                                           |           |                        |
+| `skill_resolution`  | string                 | Cómo se cargaron los skills (ver [sección 5](#5-protocolo-de-resolución-de-skills)) |           |                        |
 
 ### Ejemplo de sobre
 
@@ -337,11 +321,11 @@ Este contrato es el **único canal de comunicación** entre sub-agentes y orques
 
 El orquestador clasifica cada solicitud del usuario y decide el nivel de respuesta apropiado:
 
-| Tamaño de la tarea | Acción del orquestador | Ejemplo |
-|---------------------|----------------------|---------|
-| **Pregunta simple** | Responder directamente si lo sabe, delegar si no | "¿Qué versión de Node usamos?" |
-| **Tarea pequeña** | Delegar a un sub-agente general | "Corrige este bug en auth.ts" |
-| **Feature sustancial** | Sugerir flujo SDD: `/sdd-new {nombre}` | "Agrega autenticación con OAuth" |
+| Tamaño de la tarea     | Acción del orquestador                           | Ejemplo                          |
+| ---------------------- | ------------------------------------------------ | -------------------------------- |
+| **Pregunta simple**    | Responder directamente si lo sabe, delegar si no | "¿Qué versión de Node usamos?"   |
+| **Tarea pequeña**      | Delegar a un sub-agente general                  | "Corrige este bug en auth.ts"    |
+| **Feature sustancial** | Sugerir flujo SDD: `/sdd-new {nombre}`           | "Agrega autenticación con OAuth" |
 
 ### Criterios para SDD
 

@@ -84,12 +84,12 @@ openspec/changes/{change-name}/
 
 Each task MUST be:
 
-| Criteria | Example ✅ | Anti-example ❌ |
-|----------|-----------|----------------|
-| **Specific** | "Create `internal/auth/middleware.go` with JWT validation" | "Add auth" |
-| **Actionable** | "Add `ValidateToken()` method to `AuthService`" | "Handle tokens" |
-| **Verifiable** | "Test: `POST /login` returns 401 without token" | "Make sure it works" |
-| **Small** | One file or one logical unit of work | "Implement the feature" |
+| Criteria       | Example ✅                                                  | Anti-example ❌          |
+| -------------- | ---------------------------------------------------------- | ----------------------- |
+| **Specific**   | "Create `internal/auth/middleware.go` with JWT validation" | "Add auth"              |
+| **Actionable** | "Add `ValidateToken()` method to `AuthService`"            | "Handle tokens"         |
+| **Verifiable** | "Test: `POST /login` returns 401 without token"            | "Make sure it works"    |
+| **Small**      | One file or one logical unit of work                       | "Implement the feature" |
 
 ### Phase Organization Guidelines
 

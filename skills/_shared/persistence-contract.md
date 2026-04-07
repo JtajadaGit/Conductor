@@ -13,19 +13,19 @@ When falling back to `none`, recommend the user enable `openspec`.
 
 ## Behavior Per Mode
 
-| Mode | Read from | Write to | Project files |
-|------|-----------|----------|---------------|
-| `openspec` | Filesystem | Filesystem | Yes |
-| `none` | Orchestrator prompt context | Nowhere | Never |
+| Mode       | Read from                   | Write to   | Project files   |
+| ---------- | --------------------------- | ---------- | --------------- |
+| `openspec` | Filesystem                  | Filesystem | Yes             |
+| `none`     | Orchestrator prompt context | Nowhere    | Never           |
 
 ## State Persistence (Orchestrator)
 
 The orchestrator persists DAG state after each phase transition to enable SDD recovery after compaction.
 
-| Mode | Persist State | Recover State |
-|------|--------------|---------------|
+| Mode       | Persist State                                     | Recover State                                    |
+| ---------- | ------------------------------------------------- | ------------------------------------------------ |
 | `openspec` | Write `openspec/changes/{change-name}/state.yaml` | Read `openspec/changes/{change-name}/state.yaml` |
-| `none` | Not possible — warn user | Not possible |
+| `none`     | Not possible — warn user                          | Not possible                                     |
 
 ## Common Rules
 

@@ -52,20 +52,20 @@ Cada archivo `SKILL.md` contiene:
 
 ## Tabla Resumen
 
-| Skill | Trigger | Propósito | Modelo |
-|-------|---------|-----------|--------|
-| `sdd-init` | `/sdd-init`, `sdd init`, `iniciar sdd` | Bootstrapear contexto SDD | sonnet |
-| `sdd-explore` | Lanzado por orquestador | Investigar codebase antes de un cambio | sonnet |
-| `sdd-propose` | Lanzado por orquestador | Crear propuesta de cambio estructurada | opus |
-| `sdd-spec` | Lanzado por orquestador | Escribir especificaciones delta con escenarios | sonnet |
-| `sdd-design` | Lanzado por orquestador | Diseño técnico: arquitectura y decisiones | opus |
-| `sdd-tasks` | Lanzado por orquestador | Desglose de tareas por fase | sonnet |
-| `sdd-apply` | Lanzado por orquestador | Implementar código siguiendo specs y diseño | sonnet |
-| `sdd-verify` | Lanzado por orquestador | Quality gate con ejecución real | sonnet |
-| `sdd-archive` | Lanzado por orquestador | Sincronizar specs delta y archivar | haiku |
-| `skill-registry` | `update skills`, `skill registry`, `actualizar skills` | Generar `.atl/skill-registry.md` | sonnet |
-| `skill-creator` | Solicitud de crear nueva skill | Guía para crear skills con estructura correcta | sonnet |
-| `judgment-day` | `judgment day`, `juzgar`, `que lo juzguen` | Revisión adversarial paralela con dos jueces | opus |
+| Skill            | Trigger                                                | Propósito                                      | Modelo   |
+| ---------------- | ------------------------------------------------------ | ---------------------------------------------- | -------- |
+| `sdd-init`       | `/sdd-init`, `sdd init`, `iniciar sdd`                 | Bootstrapear contexto SDD                      | sonnet   |
+| `sdd-explore`    | Lanzado por orquestador                                | Investigar codebase antes de un cambio         | sonnet   |
+| `sdd-propose`    | Lanzado por orquestador                                | Crear propuesta de cambio estructurada         | opus     |
+| `sdd-spec`       | Lanzado por orquestador                                | Escribir especificaciones delta con escenarios | sonnet   |
+| `sdd-design`     | Lanzado por orquestador                                | Diseño técnico: arquitectura y decisiones      | opus     |
+| `sdd-tasks`      | Lanzado por orquestador                                | Desglose de tareas por fase                    | sonnet   |
+| `sdd-apply`      | Lanzado por orquestador                                | Implementar código siguiendo specs y diseño    | sonnet   |
+| `sdd-verify`     | Lanzado por orquestador                                | Quality gate con ejecución real                | sonnet   |
+| `sdd-archive`    | Lanzado por orquestador                                | Sincronizar specs delta y archivar             | haiku    |
+| `skill-registry` | `update skills`, `skill registry`, `actualizar skills` | Generar `.atl/skill-registry.md`               | sonnet   |
+| `skill-creator`  | Solicitud de crear nueva skill                         | Guía para crear skills con estructura correcta | sonnet   |
+| `judgment-day`   | `judgment day`, `juzgar`, `que lo juzguen`             | Revisión adversarial paralela con dos jueces   | opus     |
 
 ---
 
@@ -81,11 +81,11 @@ proposal → specs ──→ tasks → apply → verify → archive
 
 ### sdd-init
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | `/sdd-init`, `sdd init`, `iniciar sdd`, `openspec init` |
-| **Propósito** | Bootstrapear el contexto SDD en cualquier proyecto |
-| **Modelo** | sonnet |
+| Campo         | Detalle                                                 |
+| ------------- | ------------------------------------------------------- |
+| **Trigger**   | `/sdd-init`, `sdd init`, `iniciar sdd`, `openspec init` |
+| **Propósito** | Bootstrapear el contexto SDD en cualquier proyecto      |
+| **Modelo**    | sonnet                                                  |
 
 **Qué hace:**
 
@@ -113,11 +113,11 @@ openspec/
 
 ### sdd-explore
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
+| Campo         | Detalle                                                     |
+| ------------- | ----------------------------------------------------------- |
+| **Trigger**   | Lanzado por el orquestador                                  |
 | **Propósito** | Investigar el codebase antes de comprometerse con un cambio |
-| **Modelo** | sonnet |
+| **Modelo**    | sonnet                                                      |
 
 **Qué hace:**
 
@@ -143,12 +143,12 @@ Risks               → Riesgos identificados
 
 ### sdd-propose
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
-| **Propósito** | Crear propuesta de cambio estructurada |
-| **Presupuesto** | < 400 palabras |
-| **Modelo** | opus |
+| Campo           | Detalle                                |
+| --------------- | -------------------------------------- |
+| **Trigger**     | Lanzado por el orquestador             |
+| **Propósito**   | Crear propuesta de cambio estructurada |
+| **Presupuesto** | < 400 palabras                         |
+| **Modelo**      | opus                                   |
 
 **Qué hace:**
 
@@ -156,15 +156,15 @@ Toma la exploración (o input directo) y produce un `proposal.md` estructurado.
 
 **Formato de salida:**
 
-| Sección | Contenido |
-|---------|-----------|
-| Intent | Qué problema resuelve y por qué |
-| Scope | In scope (entregables concretos) + Out of scope |
-| Approach | Estrategia técnica de alto nivel |
-| Affected Areas | Tabla con ruta, impacto (New/Modified/Removed), descripción |
-| Risks | Tabla con riesgo, probabilidad, mitigación |
-| Rollback Plan | Cómo revertir si algo falla |
-| Success Criteria | Criterios medibles de éxito |
+| Sección          | Contenido                                                   |
+| ---------------- | ----------------------------------------------------------- |
+| Intent           | Qué problema resuelve y por qué                             |
+| Scope            | In scope (entregables concretos) + Out of scope             |
+| Approach         | Estrategia técnica de alto nivel                            |
+| Affected Areas   | Tabla con ruta, impacto (New/Modified/Removed), descripción |
+| Risks            | Tabla con riesgo, probabilidad, mitigación                  |
+| Rollback Plan    | Cómo revertir si algo falla                                 |
+| Success Criteria | Criterios medibles de éxito                                 |
 
 **Reglas clave:**
 - ✅ **SIEMPRE** incluye rollback plan
@@ -176,12 +176,12 @@ Toma la exploración (o input directo) y produce un `proposal.md` estructurado.
 
 ### sdd-spec
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
-| **Propósito** | Escribir especificaciones delta con escenarios Given/When/Then |
-| **Presupuesto** | < 650 palabras |
-| **Modelo** | sonnet |
+| Campo           | Detalle                                                        |
+| --------------- | -------------------------------------------------------------- |
+| **Trigger**     | Lanzado por el orquestador                                     |
+| **Propósito**   | Escribir especificaciones delta con escenarios Given/When/Then |
+| **Presupuesto** | < 650 palabras                                                 |
+| **Modelo**      | sonnet                                                         |
 
 **Qué hace:**
 
@@ -209,13 +209,13 @@ The system MUST {comportamiento específico}.
 
 **Keywords RFC 2119:**
 
-| Keyword | Significado |
-|---------|-------------|
-| **MUST / SHALL** | Requisito absoluto |
-| **MUST NOT / SHALL NOT** | Prohibición absoluta |
-| **SHOULD** | Recomendado (excepciones justificadas) |
-| **SHOULD NOT** | No recomendado (puede ser aceptable con justificación) |
-| **MAY** | Opcional |
+| Keyword                  | Significado                                            |
+| ------------------------ | ------------------------------------------------------ |
+| **MUST / SHALL**         | Requisito absoluto                                     |
+| **MUST NOT / SHALL NOT** | Prohibición absoluta                                   |
+| **SHOULD**               | Recomendado (excepciones justificadas)                 |
+| **SHOULD NOT**           | No recomendado (puede ser aceptable con justificación) |
+| **MAY**                  | Opcional                                               |
 
 **Reglas clave:**
 - ✅ Cada requisito DEBE tener al menos UN escenario
@@ -227,12 +227,12 @@ The system MUST {comportamiento específico}.
 
 ### sdd-design
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
-| **Propósito** | Diseño técnico: CÓMO implementar el cambio |
-| **Presupuesto** | < 800 palabras |
-| **Modelo** | opus |
+| Campo           | Detalle                                    |
+| --------------- | ------------------------------------------ |
+| **Trigger**     | Lanzado por el orquestador                 |
+| **Propósito**   | Diseño técnico: CÓMO implementar el cambio |
+| **Presupuesto** | < 800 palabras                             |
+| **Modelo**      | opus                                       |
 
 **Qué hace:**
 
@@ -240,16 +240,16 @@ Produce un `design.md` con decisiones de arquitectura, flujo de datos, cambios d
 
 **Formato de salida:**
 
-| Sección | Contenido |
-|---------|-----------|
-| Technical Approach | Estrategia técnica general |
-| Architecture Decisions | Decision, Choice, Alternatives, Rationale |
-| Data Flow | Diagramas ASCII del flujo de datos |
-| File Changes | Tabla: archivo, acción (Create/Modify/Delete), descripción |
-| Interfaces / Contracts | Nuevas interfaces, APIs, tipos |
-| Testing Strategy | Qué testear por capa (Unit/Integration/E2E) |
-| Migration / Rollout | Plan de migración si aplica |
-| Open Questions | Preguntas técnicas sin resolver |
+| Sección                | Contenido                                                  |
+| ---------------------- | ---------------------------------------------------------- |
+| Technical Approach     | Estrategia técnica general                                 |
+| Architecture Decisions | Decision, Choice, Alternatives, Rationale                  |
+| Data Flow              | Diagramas ASCII del flujo de datos                         |
+| File Changes           | Tabla: archivo, acción (Create/Modify/Delete), descripción |
+| Interfaces / Contracts | Nuevas interfaces, APIs, tipos                             |
+| Testing Strategy       | Qué testear por capa (Unit/Integration/E2E)                |
+| Migration / Rollout    | Plan de migración si aplica                                |
+| Open Questions         | Preguntas técnicas sin resolver                            |
 
 **Reglas clave:**
 - ✅ **SIEMPRE** lee el código real antes de diseñar — nunca adivina
@@ -262,12 +262,12 @@ Produce un `design.md` con decisiones de arquitectura, flujo de datos, cambios d
 
 ### sdd-tasks
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
-| **Propósito** | Desglose concreto de tareas por fase |
-| **Presupuesto** | < 530 palabras |
-| **Modelo** | sonnet |
+| Campo           | Detalle                              |
+| --------------- | ------------------------------------ |
+| **Trigger**     | Lanzado por el orquestador           |
+| **Propósito**   | Desglose concreto de tareas por fase |
+| **Presupuesto** | < 530 palabras                       |
+| **Modelo**      | sonnet                               |
 
 **Qué hace:**
 
@@ -297,12 +297,12 @@ Phase 5: Cleanup
 
 **Criterios de cada tarea:**
 
-| Criterio | Ejemplo ✅ | Anti-ejemplo ❌ |
-|----------|-----------|----------------|
-| **Específica** | "Crear `internal/auth/middleware.go` con validación JWT" | "Agregar auth" |
-| **Accionable** | "Agregar método `ValidateToken()` a `AuthService`" | "Manejar tokens" |
-| **Verificable** | "Test: `POST /login` retorna 401 sin token" | "Verificar que funcione" |
-| **Pequeña** | Un archivo o una unidad lógica | "Implementar la feature" |
+| Criterio        | Ejemplo ✅                                                | Anti-ejemplo ❌           |
+| --------------- | -------------------------------------------------------- | ------------------------ |
+| **Específica**  | "Crear `internal/auth/middleware.go` con validación JWT" | "Agregar auth"           |
+| **Accionable**  | "Agregar método `ValidateToken()` a `AuthService`"       | "Manejar tokens"         |
+| **Verificable** | "Test: `POST /login` retorna 401 sin token"              | "Verificar que funcione" |
+| **Pequeña**     | Un archivo o una unidad lógica                           | "Implementar la feature" |
 
 **Reglas clave:**
 - ✅ Numeración jerárquica: 1.1, 1.2, 2.1, 2.2
@@ -315,11 +315,11 @@ Phase 5: Cleanup
 
 ### sdd-apply
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
+| Campo         | Detalle                                       |
+| ------------- | --------------------------------------------- |
+| **Trigger**   | Lanzado por el orquestador                    |
 | **Propósito** | Escribir código real siguiendo specs y diseño |
-| **Modelo** | sonnet |
+| **Modelo**    | sonnet                                        |
 
 **Qué hace:**
 
@@ -355,11 +355,11 @@ Cuando `strict_tdd: true` y hay test runner disponible, sdd-apply carga automát
 
 ### sdd-verify
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
+| Campo         | Detalle                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
+| **Trigger**   | Lanzado por el orquestador                                                      |
 | **Propósito** | Quality gate con ejecución real — probar que la implementación cumple las specs |
-| **Modelo** | sonnet |
+| **Modelo**    | sonnet                                                                          |
 
 **Qué hace:**
 
@@ -367,15 +367,15 @@ Verifica completitud, corrección y coherencia de la implementación ejecutando 
 
 **Pasos de verificación:**
 
-| Paso | Qué verifica |
-|------|-------------|
-| Completeness | ¿Todas las tareas están [x]? |
-| Correctness (Estática) | ¿Cada requisito de spec tiene evidencia estructural en el código? |
-| Coherence | ¿Se siguieron las decisiones del design? |
-| Tests Execution | Ejecuta test runner, captura resultados |
-| Build & Type Check | Ejecuta build/type-checker |
-| Coverage | Ejecuta cobertura si la herramienta está disponible |
-| **Spec Compliance Matrix** | La verificación más importante (ver abajo) |
+| Paso                       | Qué verifica                                                      |
+| -------------------------- | ----------------------------------------------------------------- |
+| Completeness               | ¿Todas las tareas están [x]?                                      |
+| Correctness (Estática)     | ¿Cada requisito de spec tiene evidencia estructural en el código? |
+| Coherence                  | ¿Se siguieron las decisiones del design?                          |
+| Tests Execution            | Ejecuta test runner, captura resultados                           |
+| Build & Type Check         | Ejecuta build/type-checker                                        |
+| Coverage                   | Ejecuta cobertura si la herramienta está disponible               |
+| **Spec Compliance Matrix** | La verificación más importante (ver abajo)                        |
 
 **Spec Compliance Matrix:**
 
@@ -397,11 +397,11 @@ FOR EACH REQUIREMENT:
 
 **Veredictos:**
 
-| Veredicto | Significado |
-|-----------|-------------|
-| **PASS** | Todo correcto, listo para archivar |
-| **PASS WITH WARNINGS** | Funcional pero con observaciones |
-| **FAIL** | Issues CRITICAL que deben resolverse |
+| Veredicto              | Significado                          |
+| ---------------------- | ------------------------------------ |
+| **PASS**               | Todo correcto, listo para archivar   |
+| **PASS WITH WARNINGS** | Funcional pero con observaciones     |
+| **FAIL**               | Issues CRITICAL que deben resolverse |
 
 **Reglas clave:**
 - ✅ **SIEMPRE** ejecuta tests — análisis estático solo NO es verificación
@@ -413,11 +413,11 @@ FOR EACH REQUIREMENT:
 
 ### sdd-archive
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Lanzado por el orquestador |
+| Campo         | Detalle                                         |
+| ------------- | ----------------------------------------------- |
+| **Trigger**   | Lanzado por el orquestador                      |
 | **Propósito** | Sincronizar delta specs a main specs y archivar |
-| **Modelo** | haiku |
+| **Modelo**    | haiku                                           |
 
 **Qué hace:**
 
@@ -446,11 +446,11 @@ Estas skills no forman parte del flujo SDD pero proveen funcionalidad esencial.
 
 ### skill-registry
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | `update skills`, `skill registry`, `actualizar skills`, `update registry` |
-| **Propósito** | Generar `.atl/skill-registry.md` — catálogo de skills con compact rules |
-| **Modelo** | sonnet |
+| Campo         | Detalle                                                                   |
+| ------------- | ------------------------------------------------------------------------- |
+| **Trigger**   | `update skills`, `skill registry`, `actualizar skills`, `update registry` |
+| **Propósito** | Generar `.atl/skill-registry.md` — catálogo de skills con compact rules   |
+| **Modelo**    | sonnet                                                                    |
 
 **Qué hace:**
 
@@ -484,11 +484,11 @@ Estas skills no forman parte del flujo SDD pero proveen funcionalidad esencial.
 
 ### skill-creator
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | Cuando el usuario pide crear una nueva skill |
+| Campo         | Detalle                                        |
+| ------------- | ---------------------------------------------- |
+| **Trigger**   | Cuando el usuario pide crear una nueva skill   |
 | **Propósito** | Guía para crear skills con estructura correcta |
-| **Modelo** | sonnet |
+| **Modelo**    | sonnet                                         |
 
 **Cuándo crear una skill:**
 - ✅ Un patrón se usa repetidamente y la IA necesita guía
@@ -500,12 +500,12 @@ Estas skills no forman parte del flujo SDD pero proveen funcionalidad esencial.
 
 **Convenciones de nombres:**
 
-| Tipo | Patrón | Ejemplos |
-|------|--------|----------|
-| Genérica | `{technology}` | `python`, `vitest`, `typescript` |
-| Proyecto | `{project}-{component}` | `myapp-api`, `myapp-ui` |
-| Testing | `{project}-test-{component}` | `myapp-test-sdk` |
-| Workflow | `{action}-{target}` | `skill-creator` |
+| Tipo     | Patrón                       | Ejemplos                         |
+| -------- | ---------------------------- | -------------------------------- |
+| Genérica | `{technology}`               | `python`, `vitest`, `typescript` |
+| Proyecto | `{project}-{component}`      | `myapp-api`, `myapp-ui`          |
+| Testing  | `{project}-test-{component}` | `myapp-test-sdk`                 |
+| Workflow | `{action}-{target}`          | `skill-creator`                  |
 
 **Checklist:**
 - [ ] Skill no existe previamente
@@ -520,11 +520,11 @@ Estas skills no forman parte del flujo SDD pero proveen funcionalidad esencial.
 
 ### judgment-day
 
-| Campo | Detalle |
-|-------|---------|
-| **Trigger** | `judgment day`, `judgment-day`, `review adversarial`, `dual review`, `doble review`, `juzgar`, `que lo juzguen` |
-| **Propósito** | Revisión adversarial paralela con dos jueces ciegos independientes |
-| **Modelo** | opus (orquestación) |
+| Campo         | Detalle                                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Trigger**   | `judgment day`, `judgment-day`, `review adversarial`, `dual review`, `doble review`, `juzgar`, `que lo juzguen` |
+| **Propósito** | Revisión adversarial paralela con dos jueces ciegos independientes                                              |
+| **Modelo**    | opus (orquestación)                                                                                             |
 
 Documentación completa en [⚖️ Judgment Day — Revisión Adversarial](./06-judgment-day.md).
 
@@ -560,10 +560,10 @@ Define las secciones comunes que TODAS las skills SDD siguen:
 
 Define los modos de almacenamiento de artefactos:
 
-| Modo | Comportamiento |
-|------|----------------|
-| `openspec` | Artefactos en archivos bajo `openspec/` |
-| `none` | Retornar resultado inline, sin persistir archivos |
+| Modo       | Comportamiento                                    |
+| ---------- | ------------------------------------------------- |
+| `openspec` | Artefactos en archivos bajo `openspec/`           |
+| `none`     | Retornar resultado inline, sin persistir archivos |
 
 ### openspec-convention.md — Estructura de Directorio
 

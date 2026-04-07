@@ -16,10 +16,10 @@ Judgment Day es un protocolo de **revisión adversarial paralela** que lanza dos
 
 Judgment Day se activa con cualquiera de estas frases:
 
-| Idioma | Triggers |
-|--------|----------|
-| Inglés | `judgment day`, `judgment-day`, `review adversarial`, `dual review` |
-| Español | `juzgar`, `que lo juzguen`, `doble review` |
+| Idioma   | Triggers                                                            |
+| -------- | ------------------------------------------------------------------- |
+| Inglés   | `judgment day`, `judgment-day`, `review adversarial`, `dual review` |
+| Español  | `juzgar`, `que lo juzguen`, `doble review`                          |
 
 ---
 
@@ -49,14 +49,14 @@ Ambos jueces reciben:
 
 **Criterios de revisión estándar:**
 
-| Criterio | Qué evalúa |
-|----------|-------------|
-| Correctness | ¿El código hace lo que dice? ¿Hay errores lógicos? |
-| Edge cases | ¿Qué inputs o estados no se manejan? |
-| Error handling | ¿Se capturan, propagan y loguean errores correctamente? |
-| Performance | ¿Hay queries N+1, loops ineficientes, allocations innecesarias? |
-| Security | ¿Hay riesgos de injection, secrets expuestos, auth checks faltantes? |
-| Naming & conventions | ¿Sigue los patrones establecidos del proyecto? |
+| Criterio             | Qué evalúa                                                           |
+| -------------------- | -------------------------------------------------------------------- |
+| Correctness          | ¿El código hace lo que dice? ¿Hay errores lógicos?                   |
+| Edge cases           | ¿Qué inputs o estados no se manejan?                                 |
+| Error handling       | ¿Se capturan, propagan y loguean errores correctamente?              |
+| Performance          | ¿Hay queries N+1, loops ineficientes, allocations innecesarias?      |
+| Security             | ¿Hay riesgos de injection, secrets expuestos, auth checks faltantes? |
+| Naming & conventions | ¿Sigue los patrones establecidos del proyecto?                       |
 
 El usuario puede agregar criterios custom que se incluyen en ambos jueces.
 
@@ -64,65 +64,54 @@ El usuario puede agregar criterios custom que se incluyen en ambos jueces.
 
 El orquestador (NO un sub-agente) compara los resultados:
 
-```
-                     Judge A encontró    Judge A NO encontró
-                    ┌───────────────────┬─────────────────────┐
-Judge B encontró    │    CONFIRMED      │    SUSPECT (B only) │
-                    │  (alta confianza) │    (requiere triaje) │
-                    ├───────────────────┼─────────────────────┤
-Judge B NO encontró │  SUSPECT (A only) │       (no issue)     │
-                    │  (requiere triaje)│                      │
-                    └───────────────────┴─────────────────────┘
-```
+|                         | Judge A encontró                   | Judge A NO encontró                |
+| ----------------------- | ---------------------------------- | ---------------------------------- |
+| **Judge B encontró**    | **CONFIRMED** (alta confianza)     | SUSPECT (B only) — requiere triaje |
+| **Judge B NO encontró** | SUSPECT (A only) — requiere triaje | *(no issue)*                       |
 
 ### Step 3: Clasificación
 
-| Categoría | Significado | Acción |
-|-----------|-------------|--------|
-| **Confirmed** | Encontrado por AMBOS jueces | Alta confianza → corregir inmediatamente |
-| **Suspect A** | Solo Judge A lo encontró | Triaje — puede ser falso positivo o punto ciego de B |
-| **Suspect B** | Solo Judge B lo encontró | Triaje — puede ser falso positivo o punto ciego de A |
-| **Contradiction** | Jueces DESACUERDAN sobre lo mismo | Marcar para decisión manual del usuario |
+| Categoría         | Significado                       | Acción                                               |
+| ----------------- | --------------------------------- | ---------------------------------------------------- |
+| **Confirmed**     | Encontrado por AMBOS jueces       | Alta confianza → corregir inmediatamente             |
+| **Suspect A**     | Solo Judge A lo encontró          | Triaje — puede ser falso positivo o punto ciego de B |
+| **Suspect B**     | Solo Judge B lo encontró          | Triaje — puede ser falso positivo o punto ciego de A |
+| **Contradiction** | Jueces DESACUERDAN sobre lo mismo | Marcar para decisión manual del usuario              |
 
 ### Step 4: Fix Agent → Re-judge
 
 ```
-¿Hay issues?
-│
-├── NO issues encontrados
-│   └── JUDGMENT: APPROVED ✅
-│       (parar aquí)
-│
-└── SÍ hay issues
-    └── Delegar Fix Agent con issues confirmados
-        │
-        ▼
-        Fix Agent aplica correcciones
-        │
-        ▼ ⚠️  BLOCKING: La siguiente acción DEBE ser re-lanzar jueces.
-        │     NO push, NO commit, NO mensaje al usuario.
-        │
-        ▼
-        Re-lanzar Judge A + Judge B en paralelo (Round 2)
-        │
-        ▼
-        Sintetizar veredicto
-        │
-        ├── Limpio → JUDGMENT: APPROVED ✅
-        │
-        └── Aún hay issues → Fix Agent de nuevo (Round 3 / iteración 2)
-            │
-            ▼
-            Re-lanzar jueces (Round 3)
-            │
-            ├── Limpio → JUDGMENT: APPROVED ✅
-            │
-            └── Aún hay issues
-                └── PREGUNTAR al usuario:
-                    "Issues persisten después de 2 iteraciones. ¿Continuar?"
-                    │
-                    ├── SÍ → repetir ciclo fix + judge (sin límite)
-                    └── NO → JUDGMENT: ESCALATED ⚠️
+  ¿Hay issues?
+  │
+  ├── NO ──▶ JUDGMENT: APPROVED ✅ (fin)
+  │
+  └── SÍ hay issues
+      │
+      ├── Solo suspects (sin confirmed)
+      │   └── JUDGMENT: NEEDS TRIAGE ──▶ reportar al usuario
+      │
+      └── Issues confirmados
+          └── Fix Agent aplica correcciones
+              │
+              ▼  ⚠️  BLOCKING: siguiente acción = re-lanzar jueces
+              │
+              Re-lanzar Judge A + Judge B en paralelo (Round 2)
+              │
+              ├── Limpio ──▶ JUDGMENT: APPROVED ✅
+              │
+              └── Aún hay issues ──▶ Fix Agent de nuevo (iteración 2)
+                  │
+                  Re-lanzar jueces (Round 3)
+                  │
+                  ├── Limpio ──▶ JUDGMENT: APPROVED ✅
+                  │
+                  └── Aún hay issues
+                      │
+                      PREGUNTAR al usuario:
+                      "Issues persisten tras 2 iteraciones. ¿Continuar?"
+                      │
+                      ├── SÍ ──▶ repetir ciclo fix + judge
+                      └── NO  ──▶ JUDGMENT: ESCALATED ⚠️
 ```
 
 ---
@@ -131,13 +120,13 @@ Judge B NO encontró │  SUSPECT (A only) │       (no issue)     │
 
 Estas reglas **no pueden omitirse, anularse ni depriorizarse** bajo ninguna circunstancia:
 
-| # | Regla |
-|---|-------|
-| 1 | **NUNCA** declarar `JUDGMENT: APPROVED` hasta que ambos jueces de Round 2 retornen CLEAN |
-| 2 | **NUNCA** ejecutar `git push`, `git commit`, ni ninguna acción que modifique código después de fixes hasta que re-judgment se complete |
-| 3 | **NUNCA** guardar resumen de sesión ni decir "listo" al usuario hasta que cada JD alcance estado terminal (APPROVED o ESCALATED) |
-| 4 | Después de que el Fix Agent retorne, la **INMEDIATA** siguiente acción es lanzar jueces Round 2 en paralelo. Ninguna otra acción puede ir primero |
-| 5 | Si hay múltiples JDs en paralelo, cada uno es **independiente**. Que uno complete NO permite saltear rounds en otro |
+| #   | Regla                                                                                                                                             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **NUNCA** declarar `JUDGMENT: APPROVED` hasta que ambos jueces de Round 2 retornen CLEAN                                                          |
+| 2   | **NUNCA** ejecutar `git push`, `git commit`, ni ninguna acción que modifique código después de fixes hasta que re-judgment se complete            |
+| 3   | **NUNCA** guardar resumen de sesión ni decir "listo" al usuario hasta que cada JD alcance estado terminal (APPROVED o ESCALATED)                  |
+| 4   | Después de que el Fix Agent retorne, la **INMEDIATA** siguiente acción es lanzar jueces Round 2 en paralelo. Ninguna otra acción puede ir primero |
+| 5   | Si hay múltiples JDs en paralelo, cada uno es **independiente**. Que uno complete NO permite saltear rounds en otro                               |
 
 ### Self-Check (antes de CUALQUIER acción terminal)
 
@@ -221,29 +210,29 @@ Recomendación: revisión humana de los issues restantes antes de re-ejecutar ju
 
 ## Cuándo Usar Judgment Day
 
-| Escenario | ¿Usar JD? | Razón |
-|-----------|-----------|-------|
-| Pre-merge de feature importante | ✅ Sí | Última línea de defensa antes de merge |
-| Cambios críticos de seguridad | ✅ Sí | El costo de un bug en producción > costo de dos reviews |
-| Refactoring de infraestructura | ✅ Sí | Cambios amplios pueden tener efectos no obvios |
-| Fix de typo en un README | ❌ No | Overkill para cambios triviales |
-| Cambio de una línea bien entendido | ❌ No | Un solo review es suficiente |
-| Exploración/prototipo | ❌ No | No es código de producción aún |
+| Escenario                          | ¿Usar JD?   | Razón                                                   |
+| ---------------------------------- | ----------- | ------------------------------------------------------- |
+| Pre-merge de feature importante    | ✅ Sí        | Última línea de defensa antes de merge                  |
+| Cambios críticos de seguridad      | ✅ Sí        | El costo de un bug en producción > costo de dos reviews |
+| Refactoring de infraestructura     | ✅ Sí        | Cambios amplios pueden tener efectos no obvios          |
+| Fix de typo en un README           | ❌ No        | Overkill para cambios triviales                         |
+| Cambio de una línea bien entendido | ❌ No        | Un solo review es suficiente                            |
+| Exploración/prototipo              | ❌ No        | No es código de producción aún                          |
 
 ---
 
 ## Diferencia con sdd-verify
 
-| Aspecto | sdd-verify | Judgment Day |
-|---------|-----------|--------------|
-| **Propósito** | Verificar que la implementación cumple las specs | Encontrar problemas que las specs no anticiparon |
-| **Enfoque** | Compliance (¿se hizo lo que se dijo?) | Adversarial (¿qué puede salir mal?) |
-| **Input** | Specs, design, tasks → compare vs código | Código → buscar bugs, edge cases, security |
-| **Output** | Spec Compliance Matrix | Verdict table con hallazgos categorizados |
-| **Ejecuta tests?** | Sí — ejecución real obligatoria | No directamente — los jueces leen e inspeccionan |
-| **Corrige?** | No — solo reporta | Sí — Fix Agent corrige issues confirmados |
-| **Cuántos revisores?** | Uno | Dos (paralelos, ciegos, independientes) |
-| **Cuándo usarlo** | Después de `sdd-apply` (parte del flujo SDD) | Antes de merge o en momentos críticos |
+| Aspecto                | sdd-verify                                       | Judgment Day                                     |
+| ---------------------- | ------------------------------------------------ | ------------------------------------------------ |
+| **Propósito**          | Verificar que la implementación cumple las specs | Encontrar problemas que las specs no anticiparon |
+| **Enfoque**            | Compliance (¿se hizo lo que se dijo?)            | Adversarial (¿qué puede salir mal?)              |
+| **Input**              | Specs, design, tasks → compare vs código         | Código → buscar bugs, edge cases, security       |
+| **Output**             | Spec Compliance Matrix                           | Verdict table con hallazgos categorizados        |
+| **Ejecuta tests?**     | Sí — ejecución real obligatoria                  | No directamente — los jueces leen e inspeccionan |
+| **Corrige?**           | No — solo reporta                                | Sí — Fix Agent corrige issues confirmados        |
+| **Cuántos revisores?** | Uno                                              | Dos (paralelos, ciegos, independientes)          |
+| **Cuándo usarlo**      | Después de `sdd-apply` (parte del flujo SDD)     | Antes de merge o en momentos críticos            |
 
 **En resumen:**
 - `sdd-verify` responde: *"¿Se construyó lo que se especificó?"*
@@ -257,12 +246,12 @@ Ambos son complementarios. Para cambios críticos, ejecutar `sdd-verify` primero
 
 Después de cada delegación que retorna resultado, verificar el campo `**Skill Resolution**` en cada respuesta de juez/fix-agent:
 
-| Valor | Significado | Acción |
-|-------|-------------|--------|
-| `injected` | Skills inyectadas correctamente ✅ | Ninguna |
-| `fallback-registry` | No recibió standards, cargó del registry | Re-leer registry inmediatamente |
-| `fallback-path` | No recibió standards, cargó por path | Re-leer registry inmediatamente |
-| `none` | Sin skills cargadas | Re-leer registry + advertir al usuario |
+| Valor               | Significado                              | Acción                                 |
+| ------------------- | ---------------------------------------- | -------------------------------------- |
+| `injected`          | Skills inyectadas correctamente ✅        | Ninguna                                |
+| `fallback-registry` | No recibió standards, cargó del registry | Re-leer registry inmediatamente        |
+| `fallback-path`     | No recibió standards, cargó por path     | Re-leer registry inmediatamente        |
+| `none`              | Sin skills cargadas                      | Re-leer registry + advertir al usuario |
 
 Este es un mecanismo de auto-corrección. **NUNCA** ignorar reportes de fallback — indican que el orquestador perdió contexto (probablemente por compactación).
 
@@ -270,10 +259,10 @@ Este es un mecanismo de auto-corrección. **NUNCA** ignorar reportes de fallback
 
 ## Idioma
 
-| Input del usuario | Respuesta del orquestador |
-|-------------------|---------------------------|
-| Español | Rioplatense: "Juicio iniciado", "Los jueces están trabajando en paralelo...", "Los jueces coinciden", "Juicio terminado — Aprobado" |
-| Inglés | "Judgment initiated", "Both judges are working in parallel...", "Both judges agree", "Judgment complete — Approved" |
+| Input del usuario   | Respuesta del orquestador                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Español             | Rioplatense: "Juicio iniciado", "Los jueces están trabajando en paralelo...", "Los jueces coinciden", "Juicio terminado — Aprobado" |
+| Inglés              | "Judgment initiated", "Both judges are working in parallel...", "Both judges agree", "Judgment complete — Approved"                 |
 
 ---
 

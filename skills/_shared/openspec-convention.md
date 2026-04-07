@@ -24,21 +24,20 @@ openspec/
 
 ## Artifact File Paths
 
-| Skill | Creates / Reads | Path |
-|-------|----------------|------|
-| orchestrator | Creates/Updates | `openspec/changes/{change-name}/state.yaml` |
-| sdd-init | Creates | `openspec/config.yaml`, `openspec/specs/`, `openspec/changes/`, `openspec/changes/archive/` |
-| sdd-explore | Creates (optional) | `openspec/changes/{change-name}/exploration.md` |
-| sdd-propose | Creates | `openspec/changes/{change-name}/proposal.md` |
-| sdd-spec | Creates | `openspec/changes/{change-name}/specs/{domain}/spec.md` |
-| sdd-design | Creates | `openspec/changes/{change-name}/design.md` |
-| sdd-tasks | Creates | `openspec/changes/{change-name}/tasks.md` |
-| sdd-apply | Updates | `openspec/changes/{change-name}/tasks.md` (marks `[x]`) |
-| sdd-verify | Creates | `openspec/changes/{change-name}/verify-report.md` |
-| sdd-archive | Moves | `openspec/changes/{change-name}/` → `openspec/changes/archive/YYYY-MM-DD-{change-name}/` |
-| sdd-archive | Updates | `openspec/specs/{domain}/spec.md` (merges deltas into main specs) |
-| sdd-apply | Tracked via | `[x]` marks in `tasks.md` | Inline in return envelope |
-| sdd-archive | Creates | `openspec/changes/archive/YYYY-MM-DD-{name}/archive-report.md` |
+| Skill        | Creates / Reads    | Path                                                                                        |
+| ------------ | ------------------ | ------------------------------------------------------------------------------------------- |
+| orchestrator | Creates/Updates    | `openspec/changes/{change-name}/state.yaml`                                                 |
+| sdd-init     | Creates            | `openspec/config.yaml`, `openspec/specs/`, `openspec/changes/`, `openspec/changes/archive/` |
+| sdd-explore  | Creates (optional) | `openspec/changes/{change-name}/exploration.md`                                             |
+| sdd-propose  | Creates            | `openspec/changes/{change-name}/proposal.md`                                                |
+| sdd-spec     | Creates            | `openspec/changes/{change-name}/specs/{domain}/spec.md`                                     |
+| sdd-design   | Creates            | `openspec/changes/{change-name}/design.md`                                                  |
+| sdd-tasks    | Creates            | `openspec/changes/{change-name}/tasks.md`                                                   |
+| sdd-apply    | Updates            | `openspec/changes/{change-name}/tasks.md` (marks `[x]`)                                     |
+| sdd-verify   | Creates            | `openspec/changes/{change-name}/verify-report.md`                                           |
+| sdd-archive  | Moves              | `openspec/changes/{change-name}/` → `openspec/changes/archive/YYYY-MM-DD-{change-name}/`    |
+| sdd-archive  | Updates            | `openspec/specs/{domain}/spec.md` (merges deltas into main specs)                           |
+| sdd-archive  | Creates            | `openspec/changes/archive/YYYY-MM-DD-{name}/archive-report.md`                              |
 
 ## Reading Artifacts
 

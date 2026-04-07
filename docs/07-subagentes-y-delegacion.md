@@ -15,20 +15,18 @@ Un sub-agente es un agente de IA independiente lanzado por el orquestador para e
 - **No lanza otros sub-agentes** — es un nodo terminal en la cadena de delegación
 
 ```
-┌─────────────────────────────────────────────┐
-│              ORQUESTADOR                    │
-│  (coordinador — NO ejecuta trabajo real)    │
-├─────────────────────────────────────────────┤
-│                                             │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐    │
-│  │Sub-agent│  │Sub-agent│  │Sub-agent│    │
-│  │ explore │  │  apply  │  │ verify  │    │
-│  │(efímero)│  │(efímero)│  │(efímero)│    │
-│  └─────────┘  └─────────┘  └─────────┘    │
-│                                             │
-│  Cada uno: contexto fresco, tarea única,    │
-│  retorna resultado, desaparece.             │
-└─────────────────────────────────────────────┘
+  ┌─ ORQUESTADOR ─────────────────────────────────┐
+  │  (coordinador — NO ejecuta trabajo real)       │
+  │                                                │
+  │  ┌──────────┐  ┌──────────┐  ┌──────────┐     │
+  │  │ Sub-agent│  │ Sub-agent│  │ Sub-agent│     │
+  │  │ explore  │  │  apply   │  │  verify  │     │
+  │  │(efímero) │  │(efímero) │  │(efímero) │     │
+  │  └──────────┘  └──────────┘  └──────────┘     │
+  │                                                │
+  │  Cada uno: contexto fresco, tarea única,       │
+  │  retorna resultado, desaparece.                │
+  └────────────────────────────────────────────────┘
 ```
 
 ---
@@ -82,16 +80,16 @@ Para tareas que no forman parte del pipeline SDD (correcciones de bugs, refactor
 
 Cada fase SDD tiene reglas explícitas de qué artefactos lee y qué artefacto produce:
 
-| Fase | Lee del backend | Escribe artefacto |
-|------|----------------|-------------------|
-| `sdd-explore` | Nada | `exploration.md` |
-| `sdd-propose` | Exploración (si existe, opcional) | `proposal.md` |
-| `sdd-spec` | Propuesta (requerido) | `specs/{domain}/spec.md` |
-| `sdd-design` | Propuesta (requerido) | `design.md` |
-| `sdd-tasks` | Spec + Design (requeridos) | `tasks.md` |
-| `sdd-apply` | Tasks + Spec + Design | Código + `apply-progress` |
-| `sdd-verify` | Spec + Tasks | `verify-report.md` |
-| `sdd-archive` | Todos los artefactos | `archive-report` + specs actualizados |
+| Fase          | Lee del backend                   | Escribe artefacto                             |
+| ------------- | --------------------------------- | --------------------------------------------- |
+| `sdd-explore` | Nada                              | `exploration.md`                              |
+| `sdd-propose` | Exploración (si existe, opcional) | `proposal.md`                                 |
+| `sdd-spec`    | Propuesta (requerido)             | `specs/{domain}/spec.md`                      |
+| `sdd-design`  | Propuesta (requerido)             | `design.md`                                   |
+| `sdd-tasks`   | Spec + Design (requeridos)        | `tasks.md`                                    |
+| `sdd-apply`   | Tasks + Spec + Design             | Código + progreso en `tasks.md` (`[x]` marks) |
+| `sdd-verify`  | Spec + Design + Tasks             | `verify-report.md`                            |
+| `sdd-archive` | Todos los artefactos              | `archive-report` + specs actualizados         |
 
 **Regla de acceso**: para fases con dependencias requeridas, el sub-agente lee los artefactos directamente del filesystem. El orquestador pasa las **rutas**, no el contenido — esto evita inflar el contexto del orquestador.
 
@@ -171,12 +169,12 @@ En GitHub Copilot (VS Code), la delegación se implementa mediante el **Task Too
 
 ### Tipos de agentes
 
-| Tipo | Modelo | Herramientas | Cuándo usarlo |
-|------|--------|-------------|---------------|
-| `explore` | Haiku (rápido) | grep, glob, view, bash | Buscar archivos, explorar codebase, responder preguntas de código |
-| `task` | Haiku (rápido) | Todas las CLI | Ejecutar comandos (tests, builds, lints); resumen breve si pasa, output completo si falla |
-| `general-purpose` | Sonnet (estándar) | Todas las herramientas | Tareas complejas multi-paso; capacidad completa de razonamiento |
-| `code-review` | — | Todas las CLI (solo lectura) | Revisión de cambios; solo reporta bugs/vulnerabilidades/errores lógicos serios |
+| Tipo              | Modelo            | Herramientas                 | Cuándo usarlo                                                                             |
+| ----------------- | ----------------- | ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `explore`         | Haiku (rápido)    | grep, glob, view, bash       | Buscar archivos, explorar codebase, responder preguntas de código                         |
+| `task`            | Haiku (rápido)    | Todas las CLI                | Ejecutar comandos (tests, builds, lints); resumen breve si pasa, output completo si falla |
+| `general-purpose` | Sonnet (estándar) | Todas las herramientas       | Tareas complejas multi-paso; capacidad completa de razonamiento                           |
+| `code-review`     | —                 | Todas las CLI (solo lectura) | Revisión de cambios; solo reporta bugs/vulnerabilidades/errores lógicos serios            |
 
 ### Cuándo usar cada tipo
 
@@ -196,10 +194,10 @@ En GitHub Copilot (VS Code), la delegación se implementa mediante el **Task Too
 
 ### Modos de ejecución
 
-| Modo | Comportamiento | Uso |
-|------|----------------|-----|
-| `sync` | Espera a que el agente complete | Default para la mayoría de tareas |
-| `background` | Lanza y continúa trabajando | Para tareas que no bloquean el siguiente paso |
+| Modo         | Comportamiento                  | Uso                                           |
+| ------------ | ------------------------------- | --------------------------------------------- |
+| `sync`       | Espera a que el agente complete | Default para la mayoría de tareas             |
+| `background` | Lanza y continúa trabajando     | Para tareas que no bloquean el siguiente paso |
 
 ### Ejecución en paralelo
 
@@ -258,15 +256,15 @@ Orquestador
 
 Las reglas son más matizadas que en Copilot, con un enfoque basado en "¿esto infla mi contexto sin necesidad?":
 
-| Acción | Inline | Delegar |
-|--------|--------|---------|
-| Leer para decidir/verificar (1-3 archivos) | ✅ | — |
-| Leer para explorar/entender (4+ archivos) | — | ✅ |
-| Leer como preparación para escritura | — | ✅ junto con la escritura |
-| Escritura atómica (un archivo, mecánica, ya sabe qué) | ✅ | — |
-| Escritura con análisis (múltiples archivos, lógica nueva) | — | ✅ |
-| Bash para estado (git, gh) | ✅ | — |
-| Bash para ejecución (test, build, install) | — | ✅ |
+| Acción                                                    | Inline   | Delegar                  |
+| --------------------------------------------------------- | -------- | ------------------------ |
+| Leer para decidir/verificar (1-3 archivos)                | ✅        | —                        |
+| Leer para explorar/entender (4+ archivos)                 | —        | ✅                        |
+| Leer como preparación para escritura                      | —        | ✅ junto con la escritura |
+| Escritura atómica (un archivo, mecánica, ya sabe qué)     | ✅        | —                        |
+| Escritura con análisis (múltiples archivos, lógica nueva) | —        | ✅                        |
+| Bash para estado (git, gh)                                | ✅        | —                        |
+| Bash para ejecución (test, build, install)                | —        | ✅                        |
 
 ---
 
@@ -386,34 +384,30 @@ Para features de alta incertidumbre técnica, batches pequeños son más económ
 Protocolo de revisión adversarial paralela para cambios de alto impacto:
 
 ```
-┌───────────────────────────────────────────────┐
-│              JUDGMENT DAY                     │
-│                                               │
-│  Round 1:                                     │
-│  ┌──────────┐         ┌──────────┐           │
-│  │ Judge A  │ (ciego) │ Judge B  │ (ciego)   │
-│  │ (sonnet) │         │ (sonnet) │           │
-│  └────┬─────┘         └────┬─────┘           │
-│       │                    │                  │
-│       └────────┬───────────┘                  │
-│                ▼                              │
-│       ┌──────────────┐                        │
-│       │  Sintetizar  │                        │
-│       │  hallazgos   │                        │
-│       └──────┬───────┘                        │
-│              ▼                                │
-│       ┌──────────────┐                        │
-│       │  Fix Agent   │ (aplica correcciones)  │
-│       └──────┬───────┘                        │
-│              ▼                                │
-│  Round 2:                                     │
-│  ┌──────────┐         ┌──────────┐           │
-│  │Re-Judge A│         │Re-Judge B│           │
-│  └──────────┘         └──────────┘           │
-│                                               │
-│  Resultado: ambos aprueban O escala tras 2    │
-│  iteraciones                                  │
-└───────────────────────────────────────────────┘
+  ┌─ JUDGMENT DAY ─────────────────────────────────┐
+  │                                                 │
+  │  Round 1:                                       │
+  │  ┌──────────┐            ┌──────────┐          │
+  │  │ Judge A  │  (ciego)   │ Judge B  │  (ciego) │
+  │  │ (sonnet) │            │ (sonnet) │          │
+  │  └────┬─────┘            └────┬─────┘          │
+  │       └───────────┬───────────┘                │
+  │                   ▼                             │
+  │          ┌──────────────┐                       │
+  │          │  Sintetizar  │                       │
+  │          └──────┬───────┘                       │
+  │                 ▼                               │
+  │          ┌──────────────┐                       │
+  │          │  Fix Agent   │                       │
+  │          └──────┬───────┘                       │
+  │                 ▼                               │
+  │  Round 2:                                       │
+  │  ┌──────────┐            ┌──────────┐          │
+  │  │Re-Judge A│            │Re-Judge B│          │
+  │  └──────────┘            └──────────┘          │
+  │                                                 │
+  │  Resultado: ambos aprueban O escala tras 2 iter │
+  └─────────────────────────────────────────────────┘
 ```
 
 - Los jueces son **ciegos** — no saben qué encontró el otro
@@ -428,113 +422,64 @@ Protocolo de revisión adversarial paralela para cambios de alto impacto:
 ### Flujo completo de comunicación
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        ECOSISTEMA                               │
-│                                                                 │
-│  ┌──────────┐     Conversación     ┌──────────────────┐        │
-│  │          │◄────natural──────────►│                  │        │
-│  │ USUARIO  │                      │  ORQUESTADOR     │        │
-│  │          │◄────resultados───────│  (opus)          │        │
-│  └──────────┘    sintetizados      │                  │        │
-│                                    │  Responsabilidades:       │
-│                                    │  • Interpretar intent     │
-│                                    │  • Resolver skills        │
-│                                    │  • Seleccionar modelo     │
-│                                    │  • Lanzar sub-agentes     │
-│                                    │  • Verificar skill_res    │
-│                                    │  • Sintetizar resultados  │
-│                                    │  • Rastrear estado DAG    │
-│                                    └───────┬──────────┘        │
-│                                            │                    │
-│              ┌─────────────────────────────┼───────────────┐    │
-│              │         CAPA DE EJECUCIÓN   │               │    │
-│              │                             │               │    │
-│  ┌───────────▼──┐  ┌──────────────┐  ┌────▼─────────┐     │    │
-│  │  SDD Phase   │  │  SDD Phase   │  │  General     │     │    │
-│  │  Sub-agents  │  │  Sub-agents  │  │  Sub-agent   │     │    │
-│  │              │  │              │  │  (no-SDD)    │     │    │
-│  │ • explore    │  │ • apply ×N   │  │              │     │    │
-│  │ • propose    │  │ • verify     │  │ • bug fixes  │     │    │
-│  │ • spec       │  │ • archive    │  │ • refactors  │     │    │
-│  │ • design     │  │              │  │ • preguntas  │     │    │
-│  │ • tasks      │  │              │  │              │     │    │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │    │
-│         │                 │                  │             │    │
-│         └─────────────────┼──────────────────┘             │    │
-│                           │                                │    │
-│              ┌────────────▼────────────┐                   │    │
-│              │    CAPA DE DATOS        │                   │    │
-│              │                         │                   │    │
-│              │  ┌────────────────────┐ │                   │    │
-│              │  │ openspec/          │ │                   │    │
-│              │  │ ├── config.yaml    │ │                   │    │
-│              │  │ ├── specs/         │ │ Source of truth   │    │
-│              │  │ └── changes/       │ │ (artefactos)     │    │
-│              │  │     ├── {name}/    │ │                   │    │
-│              │  │     │   ├── *.md   │ │                   │    │
-│              │  │     │   └── state  │ │                   │    │
-│              │  │     └── archive/   │ │                   │    │
-│              │  └────────────────────┘ │                   │    │
-│              │                         │                   │    │
-│              │  ┌────────────────────┐ │                   │    │
-│              │  │ .atl/              │ │                   │    │
-│              │  │ └── skill-registry │ │ Skills del       │    │
-│              │  │                    │ │ proyecto          │    │
-│              │  └────────────────────┘ │                   │    │
-│              │                         │                   │    │
-│              │  ┌────────────────────┐ │                   │    │
-│              │  │ Código fuente      │ │                   │    │
-│              │  │ del proyecto       │ │ Lo que los        │    │
-│              │  │                    │ │ sub-agentes leen  │    │
-│              │  └────────────────────┘ │ y modifican       │    │
-│              └─────────────────────────┘                   │    │
-│                                                            │    │
-└────────────────────────────────────────────────────────────┘    │
-                                                                  │
+  ┌──────────┐   conversación    ┌─────────────────────────┐
+  │          │◄──  natural  ────▶│                         │
+  │ USUARIO  │                   │  ORQUESTADOR (opus)     │
+  │          │◄── resultados ────│                         │
+  └──────────┘   sintetizados    │  • Interpretar intent   │
+                                 │  • Resolver skills      │
+                                 │  • Seleccionar modelo   │
+                                 │  • Lanzar sub-agentes   │
+                                 │  • Sintetizar resultados│
+                                 └───────────┬─────────────┘
+                                             │
+               ┌─ CAPA DE EJECUCIÓN ─────────┼────────────────┐
+               │                             │                │
+               │  SDD (plan)    SDD (impl)   │   General      │
+               │  • explore     • apply ×N   │   • bug fixes  │
+               │  • propose     • verify     │   • refactors  │
+               │  • spec        • archive    │   • preguntas  │
+               │  • design                   │                │
+               │  • tasks                    │                │
+               └─────────────────┬───────────┘────────────────┘
+                                 │
+               ┌─ CAPA DE DATOS ─┴────────────────────────────┐
+               │                                               │
+               │  openspec/          .atl/          Código     │
+               │  config · specs     skill-registry fuente del │
+               │  changes · archive                 proyecto   │
+               └───────────────────────────────────────────────┘
 ```
 
 ### Flujo de una delegación típica
 
 ```
-1. Usuario pide algo
-        │
-        ▼
-2. Orquestador interpreta
-        │
-        ├── ¿Es coordinación? → Responder directo
-        │
-        └── ¿Es ejecución? → Delegar
-                │
-                ▼
-3. Resolver skills
-        │
-        ├── Leer caché (o re-leer registry)
-        ├── Matchear por code context + task context
-        └── Componer bloque "Project Standards"
-                │
-                ▼
-4. Componer prompt del sub-agente
-        │
-        ├── ## Project Standards (auto-resolved)
-        ├── Instrucciones de tarea
-        ├── Rutas a artefactos (si SDD)
-        └── Modelo asignado
-                │
-                ▼
-5. Lanzar sub-agente
-        │
-        └── Contexto fresco, ejecuta, retorna sobre
-                │
-                ▼
-6. Procesar resultado
-        │
-        ├── Verificar skill_resolution
-        │     └── ≠ "injected"? → Re-leer registry
-        ├── Sintetizar para el usuario
-        └── Decidir siguiente paso
-                │
-                ▼
-7. Responder al usuario
+  1. Usuario pide algo
+          │
+          ▼
+  2. Orquestador interpreta
+          │
+          ├── ¿Coordinación? ──▶ Responder directo
+          │
+          └── ¿Ejecución? ──▶ Delegar:
+                  │
+                  ▼
+  3. Resolver skills (caché → registry → fallback)
+                  │
+                  ▼
+  4. Componer prompt: Standards + instrucciones + artefactos
+                  │
+                  ▼
+  5. Lanzar sub-agente (contexto fresco)
+                  │
+                  ▼
+  6. Procesar resultado:
+          ├── skill_resolution ≠ "injected"? → re-leer registry
+          ├── Sintetizar para el usuario
+          └── Decidir siguiente paso
+                  │
+                  ▼
+  7. Responder al usuario
 ```
 
 ---

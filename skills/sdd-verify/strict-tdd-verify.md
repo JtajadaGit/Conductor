@@ -9,10 +9,10 @@ When Strict TDD Mode is active, verification goes beyond "does the code work?" t
 
 ## Step 5a: TDD Compliance Check (includes Assertion Quality Audit)
 
-Read the `apply-progress` artifact and verify that TDD was actually followed:
+Read the apply phase's return envelope (or the `tasks.md` file which contains `[x]` marks for completed tasks) and verify that TDD was actually followed:
 
 ```
-Read apply-progress artifact:
+Read apply phase return envelope (inline results from sdd-apply):
 ├── Find the "TDD Cycle Evidence" table
 ├── FOR EACH task row:
 │   ├── RED column:
@@ -87,7 +87,7 @@ IF coverage tool available (from cached capabilities):
 ├── Run: {test_command} --coverage (or equivalent)
 ├── Parse the coverage report
 ├── Filter to ONLY files created or modified in this change
-│   (get file list from apply-progress "Files Changed" table)
+│   (get file list from apply return envelope "Files Changed" table)
 ├── Report per-file:
 │   ├── File path
 │   ├── Line coverage %
@@ -138,7 +138,7 @@ When Strict TDD Mode is active, your verification report MUST include these addi
 ### TDD Compliance
 | Check | Result | Details |
 |-------|--------|---------|
-| TDD Evidence reported | ✅ / ❌ | {Found in apply-progress / Missing} |
+| TDD Evidence reported | ✅ / ❌ | {Found in apply return envelope / Missing} |
 | All tasks have tests | ✅ / ❌ | {N}/{total} tasks have test files |
 | RED confirmed (tests exist) | ✅ / ⚠️ | {N}/{total} test files verified |
 | GREEN confirmed (tests pass) | ✅ / ❌ | {N}/{total} tests pass on execution |
@@ -201,10 +201,10 @@ Report in the Assertion Quality table (see Report Template Extension above). If 
 
 ## Rules (Strict TDD Verify specific)
 
-- ALWAYS check the TDD Cycle Evidence table from apply-progress — it's the primary artifact
+- ALWAYS check the TDD Cycle Evidence table from the apply phase return envelope — it's the primary artifact
 - ALWAYS cross-reference reported test files against actual execution — don't trust the report blindly
 - ALWAYS run the Assertion Quality Audit (Step 5f) — trivial tests are WORSE than missing tests
-- If apply-progress has no TDD evidence table, flag as CRITICAL — the protocol was not followed
+- If the apply phase return has no TDD evidence table, flag as CRITICAL — the protocol was not followed
 - If tautology assertions are found (expect(true).toBe(true)), flag as CRITICAL — these MUST be rewritten
 - Coverage and quality metrics are informational, NOT blocking — only flag as WARNING, never CRITICAL
 - Test layer distribution is informational — SUGGESTION level only

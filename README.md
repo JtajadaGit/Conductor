@@ -1,4 +1,4 @@
-# 🎼 Conductor
+# Conductor
 
 **Core de orquestación de agentes IA para equipos**
 
@@ -32,34 +32,35 @@ Conductor está diseñado para **equipos reales** que usan IA como herramienta d
 ## 🏗️ Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                     USUARIO                         │
-│              (comandos / conversación)               │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│               🎼 ORQUESTADOR                        │
-│  ┌───────────────────────────────────────────────┐  │
-│  │ • Coordina, NO ejecuta                        │  │
-│  │ • Mantiene conversación delgada               │  │
-│  │ • Resuelve skills del registro                │  │
-│  │ • Asigna modelo por fase                      │  │
-│  │ • Persiste estado del DAG                     │  │
-│  └───────────────────────────────────────────────┘  │
-└───────┬─────────┬─────────┬─────────┬───────────────┘
-        │         │         │         │
-        ▼         ▼         ▼         ▼
-   ┌────────┐┌────────┐┌────────┐┌────────┐
-   │ explore ││ propose││  spec  ││ design │  ... sub-agentes
-   │(sonnet) ││(opus)  ││(sonnet)││(opus)  │
-   └────┬───┘└────┬───┘└────┬───┘└────┬───┘
-        │         │         │         │
-        ▼         ▼         ▼         ▼
-   ┌─────────────────────────────────────────┐
-   │          SKILLS (reglas compactas)       │
-   │  testing · naming · patterns · tdd ...  │
-   └─────────────────────────────────────────┘
+                 ┌─────────────────────────────────┐
+                 │          👤 USUARIO             │
+                 │    (comandos / conversación)    │
+                 └───────────────┬─────────────────┘
+                                 │
+                                 ▼
+                 ┌─────────────────────────────────┐
+                 │        🧠​ ORQUESTADOR           │
+                 │  Coordina, NO ejecuta            │
+                 │  Resuelve skills del registro    │
+                 │  Asigna modelo por fase          │
+                 │  Persiste estado del DAG         │
+                 └───────────────┬─────────────────┘
+                                 │
+          ┌──────────┬───────────┼───────────┬──────────┐
+          ▼          ▼           ▼           ▼          ▼
+      ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
+      │explore │ │propose │ │  spec  │ │ design │  ...
+      │(sonnet)│ │ (opus) │ │(sonnet)│ │ (opus) │
+      └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘
+           │          │          │           │
+           └──────────┴──────┬───┴───────────┘
+                             ▼
+                 ┌─────────────────────────────────┐
+                 │   📦 SKILLS (reglas compactas)  │
+                 │  testing · naming · patterns    │
+                 └─────────────────────────────────┘
+
+      Sub-agentes: contexto fresco, sin memoria
 ```
 
 Cada sub-agente arranca con **contexto fresco** (sin memoria de la conversación), recibe las reglas del proyecto pre-inyectadas y devuelve un resultado estructurado al orquestador.
@@ -69,40 +70,44 @@ Cada sub-agente arranca con **contexto fresco** (sin memoria de la conversación
 ## 🔄 Flujo SDD (vista rápida)
 
 ```
- ┌─────────┐   ┌─────────┐   ┌────────┐   ┌────────┐
- │ explore │──▶│ propose │──▶│  spec  │──▶│ design │
- │(opcional│   │         │   │        │   │        │
- └─────────┘   └─────────┘   └───┬────┘   └───┬────┘
-                                  │            │
-                                  ▼            │
-                              ┌────────┐       │
-                              │ tasks  │◀──────┘
-                              └───┬────┘
-                                  │
-                                  ▼
-                              ┌────────┐
-                              │ apply  │ ← (batches)
-                              └───┬────┘
-                                  │
-                                  ▼
-                              ┌────────┐
-                              │ verify │
-                              └───┬────┘
-                                  │
-                                  ▼
-                              ┌─────────┐
-                              │ archive │
-                              └─────────┘
+                          ┌─────────┐
+                          │ explore │ (opcional)
+                          └────┬────┘
+                               │
+                               ▼
+                          ┌─────────┐
+                          │ propose │
+                          └────┬────┘
+                               │
+                    ┌──────────┴──────────┐
+                    ▼                     ▼
+               ┌─────────┐          ┌─────────┐
+               │  spec   │          │ design  │    ← paralelos
+               └────┬────┘          └────┬────┘
+                    │                    │
+                    └─────────┬──────────┘
+                              ▼
+                          ┌─────────┐
+                          │  tasks  │
+                          └────┬────┘
+                               │
+                               ▼
+                          ┌─────────┐
+                          │  apply  │ (batches)
+                          └────┬────┘
+                               │
+                               ▼
+                          ┌─────────┐
+                          │ verify  │
+                          └────┬────┘
+                               │
+                               ▼
+                          ┌─────────┐
+                          │ archive │
+                          └─────────┘
 ```
 
-**Grafo de dependencias:**
-
-```
-proposal ──▶ specs ──▶ tasks ──▶ apply ──▶ verify ──▶ archive
-                ▲
-                │
-             design
-```
+> **Nota**: `spec` y `design` son **paralelos** — ambos dependen solo de `proposal`, no entre sí.
 
 ---
 
@@ -155,11 +160,11 @@ Esto lanza automáticamente una exploración del codebase seguida de una propues
 
 ## 💻 Plataformas Compatibles
 
-| Plataforma | Instrucciones (source) | Skills (source) | Destino en proyecto | Estado |
-|------------|------------------------|-----------------|---------------------|--------|
-| **Claude Code** | `instructions/CLAUDE.md` | `skills/` | `.claude/` | ✅ Completo |
-| **GitHub Copilot (VS Code)** | `instructions/copilot-instructions.md` | `skills/` | `.github/` | ✅ Completo |
-| **Copilot CLI (Terminal)** | `instructions/copilot-instructions.md` | `skills/` | `.github/` | ✅ Completo |
+| Plataforma                   | Instrucciones (source)                 | Skills (source)   | Destino en proyecto   | Estado     |
+| ---------------------------- | -------------------------------------- | ----------------- | --------------------- | ---------- |
+| **Claude Code**              | `instructions/CLAUDE.md`               | `skills/`         | `.claude/`            | ✅ Completo |
+| **GitHub Copilot (VS Code)** | `instructions/copilot-instructions.md` | `skills/`         | `.github/`            | ✅ Completo |
+| **Copilot CLI (Terminal)**   | `instructions/copilot-instructions.md` | `skills/`         | `.github/`            | ✅ Completo |
 
 Los skills son idénticos para todas las plataformas. Solo cambia el archivo de instrucciones del orquestador y la ruta de destino en el proyecto.
 
@@ -169,21 +174,21 @@ Los skills son idénticos para todas las plataformas. Solo cambia el archivo de 
 
 ## 📚 Documentación
 
-| # | Documento | Descripción |
-|---|-----------|-------------|
-| 01 | [Inicio Rápido](./docs/01-inicio-rapido.md) | Guía de inicio rápido |
-| 02 | [Arquitectura](./docs/02-arquitectura.md) | Arquitectura y modelo de agentes |
-| 03 | [Flujo SDD Completo](./docs/03-flujo-sdd-completo.md) | Flujo SDD completo paso a paso |
-| 04 | [Catálogo de Skills](./docs/04-catalogo-skills.md) | Catálogo de todos los skills disponibles |
-| 05 | [Modo TDD Estricto](./docs/05-modo-tdd-estricto.md) | Modo TDD estricto (RED → GREEN → REFACTOR) |
-| 06 | [Judgment Day](./docs/06-judgment-day.md) | Revisión adversarial (Judgment Day) |
-| 07 | [Sub-agentes y Delegación](./docs/07-subagentes-y-delegacion.md) | Sub-agentes y delegación |
-| 08 | [Plataformas Compatibles](./docs/08-plataformas-compatibles.md) | Plataformas compatibles |
-| 09 | [OpenSpec y Persistencia](./docs/09-openspec-y-persistencia.md) | OpenSpec y persistencia de artefactos |
-| 10 | [Consumo de Tokens](./docs/10-consumo-tokens.md) | Consumo de tokens y requests |
-| 11 | [Crear Skills Personalizados](./docs/11-crear-skills-personalizados.md) | Crear skills personalizados |
-| 12 | [Referencia de Comandos](./docs/12-comandos-referencia.md) | Referencia completa de comandos |
-| 13 | [Mejores Prácticas](./docs/13-mejores-practicas.md) | Mejores prácticas y patrones |
+| #   | Documento                                                               | Descripción                                |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------ |
+| 01  | [Inicio Rápido](./docs/01-inicio-rapido.md)                             | Guía de inicio rápido                      |
+| 02  | [Arquitectura](./docs/02-arquitectura.md)                               | Arquitectura y modelo de agentes           |
+| 03  | [Flujo SDD Completo](./docs/03-flujo-sdd-completo.md)                   | Flujo SDD completo paso a paso             |
+| 04  | [Catálogo de Skills](./docs/04-catalogo-skills.md)                      | Catálogo de todos los skills disponibles   |
+| 05  | [Modo TDD Estricto](./docs/05-modo-tdd-estricto.md)                     | Modo TDD estricto (RED → GREEN → REFACTOR) |
+| 06  | [Judgment Day](./docs/06-judgment-day.md)                               | Revisión adversarial (Judgment Day)        |
+| 07  | [Sub-agentes y Delegación](./docs/07-subagentes-y-delegacion.md)        | Sub-agentes y delegación                   |
+| 08  | [Plataformas Compatibles](./docs/08-plataformas-compatibles.md)         | Plataformas compatibles                    |
+| 09  | [OpenSpec y Persistencia](./docs/09-openspec-y-persistencia.md)         | OpenSpec y persistencia de artefactos      |
+| 10  | [Consumo de Tokens](./docs/10-consumo-tokens.md)                        | Consumo de tokens y requests               |
+| 11  | [Crear Skills Personalizados](./docs/11-crear-skills-personalizados.md) | Crear skills personalizados                |
+| 12  | [Referencia de Comandos](./docs/12-comandos-referencia.md)              | Referencia completa de comandos            |
+| 13  | [Mejores Prácticas](./docs/13-mejores-practicas.md)                     | Mejores prácticas y patrones               |
 
 ---
 
