@@ -27,10 +27,11 @@ No necesitas ningún comando `/sdd-*`. Simplemente describe la tarea al agente.
 | ------------------------ | ------ | -------- | --------------------------------------------- |
 | `/sdd-init`              | Skill  | sonnet   | Inicializa SDD en el proyecto                 |
 | `/sdd-explore <tema>`    | Skill  | sonnet   | Explora e investiga antes de comprometerse    |
-| `/sdd-new <cambio>`      | Meta   | —        | Inicia un cambio nuevo (explore + propose)    |
+| `/sdd-new <cambio>`      | Meta   | —        | Inicia cambio nuevo (explore + propose + clarify) |
 | `/sdd-propose [cambio]`  | Skill  | opus     | Genera propuesta de cambio                    |
+| `/sdd-clarify [cambio]`  | Skill  | sonnet   | Detecta ambigüedades; gate pre-spec/design    |
 | `/sdd-continue [cambio]` | Meta   | —        | Ejecuta la siguiente fase pendiente           |
-| `/sdd-ff [cambio]`       | Meta   | —        | Fast-forward: propose → spec → design → tasks |
+| `/sdd-ff [cambio]`       | Meta   | —        | Fast-forward: propose → clarify → spec → design → tasks |
 | `/sdd-spec [cambio]`     | Skill  | sonnet   | Escribe especificaciones                      |
 | `/sdd-design [cambio]`   | Skill  | opus     | Crea diseño técnico                           |
 | `/sdd-tasks [cambio]`    | Skill  | sonnet   | Desglosa en tareas implementables             |
@@ -119,13 +120,14 @@ Orquestador: 🔍 Explorando...
 
 ### `/sdd-new <cambio>`
 
-**Tipo**: Meta-comando · **Costo**: 2 premium requests (explore + propose)
+**Tipo**: Meta-comando · **Costo**: 2-3 premium requests (explore + propose + clarify)
 
-**Descripción**: Inicia un cambio nuevo desde cero. El orquestador ejecuta automáticamente exploración + propuesta en secuencia.
+**Descripción**: Inicia un cambio nuevo desde cero. El orquestador ejecuta automáticamente exploración + propuesta + clarificación en secuencia.
 
 **¿Qué hace?**
 1. Lanza `/sdd-explore` para investigar el codebase
 2. Con los hallazgos, lanza `/sdd-propose` para generar una propuesta de cambio
+3. Lanza `/sdd-clarify` para detectar ambigüedades (auto-skip si no hay preguntas)
 
 **Sintaxis**:
 ```
@@ -195,6 +197,53 @@ Orquestador: 📋 Propuesta generada: cache-redis
 
 ---
 
+### `/sdd-clarify [cambio]`
+
+**Tipo**: Skill · **Modelo**: sonnet · **Costo**: 0-1 premium request
+
+**Descripción**: Analiza la propuesta en busca de ambigüedades que podrían causar re-work. Actúa como gate antes de spec/design.
+
+**¿Qué hace?**
+1. Lee la propuesta (`proposal.md`) — **requerido**
+2. Analiza 5 categorías: scope, behavior, data, integration, constraints
+3. Si encuentra gaps → genera `questions.md` con 1-5 preguntas + opciones concretas
+4. Si NO encuentra gaps → auto-skip, el pipeline continúa sin intervención
+
+**Sintaxis**:
+```
+/sdd-clarify [nombre-del-cambio]
+```
+
+**Dependencias**: `proposal` (requerido)
+
+**Artefacto generado**: `questions.md` (solo si hay preguntas)
+
+**Comportamiento de gate:**
+- Si `questions_count > 0` → el orquestador PAUSA y presenta las preguntas al usuario
+- El usuario responde seleccionando opciones (A/B/C)
+- El orquestador re-ejecuta clarify para validar que todo está resuelto
+- Si `questions_count = 0` → pipeline continúa automáticamente
+
+**¿Cuándo se ejecuta automáticamente?**
+- Dentro de `/sdd-new`: después de propose
+- Dentro de `/sdd-ff`: después de propose, antes de spec/design
+- Dentro de `/sdd-continue`: cuando clarify es la siguiente fase pendiente
+
+**Ejemplo**:
+```
+Orquestador: 🔎 Analizando propuesta...
+   1 ambigüedad detectada:
+
+   Q1: ¿Los refresh tokens deben rotar en cada uso?
+   - A) Sí, rotación en cada refresh (más seguro)
+   - B) No, token reutilizable hasta expiración (más simple)
+   - C) Rotación configurable por entorno
+
+   Responde para continuar.
+```
+
+---
+
 ### `/sdd-continue [cambio]`
 
 **Tipo**: Meta-comando · **Costo**: 1 premium request
@@ -213,7 +262,7 @@ Orquestador: 📋 Propuesta generada: cache-redis
 
 **Orden de ejecución** (siguiendo el grafo de dependencias):
 ```
-proposal → spec → design → tasks → apply → verify → archive
+proposal → clarify → spec → design → tasks → apply → verify → archive
 ```
 
 > `spec` y `design` se generan ambos desde `proposal`. `tasks` requiere ambos.
@@ -228,6 +277,7 @@ Usuario: /sdd-continue api-paginación
 Orquestador: 📊 Estado de api-paginación:
    ✅ proposal — completado
    ✅ spec — completado
+   ✅ clarify — sin preguntas (auto-skip)
    ⬜ design — pendiente ← SIGUIENTE
    ⬜ tasks
    ⬜ apply
@@ -243,15 +293,16 @@ Orquestador: 📊 Estado de api-paginación:
 
 ### `/sdd-ff [cambio]`
 
-**Tipo**: Meta-comando · **Costo**: ~4 premium requests (propose + spec + design + tasks)
+**Tipo**: Meta-comando · **Costo**: ~4-5 premium requests (propose + clarify + spec + design + tasks)
 
-**Descripción**: Fast-forward de planificación. Ejecuta en secuencia: propose → spec → design → tasks. Al terminar, tienes un plan completo listo para implementar.
+**Descripción**: Fast-forward de planificación. Ejecuta en secuencia: propose → clarify → spec → design → tasks. Al terminar, tienes un plan completo listo para implementar.
 
 **¿Qué hace?**
 1. Genera propuesta (si no existe)
-2. Escribe especificaciones
-3. Crea diseño técnico
-4. Desglosa en tareas implementables
+2. Clarifica ambigüedades (auto-skip si 0 preguntas; pausa si hay preguntas)
+3. Escribe especificaciones
+4. Crea diseño técnico
+5. Desglosa en tareas implementables
 
 **Sintaxis**:
 ```
@@ -271,6 +322,7 @@ Orquestador: 📊 Estado de api-paginación:
 Usuario: /sdd-ff migración-base-datos
 Orquestador: ⚡ Fast-forward: migración-base-datos
    📋 Propose... ✅
+   🔎 Clarify... ✅ (0 preguntas, auto-skip)
    📐 Spec... ✅
    🏗️ Design... ✅
    📝 Tasks... ✅
@@ -597,6 +649,11 @@ Para tareas que no justifican planificación formal, simplemente describe lo que
                       │ propose │
                       └────┬────┘
                            │
+                           ▼
+                      ┌─────────┐
+                      │ clarify │ (auto-skip si 0 preguntas)
+                      └────┬────┘
+                           │
                 ┌──────────┴──────────┐
                 ▼                     ▼
            ┌─────────┐          ┌─────────┐
@@ -634,6 +691,7 @@ Para tareas que no justifican planificación formal, simplemente describe lo que
 | Orquestador   | opus (alta capacidad) | Coordinación y decisiones                        |
 | `sdd-explore` | sonnet (estándar)     | Lectura de código, no decisiones arquitectónicas |
 | `sdd-propose` | opus (alta capacidad) | Decisiones arquitectónicas                       |
+| `sdd-clarify` | sonnet (estándar)     | Detección de ambigüedades, análisis estructurado |
 | `sdd-spec`    | sonnet (estándar)     | Escritura estructurada                           |
 | `sdd-design`  | opus (alta capacidad) | Decisiones de arquitectura                       |
 | `sdd-tasks`   | sonnet (estándar)     | Desglose mecánico                                |

@@ -54,6 +54,7 @@ Skills (delegated to sub-agents):
 - `/sdd-init` → initialize SDD context; detects stack, bootstraps persistence
 - `/sdd-explore <topic>` → investigate an idea; reads codebase, compares approaches
 - `/sdd-propose [change]` → generate a change proposal
+- `/sdd-clarify [change]` → detect ambiguities in proposal; gate before spec/design
 - `/sdd-spec [change]` → write delta specifications
 - `/sdd-design [change]` → write technical design
 - `/sdd-tasks [change]` → break down specs + design into implementation checklist
@@ -63,9 +64,9 @@ Skills (delegated to sub-agents):
 - `/skill-registry` → generates/updates `.atl/skill-registry.md`
 
 Meta-commands(orchestrator handles, NOT delegated as skills):
-- `/sdd-new <change>` → run `sdd-explore` then `sdd-propose`
+- `/sdd-new <change>` → run `sdd-explore` then `sdd-propose` then `sdd-clarify`
 - `/sdd-continue [change]` → run the next dependency-ready phase
-- `/sdd-ff <name>` → fast-forward: proposal → specs → design → tasks
+- `/sdd-ff <name>` → fast-forward: proposal → clarify → specs → design → tasks
 
 ### Error Handling for Meta-Commands
 
@@ -74,6 +75,7 @@ Meta-commands(orchestrator handles, NOT delegated as skills):
 - Maximum 2 retries per phase before escalating to the user
 - **Apply batching**: when `sdd-apply` returns partial (some tasks done, some blocked), the orchestrator MUST exclude blocked tasks from the next batch. If the same task is blocked twice, escalate to the user — do NOT retry it a third time.
 - `/sdd-ff` abort rule: if any phase fails, stop the sequence and report which phases completed successfully
+- `/sdd-ff` clarify gate: after `sdd-propose`, run `sdd-clarify`. If `questions_count > 0`, STOP the fast-forward and present questions to the user. Resume with `/sdd-ff` after answers are provided.
 - `/sdd-ff` parallelism: `sdd-spec` and `sdd-design` MAY run in parallel (both depend only on proposal, not on each other)
 - `/sdd-ff` in `none` mode: ⚠️ each phase returns inline content that the orchestrator must accumulate in its own context to pass to the next phase. After 3+ phases, context can saturate. If running in `none` mode, WARN the user before launching sdd-ff: "Running fast-forward in ephemeral mode — context may be exhausted before completion. Consider enabling openspec."
 
@@ -88,6 +90,7 @@ In environments without slash-command support (e.g., Copilot CLI in terminal), u
 | New change   | `/sdd-new`        | "new change {name}", "start feature {name}", "nuevo cambio"                                |
 | Continue     | `/sdd-continue`   | "continue", "next phase", "continuar", "siguiente fase"                                    |
 | Fast-forward | `/sdd-ff`         | "fast forward {name}", "plan everything", "planificar todo"                                |
+| Clarify      | `/sdd-clarify`    | "clarify", "check ambiguities", "clarificar", "revisar ambigüedades"                      |
 | Apply        | `/sdd-apply`      | "apply", "implement", "implementar"                                                        |
 | Verify       | `/sdd-verify`     | "verify", "check", "verificar"                                                             |
 | Archive      | `/sdd-archive`    | "archive", "close change", "archivar"                                                      |
@@ -98,9 +101,9 @@ In environments without slash-command support (e.g., Copilot CLI in terminal), u
 
 ### Dependency Graph
 ```
-proposal ──→ specs ──┐
-    │                ├──→ tasks → apply → verify → archive
-    └──→ design ─────┘
+proposal ──→ clarify ──→ specs ──┐
+                 │               ├──→ tasks → apply → verify → archive
+                 └──→ design ────┘
 ```
 
 ### Result Contract
@@ -115,6 +118,7 @@ Read this table at session start (or before first delegation), cache it for the 
 | orchestrator | opus            | Coordinates, makes decisions               |
 | sdd-explore  | sonnet          | Reads code, structural - not architectural |
 | sdd-propose  | opus            | Architectural decisions                    |
+| sdd-clarify  | sonnet          | Ambiguity detection, structured analysis   |
 | sdd-spec     | sonnet          | Structured writing                         |
 | sdd-design   | opus            | Architecture decisions                     |
 | sdd-tasks    | sonnet          | Mechanical breakdown                       |
@@ -166,6 +170,7 @@ Each phase has explicit read/write rules:
 | ------------- | ------------------------ | ----------------------------------- |
 | `sdd-explore` | nothing                  | `explore`                           |
 | `sdd-propose` | exploration (optional)   | `proposal`                          |
+| `sdd-clarify` | proposal (required)      | `questions`                         |
 | `sdd-spec`    | proposal (required)      | `spec`                              |
 | `sdd-design`  | proposal (required)      | `design`                            |
 | `sdd-tasks`   | spec + design (required) | `tasks`                             |

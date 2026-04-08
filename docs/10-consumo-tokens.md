@@ -42,6 +42,7 @@ El orquestador no lanza trabajo en paralelo automáticamente salvo en casos expl
 | `/sdd-init`                                              | 1                 | sonnet   | 💰💰               |
 | `/sdd-explore`                                           | 1                 | sonnet   | 💰💰               |
 | `/sdd-propose`                                           | 1                 | opus     | 💰💰💰              |
+| `/sdd-clarify`                                           | 0-1               | sonnet   | 💰💰 (0 si auto-skip) |
 | `/sdd-spec`                                              | 1                 | sonnet   | 💰💰               |
 | `/sdd-design`                                            | 1                 | opus     | 💰💰💰              |
 | `/sdd-tasks`                                             | 1                 | sonnet   | 💰💰               |
@@ -61,7 +62,7 @@ El orquestador no lanza trabajo en paralelo automáticamente salvo en casos expl
 Un ciclo SDD completo para un feature de tamaño medio consume aproximadamente **11 premium requests**:
 
 ```
-init + explore + propose + spec + design + tasks + apply×3 + verify = ~11 requests
+init + explore + propose + clarify + spec + design + tasks + apply×3 + verify = ~11-12 requests
 ```
 
 ### Desglose
@@ -71,6 +72,7 @@ init + explore + propose + spec + design + tasks + apply×3 + verify = ~11 reque
 | init               | 1          | Solo la primera vez por proyecto  |
 | explore            | 1          | Omitible si ya conoces el cambio  |
 | propose            | 1          | Decisión arquitectónica           |
+| clarify            | 0-1        | Auto-skip si 0 preguntas         |
 | spec               | 1          | Especificaciones formales         |
 | design             | 1          | Diseño técnico                    |
 | tasks              | 1          | Desglose de tareas                |
@@ -92,8 +94,8 @@ Los meta-comandos son atajos que descomponen en fases individuales. No tienen co
 
 | Meta-comando        | Fases que lanza                 | Requests   |
 | ------------------- | ------------------------------- | ---------- |
-| `/sdd-new <cambio>` | explore + propose               | 2          |
-| `/sdd-ff <cambio>`  | propose + spec + design + tasks | 4          |
+| `/sdd-new <cambio>` | explore + propose + clarify     | 2-3        |
+| `/sdd-ff <cambio>`  | propose + clarify + spec + design + tasks | 4-5  |
 | `/sdd-continue`     | siguiente fase pendiente        | 1          |
 
 `/sdd-ff` es especialmente eficiente: ejecuta cuatro fases en secuencia con mínima intervención del orquestador, reduciendo el overhead conversacional.
@@ -106,8 +108,9 @@ Conductor impone límites de palabras compactos para cada artefacto. Esto no es 
 
 | Artefacto     | Presupuesto    | Justificación                                    |
 | ------------- | -------------- | ------------------------------------------------ |
-| `proposal.md` | < 400 palabras | Herramienta de pensamiento, no documentación     |
-| `spec.md`     | < 650 palabras | Scenarios de 3-5 líneas; la spec no es un manual |
+| `proposal.md`  | < 400 palabras | Herramienta de pensamiento, no documentación     |
+| `questions.md` | < 300 palabras | Preguntas con opciones; vacío si no hay gaps     |
+| `spec.md`      | < 650 palabras | Scenarios de 3-5 líneas; la spec no es un manual |
 | `design.md`   | < 800 palabras | Tablas y diagramas sobre prosa extensa           |
 | `tasks.md`    | < 530 palabras | Checklist con 1-2 líneas por tarea               |
 

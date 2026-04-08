@@ -57,6 +57,7 @@ Cada archivo `SKILL.md` contiene:
 | `sdd-init`       | `/sdd-init`, `sdd init`, `iniciar sdd`                 | Bootstrapear contexto SDD                      | sonnet   |
 | `sdd-explore`    | Lanzado por orquestador                                | Investigar codebase antes de un cambio         | sonnet   |
 | `sdd-propose`    | Lanzado por orquestador                                | Crear propuesta de cambio estructurada         | opus     |
+| `sdd-clarify`    | Lanzado por orquestador                                | Detectar ambigüedades; gate pre-spec/design    | sonnet   |
 | `sdd-spec`       | Lanzado por orquestador                                | Escribir especificaciones delta con escenarios | sonnet   |
 | `sdd-design`     | Lanzado por orquestador                                | Diseño técnico: arquitectura y decisiones      | opus     |
 | `sdd-tasks`      | Lanzado por orquestador                                | Desglose de tareas por fase                    | sonnet   |
@@ -73,9 +74,9 @@ Cada archivo `SKILL.md` contiene:
 Las skills SDD conforman el flujo completo de **Spec-Driven Development**. Cada una representa una fase del ciclo:
 
 ```
-proposal → specs ──→ tasks → apply → verify → archive
-              ↑
-            design
+proposal → clarify → specs ──→ tasks → apply → verify → archive
+                       ↑
+                     design
 ```
 
 ### sdd-init
@@ -170,6 +171,45 @@ Toma la exploración (o input directo) y produce un `proposal.md` estructurado.
 - ✅ **SIEMPRE** incluye criterios de éxito
 - ✅ Usa rutas de archivo concretas en "Affected Areas"
 - Si el proposal ya existe, lo lee y actualiza en lugar de reescribir
+
+---
+
+### sdd-clarify
+
+| Campo           | Detalle                                                              |
+| --------------- | -------------------------------------------------------------------- |
+| **Trigger**     | Lanzado por el orquestador (automático tras propose)                 |
+| **Propósito**   | Detectar ambigüedades y preguntas abiertas antes de spec/design      |
+| **Presupuesto** | < 300 palabras                                                       |
+| **Modelo**      | sonnet                                                               |
+
+**Qué hace:**
+
+Analiza la propuesta buscando gaps en 5 categorías (scope, behavior, data, integration, constraints) que podrían causar re-work en fases downstream.
+
+**Comportamiento:**
+
+| Resultado       | Acción                                                                |
+| --------------- | --------------------------------------------------------------------- |
+| 0 preguntas     | Auto-skip: pipeline continúa a spec/design sin intervención           |
+| 1-5 preguntas   | Gate: orquestador presenta preguntas con opciones al usuario → pausa  |
+
+**Formato de preguntas:**
+
+```markdown
+## Q1: ¿Título corto?
+**Category**: Scope | **Impact**: spec + design
+- **A)** Opción con rationale breve
+- **B)** Opción con rationale breve
+- **C)** Opción con rationale breve
+```
+
+**Reglas clave:**
+- ✅ Solo flags items que **cambiarían** el spec o design si se responden diferente
+- ✅ Cada pregunta incluye 2-3 opciones concretas (el usuario selecciona, no escribe)
+- ✅ Máximo 5 preguntas por ejecución, priorizadas por impacto downstream
+- ❌ NO flaggear preferencias estilísticas o nice-to-haves
+- Si `questions.md` ya existe con respuestas, valida que todo esté resuelto y retorna `questions_count: 0`
 
 ---
 

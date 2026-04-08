@@ -54,6 +54,7 @@ mode: openspec
 phases:
   explore: pending | done | skipped
   proposal: pending | done
+  clarify: pending | done | skipped
   spec: pending | in_progress | done
   design: pending | in_progress | done
   tasks: pending | done

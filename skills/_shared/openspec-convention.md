@@ -14,6 +14,7 @@ openspec/
         ├── state.yaml       <- DAG state (survives compaction)
         ├── exploration.md   <- (optional) from sdd-explore
         ├── proposal.md      <- from sdd-propose
+        ├── questions.md     <- (optional) from sdd-clarify
         ├── specs/           <- from sdd-spec
         │   └── {domain}/
         │       └── spec.md  <- Delta spec
@@ -30,6 +31,7 @@ openspec/
 | sdd-init     | Creates            | `openspec/config.yaml`, `openspec/specs/`, `openspec/changes/`, `openspec/changes/archive/` |
 | sdd-explore  | Creates (optional) | `openspec/changes/{change-name}/exploration.md`                                             |
 | sdd-propose  | Creates            | `openspec/changes/{change-name}/proposal.md`                                                |
+| sdd-clarify  | Creates (optional) | `openspec/changes/{change-name}/questions.md`                                               |
 | sdd-spec     | Creates            | `openspec/changes/{change-name}/specs/{domain}/spec.md`                                     |
 | sdd-design   | Creates            | `openspec/changes/{change-name}/design.md`                                                  |
 | sdd-tasks    | Creates            | `openspec/changes/{change-name}/tasks.md`                                                   |
@@ -43,6 +45,7 @@ openspec/
 
 ```
 Proposal:   openspec/changes/{change-name}/proposal.md
+Questions:  openspec/changes/{change-name}/questions.md
 Specs:      openspec/changes/{change-name}/specs/  (all domain subdirectories)
 Design:     openspec/changes/{change-name}/design.md
 Tasks:      openspec/changes/{change-name}/tasks.md

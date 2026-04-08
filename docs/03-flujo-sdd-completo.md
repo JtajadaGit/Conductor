@@ -14,12 +14,13 @@ En lugar de que un agente de IA reciba una instrucción vaga y escriba código d
 Idea del usuario
     → Exploración (entender el problema)
         → Propuesta (qué vamos a hacer)
-            → Especificaciones (qué debe cumplir)
-            → Diseño técnico (cómo se implementa)
-                → Tareas (checklist detallado)
-                    → Implementación (escribir código)
-                        → Verificación (¿cumple las specs?)
-                            → Archivo (cerrar y documentar)
+            → Clarificación (¿hay ambigüedades?)
+                → Especificaciones (qué debe cumplir)
+                → Diseño técnico (cómo se implementa)
+                    → Tareas (checklist detallado)
+                        → Implementación (escribir código)
+                            → Verificación (¿cumple las specs?)
+                                → Archivo (cerrar y documentar)
 ```
 
 Cada fase la ejecuta un **sub-agente especializado** con instrucciones optimizadas y el modelo de IA apropiado. El orquestador coordina la secuencia, pasa los artefactos entre fases y presenta los resultados al usuario.
@@ -38,6 +39,11 @@ El pipeline SDD sigue un DAG (grafo acíclico dirigido) donde cada fase depende 
                            ▼
                       ┌─────────┐
                       │ propose │
+                      └────┬────┘
+                           │
+                           ▼
+                      ┌─────────┐
+                      │ clarify │ (auto-skip si 0 preguntas)
                       └────┬────┘
                            │
                 ┌──────────┴──────────┐
@@ -71,9 +77,9 @@ El pipeline SDD sigue un DAG (grafo acíclico dirigido) donde cada fase depende 
 **Forma compacta:**
 
 ```
-  proposal ──▶ spec ────┐
-      │                 ├──▶ tasks ──▶ apply ──▶ verify ──▶ archive
-      └────▶ design ────┘
+  proposal ──▶ clarify ──▶ spec ────┐
+                   │                ├──▶ tasks ──▶ apply ──▶ verify ──▶ archive
+                   └────▶ design ───┘
 ```
 
 ---
@@ -127,7 +133,8 @@ Tú: "/sdd-new autenticación-jwt"
 
 ### Reglas del grafo
 
-- **spec** y **design** pueden ejecutarse en paralelo (ambos dependen solo de proposal)
+- **clarify** corre después de proposal; si no detecta ambigüedades, se auto-salta (0 requests extra)
+- **spec** y **design** pueden ejecutarse en paralelo (ambos dependen de que clarify haya pasado)
 - **tasks** requiere que tanto spec como design estén completos
 - **apply** se ejecuta en batches; cada batch es un sub-agente
 - **verify** solo corre después de que apply haya completado las tareas asignadas
@@ -164,6 +171,48 @@ Tú: "/sdd-new autenticación-jwt"
 | **Reglas clave**       | Toda propuesta DEBE tener plan de rollback y criterios de éxito. Usar bullet points y tablas sobre prosa. |
 
 **Secciones del artefacto**: Intent, Scope (In/Out), Approach, Affected Areas, Risks, Rollback Plan, Dependencies, Success Criteria.
+
+---
+
+### 🔎 Clarify
+
+| Atributo               | Valor                                                                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Propósito**          | Detectar ambigüedades y preguntas abiertas en la propuesta antes de comprometerse con spec/design                       |
+| **Lee**                | Propuesta (requerido)                                                                                                   |
+| **Produce**            | `questions.md` (solo si hay preguntas; si no hay, auto-skip)                                                            |
+| **Budget de palabras** | < 300 palabras                                                                                                          |
+| **Modelo**             | sonnet (análisis estructurado)                                                                                          |
+| **Reglas clave**       | Gate duro: si hay preguntas, el orquestador DEBE pausar para input humano. Si no hay preguntas, cero costo adicional.   |
+
+**Categorías de análisis:**
+
+| Categoría       | Qué busca                                                            |
+| --------------- | -------------------------------------------------------------------- |
+| Scope           | Entregables vagos, límites difusos entre in/out of scope             |
+| Behavior        | Edge cases ausentes, manejo de errores indefinido, flujos poco claros |
+| Data            | Entidades sin definir, relaciones ambiguas, reglas de validación     |
+| Integration     | Dependencias externas no especificadas, contratos de API ambiguos    |
+| Constraints     | Requisitos no funcionales que podrían cambiar el diseño              |
+
+**Comportamiento según resultado:**
+
+- **0 preguntas** → Auto-skip, el pipeline continúa a spec/design sin intervención. Costo: 1 request (el análisis se ejecuta pero no genera artefacto).
+- **1-5 preguntas** → Gate: el orquestador presenta las preguntas al usuario con opciones pre-generadas (2-3 opciones por pregunta). Tras las respuestas, re-ejecuta clarify para validar.
+
+**Formato de preguntas:**
+
+Cada pregunta incluye opciones concretas para que el usuario pueda responder seleccionando, no escribiendo párrafos:
+
+```markdown
+## Q1: ¿Qué pasa cuando el token expira durante una operación en curso?
+
+**Category**: Behavior | **Impact**: spec + design
+
+- **A)** Abortar la operación y mostrar error 401
+- **B)** Refresh automático con retry transparente
+- **C)** Completar la operación actual y requerir re-auth en la siguiente
+```
 
 ---
 
@@ -301,10 +350,11 @@ Inicia un cambio nuevo ejecutando exploración + propuesta:
 /sdd-new add-dark-mode
   → Lanza sdd-explore (investigar codebase)
   → Lanza sdd-propose (crear propuesta)
-  → Resultado: propuesta lista para spec/design
+  → Lanza sdd-clarify (detectar ambigüedades)
+  → Resultado: propuesta clarificada, lista para spec/design
 ```
 
-**Costo**: 2 premium requests.
+**Costo**: 2-3 premium requests (explore + propose + clarify; clarify se auto-salta si no hay preguntas).
 
 ### `/sdd-continue [cambio]`
 
@@ -327,13 +377,14 @@ Fast-forward: ejecuta toda la planificación de golpe.
 ```
 /sdd-ff add-dark-mode
   → Lanza sdd-propose
+  → Lanza sdd-clarify (si hay preguntas → pausa para input humano)
   → Lanza sdd-spec
   → Lanza sdd-design
   → Lanza sdd-tasks
   → Resultado: plan completo listo para implementar
 ```
 
-**Costo**: 4 premium requests. Es la forma más eficiente de pasar de una idea a un plan listo para `apply`.
+**Costo**: 4-5 premium requests (clarify se auto-salta si no hay preguntas). Es la forma más eficiente de pasar de una idea a un plan listo para `apply`.
 
 > **Importante**: `/sdd-new`, `/sdd-continue` y `/sdd-ff` son meta-comandos que el orquestador resuelve internamente. **NO** se invocan como skills.
 
@@ -361,7 +412,15 @@ Usuario: /sdd-new user-auth
 - Out of scope: OAuth, 2FA (futuro)
 - Rollback: revertir middleware y eliminar tablas de usuarios
 
-### Paso 2: Planificar (o usar `/sdd-ff`)
+### Paso 2: Clarificar (automático)
+
+**Clarify** (sonnet) → analiza la propuesta:
+- Detecta 1 pregunta abierta: "¿refresh tokens con rotación o reutilizables?"
+- El orquestador presenta la pregunta con opciones A/B/C
+- El usuario responde: "A) rotación"
+- Re-ejecuta clarify → 0 preguntas → gate superado
+
+### Paso 3: Planificar (o usar `/sdd-ff`)
 
 ```
 Usuario: /sdd-ff user-auth
@@ -383,7 +442,7 @@ Usuario: /sdd-ff user-auth
 - Phase 3: Tests unitarios y de integración
 - Phase 4: Documentar endpoints
 
-### Paso 3: Implementar
+### Paso 4: Implementar
 
 ```
 Usuario: /sdd-apply user-auth
@@ -401,7 +460,7 @@ Usuario: /sdd-apply user-auth
 - Escribe tests unitarios y de integración
 - Marca tareas 3.1-3.3 como `[x]`
 
-### Paso 4: Verificar
+### Paso 5: Verificar
 
 ```
 Usuario: /sdd-verify user-auth
@@ -414,7 +473,7 @@ Usuario: /sdd-verify user-auth
 - ✅ Spec matrix: 8/8 escenarios COMPLIANT
 - **Veredicto: PASS**
 
-### Paso 5: Archivar
+### Paso 6: Archivar
 
 ```
 Usuario: /sdd-archive user-auth
@@ -482,6 +541,7 @@ proyecto/
 | ------- | ---------------------------- | ----------------------------------------------------- | -------------------------------------------------- |
 | explore | `exploration.md`             | `openspec/changes/{name}/exploration.md`              | Markdown: estado actual, enfoques, recomendación   |
 | propose | `proposal.md`                | `openspec/changes/{name}/proposal.md`                 | Markdown: intent, scope, approach, risks, rollback |
+| clarify | `questions.md`               | `openspec/changes/{name}/questions.md`                | Markdown: preguntas con opciones (vacío si 0)      |
 | spec    | `spec.md` (delta o completo) | `openspec/changes/{name}/specs/{domain}/spec.md`      | Markdown: requisitos RFC 2119 + escenarios GWT     |
 | design  | `design.md`                  | `openspec/changes/{name}/design.md`                   | Markdown: decisiones, data flow, file changes      |
 | tasks   | `tasks.md`                   | `openspec/changes/{name}/tasks.md`                    | Markdown: checklist jerárquico por fases           |
@@ -508,6 +568,7 @@ change: user-auth
 phases:
   explore: done
   propose: done
+  clarify: done
   spec: done
   design: done
   tasks: done
@@ -593,7 +654,11 @@ Tiempo ────────────────────────�
    │           │                           │── identifica riesgos
    │           │◄─── proposal.md ──────────│   → proposal.md
    │           │
-   │◄──────────│ "Propuesta creada. ¿Continuar?"
+   │           │── clarify (sonnet) ───────►│
+   │           │                            │── analiza ambigüedades
+   │           │◄─── questions.md ──────────│   → questions.md (o vacío)
+   │           │
+   │◄──────────│ "Propuesta clarificada. ¿Continuar?"
    │
    │ /sdd-ff user-auth
    │──────────►│
