@@ -123,7 +123,7 @@ Tú: "/sdd-new autenticación-jwt"
 | Bug puntual, 1-2 archivos     | Delegación directa          | 1 request      |
 | Feature pequeña, 3-5 archivos | `/sdd-ff` + apply           | 5-7 requests   |
 | Feature mediana               | `/sdd-new` → ciclo completo | 10-15 requests |
-| Cambio crítico                | SDD + Judgment Day          | 13-20 requests |
+| Cambio crítico                | SDD completo                | 10-15 requests |
 
 ### Reglas del grafo
 

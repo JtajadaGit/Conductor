@@ -137,7 +137,6 @@ VS Code Copilot utiliza la herramienta `task` para lanzar sub-agentes. Existen c
 | `explore`         | Búsqueda y análisis de código (modelo rápido) | sdd-explore, investigación de codebase |
 | `task`            | Ejecución de comandos (tests, builds)         | sdd-verify, ejecución de tests         |
 | `general-purpose` | Agente completo con todas las herramientas    | sdd-apply, sdd-spec, sdd-design        |
-| `code-review`     | Revisión de cambios de código                 | judgment-day (jueces)                  |
 
 ### Setup en VS Code
 
@@ -206,7 +205,6 @@ La principal diferencia operativa es que Copilot CLI ejecuta en modo no-interact
 | Modo de ejecución       | Interactivo              | Interactivo                       | Autónomo                          |
 | Skill registry          | `.atl/skill-registry.md` | `.atl/skill-registry.md`          | `.atl/skill-registry.md`          |
 | OpenSpec                | Soportado                | Soportado                         | Soportado                         |
-| Judgment Day            | Soportado                | Soportado                         | Soportado                         |
 
 ---
 

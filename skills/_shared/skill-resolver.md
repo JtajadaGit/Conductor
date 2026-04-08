@@ -1,6 +1,6 @@
 # Skill Resolver — Universal Protocol
 
-Any agent that **delegates work to sub-agents** MUST follow this protocol to resolve and inject relevant skills. This applies to the ATL orchestrator, judgment-day, and ANY future skill or workflow that launches sub-agents.
+Any agent that **delegates work to sub-agents** MUST follow this protocol to resolve and inject relevant skills. This applies to the ATL orchestrator and ANY future skill or workflow that launches sub-agents.
 
 ## When to Apply
 
@@ -93,5 +93,4 @@ This prevents silent degradation where the orchestrator forgets skills after com
 ## Integration Points
 
 - **ATL Orchestrator**: follows this protocol for ALL delegations (SDD and non-SDD)
-- **judgment-day**: follows this protocol before launching Judge A, Judge B, and Fix Agent
 - **Any future skill that delegates**: MUST reference this protocol

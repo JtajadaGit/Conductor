@@ -38,7 +38,6 @@ No necesitas ningún comando `/sdd-*`. Simplemente describe la tarea al agente.
 | `/sdd-verify [cambio]`   | Skill  | sonnet   | Verifica implementación contra specs          |
 | `/sdd-archive [cambio]`  | Skill  | haiku    | Archiva cambio completado                     |
 | `/skill-registry`        | Skill  | sonnet   | Genera/actualiza registro de skills           |
-| `/judgment-day [cambio]` | Skill  | sonnet   | Revisión adversarial paralela                 |
 
 > **Tipo Skill**: se ejecuta como sub-agente directo.
 > **Tipo Meta**: el orquestador lo descompone en múltiples fases.
@@ -477,54 +476,6 @@ Orquestador: 🔨 Aplicando batch 1/3: api-paginación
 
 ---
 
-### `/judgment-day [cambio]`
-
-**Tipo**: Skill · **Modelo**: sonnet · **Costo**: 3-10 premium requests
-
-**Descripción**: Protocolo de revisión adversarial paralela.
-
-**¿Qué hace?**
-1. Lanza **2 jueces independientes** en paralelo que revisan el mismo código
-2. Sintetiza los hallazgos de ambos jueces
-3. Lanza un agente de corrección que aplica los fixes
-4. Re-juzga con 2 nuevos jueces
-5. Repite hasta que ambos jueces aprueben o escala tras 2 iteraciones
-
-**Sintaxis**:
-```
-/judgment-day [nombre-del-cambio]
-```
-
-**Frases de activación alternativas**:
-- `judgment day`
-- `judgment-day`
-- `review adversarial`
-- `dual review`
-- `doble review`
-- `juzgar`
-- `que lo juzguen`
-
-**Costo detallado**:
-
-| Operación                    | Requests   |
-| ---------------------------- | ---------- |
-| Round 1: 2 jueces paralelos  | 2          |
-| Agente de corrección         | 1          |
-| Round 2: 2 re-jueces         | 2          |
-| **Total por round completo** | **3-5**    |
-| Si escala a 2 iteraciones    | 8-10       |
-
-**¿Cuándo usarlo?**
-- Cambios de alto impacto o riesgo
-- Antes de merges a producción
-- Cuando se necesita máxima confianza en la calidad
-
-**¿Cuándo NO usarlo?**
-- Cambios triviales (el costo no se justifica)
-- En cada ciclo SDD (reservar para casos críticos)
-
----
-
 ## Meta-comandos vs. Skills
 
 Es importante entender la diferencia:
@@ -550,13 +501,6 @@ Además de los comandos slash, puedes activar ciertas funciones con lenguaje nat
 | `"skill registry"`     | Ejecuta `/skill-registry` |
 | `"actualizar skills"`  | Ejecuta `/skill-registry` |
 | `"update registry"`    | Ejecuta `/skill-registry` |
-| `"judgment day"`       | Ejecuta `/judgment-day`   |
-| `"judgment-day"`       | Ejecuta `/judgment-day`   |
-| `"review adversarial"` | Ejecuta `/judgment-day`   |
-| `"dual review"`        | Ejecuta `/judgment-day`   |
-| `"doble review"`       | Ejecuta `/judgment-day`   |
-| `"juzgar"`             | Ejecuta `/judgment-day`   |
-| `"que lo juzguen"`     | Ejecuta `/judgment-day`   |
 | `"sdd init"`           | Ejecuta `/sdd-init`       |
 | `"iniciar sdd"`        | Ejecuta `/sdd-init`       |
 | `"openspec init"`      | Ejecuta `/sdd-init`       |
@@ -628,17 +572,16 @@ Orquestador: [delega a sub-agente general → 1 premium request]
 
 Para tareas que no justifican planificación formal, simplemente describe lo que necesitas. El orquestador delegará automáticamente.
 
-### 🛡️ Feature con revisión adversarial
+### 🛡️ Feature con verificación exhaustiva
 
 ```
 /sdd-ff feature-crítica
 /sdd-apply feature-crítica
 /sdd-verify feature-crítica
-/judgment-day feature-crítica     # Revisión exhaustiva antes de merge
 /sdd-archive feature-crítica
 ```
 
-**Costo estimado**: 15-25 premium requests (el Judgment Day agrega 3-10 requests)
+**Costo estimado**: 10-15 premium requests
 
 ---
 
@@ -708,8 +651,7 @@ Para tareas que no justifican planificación formal, simplemente describe lo que
 2. **Salta `/sdd-explore` si ya sabes qué quieres** — ahorra 1 premium request
 3. **Usa `/sdd-continue` para cambios de alto riesgo** — revisas cada artefacto antes de avanzar
 4. **No re-ejecutes `/sdd-verify` sin cambios** — es la fase más costosa en tiempo de ejecución
-5. **Reserva `/judgment-day` para cambios críticos** — su costo se justifica para merges a producción
-6. **Para tareas pequeñas, no uses SDD** — describe lo que necesitas y el orquestador delegará directamente
+5. **Para tareas pequeñas, no uses SDD** — describe lo que necesitas y el orquestador delegará directamente
 
 ---
 

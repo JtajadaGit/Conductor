@@ -61,9 +61,8 @@ Skills (delegated to sub-agents):
 - `/sdd-verify [change]` → validate implementation against specs
 - `/sdd-archive [change]` → close a change and persist final state
 - `/skill-registry` → generates/updates `.atl/skill-registry.md`
-- `/judgment-day [change]` → parallel adversarial review
 
-Meta-commands (orchestrator handles, NOT delegated as skills):
+Meta-commands(orchestrator handles, NOT delegated as skills):
 - `/sdd-new <change>` → run `sdd-explore` then `sdd-propose`
 - `/sdd-continue [change]` → run the next dependency-ready phase
 - `/sdd-ff <name>` → fast-forward: proposal → specs → design → tasks
@@ -96,7 +95,6 @@ In environments without slash-command support (e.g., Copilot CLI in terminal), u
 | Design       | `/sdd-design`     | "write design", "diseñar"                                                                  |
 | Tasks        | `/sdd-tasks`      | "create tasks", "break down tasks", "task breakdown", "generar tareas", "desglosar tareas" |
 | Registry     | `/skill-registry` | "update skills", "actualizar skills"                                                       |
-| Review       | `/judgment-day`   | "judgment day", "review", "juzgar"                                                         |
 
 ### Dependency Graph
 ```

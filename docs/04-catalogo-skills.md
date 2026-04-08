@@ -65,7 +65,6 @@ Cada archivo `SKILL.md` contiene:
 | `sdd-archive`    | Lanzado por orquestador                                | Sincronizar specs delta y archivar             | haiku    |
 | `skill-registry` | `update skills`, `skill registry`, `actualizar skills` | Generar `.atl/skill-registry.md`               | sonnet   |
 | `skill-creator`  | Solicitud de crear nueva skill                         | Guía para crear skills con estructura correcta | sonnet   |
-| `judgment-day`   | `judgment day`, `juzgar`, `que lo juzguen`             | Revisión adversarial paralela con dos jueces   | opus     |
 
 ---
 
@@ -515,18 +514,6 @@ Estas skills no forman parte del flujo SDD pero proveen funcionalidad esencial.
 - [ ] Patrones críticos claros
 - [ ] Ejemplos de código mínimos
 - [ ] Registrada en el sistema
-
----
-
-### judgment-day
-
-| Campo         | Detalle                                                                                                         |
-| ------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Trigger**   | `judgment day`, `judgment-day`, `review adversarial`, `dual review`, `doble review`, `juzgar`, `que lo juzguen` |
-| **Propósito** | Revisión adversarial paralela con dos jueces ciegos independientes                                              |
-| **Modelo**    | opus (orquestación)                                                                                             |
-
-Documentación completa en [⚖️ Judgment Day — Revisión Adversarial](./06-judgment-day.md).
 
 ---
 

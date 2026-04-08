@@ -20,8 +20,7 @@ Conductor está diseñado para **equipos reales** que usan IA como herramienta d
 - **Skills agnósticos** — 12+ skills especializados que funcionan con cualquier stack tecnológico
 - **Multi-plataforma** — Compatible con Claude Code, GitHub Copilot (VS Code) y Copilot CLI (terminal)
 - **Modo TDD estricto** — Ciclo RED → GREEN → REFACTOR integrado opcionalmente en la fase de implementación
-- **Judgment Day** — Protocolo de revisión adversarial paralela con dos jueces independientes
-- **Persistencia OpenSpec** — Artefactos versionados en disco que sobreviven a reinicios de sesión y compactación de contexto
+- **Persistencia OpenSpec**— Artefactos versionados en disco que sobreviven a reinicios de sesión y compactación de contexto
 - **Optimización de modelos** — Asignación inteligente de modelos por fase (opus para decisiones, sonnet para ejecución, haiku para cierre)
 - **Delegación segura** — Sub-agentes con contexto fresco y reglas pre-inyectadas; sin fugas de estado
 - **Skill Registry** — Resolución automática de convenciones de proyecto e inyección en cada sub-agente
@@ -181,8 +180,7 @@ Los skills son idénticos para todas las plataformas. Solo cambia el archivo de 
 | 03  | [Flujo SDD Completo](./docs/03-flujo-sdd-completo.md)                   | Flujo SDD completo paso a paso             |
 | 04  | [Catálogo de Skills](./docs/04-catalogo-skills.md)                      | Catálogo de todos los skills disponibles   |
 | 05  | [Modo TDD Estricto](./docs/05-modo-tdd-estricto.md)                     | Modo TDD estricto (RED → GREEN → REFACTOR) |
-| 06  | [Judgment Day](./docs/06-judgment-day.md)                               | Revisión adversarial (Judgment Day)        |
-| 07  | [Sub-agentes y Delegación](./docs/07-subagentes-y-delegacion.md)        | Sub-agentes y delegación                   |
+| 06  | [Sub-agentes y Delegación](./docs/07-subagentes-y-delegacion.md)        | Sub-agentes y delegación                   |
 | 08  | [Plataformas Compatibles](./docs/08-plataformas-compatibles.md)         | Plataformas compatibles                    |
 | 09  | [OpenSpec y Persistencia](./docs/09-openspec-y-persistencia.md)         | OpenSpec y persistencia de artefactos      |
 | 10  | [Consumo de Tokens](./docs/10-consumo-tokens.md)                        | Consumo de tokens y requests               |
@@ -217,7 +215,6 @@ Conductor/
 │   ├── sdd-apply/SKILL.md                 ← Implementación (+ strict-tdd.md)
 │   ├── sdd-verify/SKILL.md                ← Verificación (+ strict-tdd-verify.md)
 │   ├── sdd-archive/SKILL.md               ← Archivado y cierre
-│   └── judgment-day/SKILL.md              ← Revisión adversarial paralela
 └── docs/
     └── *.md                               ← Documentación completa
 ```

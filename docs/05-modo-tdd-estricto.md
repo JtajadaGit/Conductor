@@ -475,4 +475,4 @@ Estas capabilities se persisten en `openspec/config.yaml` bajo la sección `test
 
 ---
 
-[← Anterior: Catálogo de Skills](./04-catalogo-skills.md) | [Volver al README](../README.md) | [Siguiente: Judgment Day →](./06-judgment-day.md)
+[← Anterior: Catálogo de Skills](./04-catalogo-skills.md) | [Volver al README](../README.md) | [Siguiente: Sub-agentes y Delegación →](./07-subagentes-y-delegacion.md)

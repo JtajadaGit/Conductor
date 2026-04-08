@@ -124,7 +124,6 @@ tu-proyecto/
 │       ├── sdd-apply/SKILL.md      ← Implementación
 │       ├── sdd-verify/SKILL.md     ← Verificación
 │       ├── sdd-archive/SKILL.md    ← Archivado
-│       ├── judgment-day/SKILL.md   ← Revisión adversarial
 │       ├── skill-creator/SKILL.md  ← Creador de skills
 │       └── skill-registry/SKILL.md ← Registro de skills
 ├── src/                            ← Tu código existente

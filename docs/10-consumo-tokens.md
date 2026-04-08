@@ -29,7 +29,7 @@ Cada sub-agente lanzado equivale a **1 premium request** (o llamada API equivale
 Costo total = tokens del orquestador + (1 request × N sub-agentes lanzados)
 ```
 
-El orquestador no lanza trabajo en paralelo automáticamente salvo en casos explícitos como Judgment Day (donde se lanzan 2 jueces simultáneos).
+El orquestador no lanza trabajo en paralelo automáticamente salvo en casos explícitos como `sdd-ff` (donde `sdd-spec` y `sdd-design` corren en paralelo).
 
 ---
 
@@ -97,29 +97,6 @@ Los meta-comandos son atajos que descomponen en fases individuales. No tienen co
 | `/sdd-continue`     | siguiente fase pendiente        | 1          |
 
 `/sdd-ff` es especialmente eficiente: ejecuta cuatro fases en secuencia con mínima intervención del orquestador, reduciendo el overhead conversacional.
-
----
-
-## Judgment Day
-
-Judgment Day es el protocolo de revisión adversarial paralela. Lanza dos agentes jueces de forma simultánea, sintetiza hallazgos, aplica correcciones y re-juzga.
-
-| Operación                   | Requests   |
-| --------------------------- | ---------- |
-| Round 1: 2 jueces paralelos | 2          |
-| Fix agent (correcciones)    | 1          |
-| Round 2: 2 re-jueces        | 2          |
-| **Total por ciclo**         | **3–5**    |
-| Si escala a 2 iteraciones   | 8–10       |
-
-Judgment Day tiene un costo mayor que una verificación simple, pero está diseñado para cambios de alto impacto donde la calidad justifica la revisión exhaustiva. Se recomienda para:
-
-- Cambios que afectan a múltiples módulos.
-- Código de seguridad o autenticación.
-- Antes de merges a producción en cambios críticos.
-- Refactors que tocan infraestructura compartida.
-
-No es necesario en cada ciclo SDD; reservar para cambios donde un bug sería costoso.
 
 ---
 
@@ -304,8 +281,6 @@ Solo haiku (no recomendado):
 | `/sdd-new`               | 2          | sonnet + opus       | Iniciar un cambio nuevo    |
 | `/sdd-ff`                | 4          | opus + sonnet×3     | Planificación rápida       |
 | Ciclo SDD completo       | 10-15      | mixto               | Features medianos          |
-| Judgment Day             | 3-5        | sonnet×2-4 + sonnet | Revisión crítica           |
-| Ciclo SDD + Judgment Day | 13-20      | mixto               | Features críticos          |
 
 ---
 

@@ -111,10 +111,7 @@ Para cambios de alto impacto que requieren revisión exhaustiva:
 /sdd-apply critical-change
 /sdd-verify critical-change     ← verificación estándar
 
-judgment day                     ← revisión adversarial paralela
-  └── 2 jueces independientes → síntesis → correcciones → re-verificación
-
-/sdd-archive critical-change    ← solo después de aprobar verificación y judgment day
+/sdd-archive critical-change    ← solo después de aprobar verificación
 ```
 
 ---
@@ -198,7 +195,7 @@ Para tareas pequeñas (< 2 archivos, cambio claro): **delegación directa** (1 r
 
 Para features medianos: **`/sdd-ff` + apply + verify** (8-12 requests).
 
-Para features grandes o críticos: **flujo SDD completo + judgment day** (13-20 requests).
+Para features grandes o críticos: **flujo SDD completo** (10-15 requests).
 
 Consulta [Consumo de Tokens](./10-consumo-tokens.md) para un análisis detallado.
 
@@ -273,10 +270,6 @@ Si estás usando modo `openspec`, el orquestador lee `state.yaml` para reconstru
 
 Un ciclo típico consume **~11 premium requests** (init + explore + propose + spec + design + tasks + apply×3 + verify). El rango realista es **10-15** dependiendo del tamaño del feature y las correcciones necesarias.
 
-### ¿Judgment Day consume muchos requests?
-
-Un ciclo de Judgment Day consume **3-5 premium requests** (2 jueces + 1 fix + 2 re-jueces opcional). Si escala a 2 iteraciones completas, puede llegar a 8-10. Se recomienda reservarlo para cambios de alto impacto.
-
 ### ¿Puedo personalizar las reglas por fase?
 
 **Sí.** El archivo `openspec/config.yaml` contiene una sección `rules` con reglas específicas por fase (proposal, specs, design, tasks, apply, verify, archive). Modifica estas reglas para adaptar el comportamiento de cada fase a las necesidades de tu proyecto.
@@ -326,7 +319,6 @@ Para nuevos miembros del equipo que se incorporan a un proyecto con Conductor:
 | Implementar las tareas        | `/sdd-apply <nombre>`   |
 | Verificar la implementación   | `/sdd-verify <nombre>`  |
 | Archivar el cambio            | `/sdd-archive <nombre>` |
-| Revisión adversarial          | `judgment day`          |
 | Actualizar skills             | `/skill-registry`       |
 
 ---

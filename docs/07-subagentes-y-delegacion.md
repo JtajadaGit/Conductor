@@ -379,42 +379,6 @@ Feature complejo (20+ tareas):
 
 Para features de alta incertidumbre técnica, batches pequeños son más económicos a largo plazo.
 
-### Judgment Day
-
-Protocolo de revisión adversarial paralela para cambios de alto impacto:
-
-```
-  ┌─ JUDGMENT DAY ─────────────────────────────────┐
-  │                                                 │
-  │  Round 1:                                       │
-  │  ┌──────────┐            ┌──────────┐          │
-  │  │ Judge A  │  (ciego)   │ Judge B  │  (ciego) │
-  │  │ (sonnet) │            │ (sonnet) │          │
-  │  └────┬─────┘            └────┬─────┘          │
-  │       └───────────┬───────────┘                │
-  │                   ▼                             │
-  │          ┌──────────────┐                       │
-  │          │  Sintetizar  │                       │
-  │          └──────┬───────┘                       │
-  │                 ▼                               │
-  │          ┌──────────────┐                       │
-  │          │  Fix Agent   │                       │
-  │          └──────┬───────┘                       │
-  │                 ▼                               │
-  │  Round 2:                                       │
-  │  ┌──────────┐            ┌──────────┐          │
-  │  │Re-Judge A│            │Re-Judge B│          │
-  │  └──────────┘            └──────────┘          │
-  │                                                 │
-  │  Resultado: ambos aprueban O escala tras 2 iter │
-  └─────────────────────────────────────────────────┘
-```
-
-- Los jueces son **ciegos** — no saben qué encontró el otro
-- Solo se reportan issues que genuinamente importan: bugs, vulnerabilidades, errores lógicos
-- **Costo**: 3-5 requests por round, hasta 8-10 si escala a 2 iteraciones
-- **Cuándo usarlo**: cambios de alto impacto, antes de merges a producción
-
 ---
 
 ## 9. Diagrama de Comunicación
@@ -484,4 +448,4 @@ Protocolo de revisión adversarial paralela para cambios de alto impacto:
 
 ---
 
-[← Anterior: Judgment Day](./06-judgment-day.md) | [Volver al README](../README.md) | [Siguiente: Plataformas →](./08-plataformas-compatibles.md)
+[← Anterior: Modo TDD Estricto](./05-modo-tdd-estricto.md) | [Volver al README](../README.md) | [Siguiente: Plataformas →](./08-plataformas-compatibles.md)
