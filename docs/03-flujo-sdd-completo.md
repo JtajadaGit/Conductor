@@ -255,7 +255,7 @@ Cada pregunta incluye opciones concretas para que el usuario pueda responder sel
 | **Produce**            | `tasks.md`                                                                                                                                                        |
 | **Budget de palabras** | < 530 palabras                                                                                                                                                    |
 | **Modelo**             | sonnet (desglose mecánico)                                                                                                                                        |
-| **Reglas clave**       | Cada tarea referencia rutas concretas de archivos. Formato checklist con 1-2 líneas por tarea. Orden por dependencia. Numeración jerárquica (1.1, 1.2, 2.1, ...). |
+| **Reglas clave**       | Cada tarea referencia rutas concretas de archivos. Formato checklist con 1-2 líneas por tarea. Orden por dependencia. Numeración jerárquica (1.1, 1.2, 2.1, ...). Consistency Check obligatorio al final. |
 
 **Organización por fases**:
 

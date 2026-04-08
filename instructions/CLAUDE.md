@@ -73,6 +73,7 @@ Meta-commands(orchestrator handles, NOT delegated as skills):
 - If a sub-agent returns `status: blocked` → STOP, report the blocker to the user, suggest resolution
 - If a sub-agent returns `status: partial` → report partial result, ask user whether to continue or retry
 - Maximum 2 retries per phase before escalating to the user
+- **Tasks consistency gate**: if `sdd-tasks` returns `consistency_block: true`, do NOT proceed to `sdd-apply`. Report the consistency issue to the user and suggest re-running the blocked upstream phase (spec or design).
 - **Apply batching**: when `sdd-apply` returns partial (some tasks done, some blocked), the orchestrator MUST exclude blocked tasks from the next batch. If the same task is blocked twice, escalate to the user — do NOT retry it a third time.
 - `/sdd-ff` abort rule: if any phase fails, stop the sequence and report which phases completed successfully
 - `/sdd-ff` clarify gate: after `sdd-propose`, run `sdd-clarify`. If `questions_count > 0`, STOP the fast-forward and present questions to the user. Resume with `/sdd-ff` after answers are provided.

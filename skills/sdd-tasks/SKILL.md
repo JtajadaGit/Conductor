@@ -114,14 +114,44 @@ Phase 5: Cleanup (if needed)
   └─ Documentation, remove dead code, polish
 ```
 
-### Step 4: Persist Artifact
+### Step 4: Consistency Check
+
+**Before persisting**, cross-validate the tasks against spec and design:
+
+| Check | What to validate | Result |
+|-------|-----------------|--------|
+| **Coverage** | Every spec requirement has at least one task that addresses it | gap / ok |
+| **Alignment** | Tasks follow design decisions (file paths, patterns, approach) | drift / ok |
+| **Contradictions** | No task contradicts a spec requirement or design decision | conflict / ok |
+| **Completeness** | Design's "File Changes" table is fully covered by tasks | missing / ok |
+
+Append a `## Consistency Check` section at the end of `tasks.md`:
+
+```markdown
+## Consistency Check
+
+| Check | Status | Details |
+|-------|--------|---------|
+| Spec coverage | ✅ OK | {N}/{N} requirements covered |
+| Design alignment | ✅ OK | All tasks follow design decisions |
+| Contradictions | ✅ OK | None detected |
+| File completeness | ✅ OK | All {N} file changes covered |
+```
+
+**If any check fails**, mark it as `❌ CRITICAL` or `⚠️ WARNING`:
+- **CRITICAL**: A spec requirement has NO task covering it, or a task contradicts a design decision. Include `consistency_block: true` in the return envelope.
+- **WARNING**: Minor gap (e.g., a cleanup file in design not covered by tasks). Include `consistency_block: false`.
+
+When `consistency_block: true`, the orchestrator MUST NOT proceed to apply until the issue is resolved (either by updating tasks, spec, or design).
+
+### Step 5: Persist Artifact
 
 **This step is MANDATORY — do NOT skip it.**
 
 Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
 - artifact: `tasks`
 
-### Step 5: Return Summary
+### Step 6: Return Summary
 
 Return to the orchestrator:
 
@@ -139,11 +169,20 @@ Return to the orchestrator:
 | Phase 3 | {N} | {Phase name} |
 | Total | {N} | |
 
+### Consistency
+| Check | Status |
+|-------|--------|
+| Spec coverage | ✅ / ❌ |
+| Design alignment | ✅ / ⚠️ |
+| Contradictions | ✅ / ❌ |
+| File completeness | ✅ / ⚠️ |
+
 ### Implementation Order
 {Brief description of the recommended order and why}
 
 ### Next Step
-Ready for implementation (sdd-apply).
+{If consistency_block: false → "Ready for implementation (sdd-apply)."}
+{If consistency_block: true → "BLOCKED: {description of critical consistency issue}. Resolve before proceeding to apply."}
 ```
 
 ## Rules
@@ -156,5 +195,5 @@ Ready for implementation (sdd-apply).
 - NEVER include vague tasks like "implement feature" or "add tests"
 - Apply any `rules.tasks` from `openspec/config.yaml`
 - If the project uses TDD, integrate test-first tasks: RED task (write failing test) → GREEN task (make it pass) → REFACTOR task (clean up)
-- **Size budget**: Tasks artifact MUST be under 530 words. Each task: 1-2 lines max. Use checklist format, not paragraphs.
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- **Size budget**: Tasks artifact MUST be under 530 words (excluding Consistency Check section). Each task: 1-2 lines max. Use checklist format, not paragraphs.
+- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`. Additionally include `consistency_block: true|false` to signal whether apply should be blocked.

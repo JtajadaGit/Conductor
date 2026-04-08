@@ -343,10 +343,24 @@ Phase 5: Cleanup
 | **Verificable** | "Test: `POST /login` retorna 401 sin token"              | "Verificar que funcione" |
 | **Pequeña**     | Un archivo o una unidad lógica                           | "Implementar la feature" |
 
+**Consistency Check (inline, al final de tasks.md):**
+
+Antes de persistir, sdd-tasks valida cruzadamente spec ↔ design ↔ tasks:
+
+| Check | Qué valida |
+|-------|-----------|
+| Spec coverage | Todo requisito de spec tiene al menos una tarea |
+| Design alignment | Las tareas siguen las decisiones de diseño |
+| Contradictions | Ninguna tarea contradice spec o design |
+| File completeness | Todos los archivos del design están cubiertos |
+
+Si detecta un issue **CRITICAL** (requisito sin tarea, o contradicción) → bloquea apply. El orchestrator debe resolver antes de continuar.
+
 **Reglas clave:**
 - ✅ Numeración jerárquica: 1.1, 1.2, 2.1, 2.2
 - ✅ Tareas de Phase 1 NO dependen de Phase 2
 - ✅ Cada tarea completable en UNA sesión
+- ✅ Consistency Check obligatorio antes de persistir
 - ❌ NUNCA tareas vagas como "implementar feature" o "agregar tests"
 - Si el proyecto usa TDD, integra tareas RED → GREEN → REFACTOR
 
