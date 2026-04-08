@@ -231,6 +231,9 @@ phases:
     status: pending
   archive:
     status: pending
+locks:
+  spec: true      # frozen after tasks completed
+  design: true    # frozen after tasks completed
 ```
 
 ### Campos
@@ -241,6 +244,16 @@ phases:
 | `created`       | Fecha de creación                                                 |
 | `current_phase` | Fase actualmente en ejecución                                     |
 | `phases`        | Estado de cada fase (`pending`, `in_progress`, `done`, `skipped`) |
+| `locks`         | Artefactos congelados tras completar tasks (previene spec-drift)  |
+
+### Artifact Locks
+
+Cuando `sdd-tasks` completa exitosamente, el orquestador activa `locks.spec: true` y `locks.design: true`. Esto protege contra **spec-drift**: modificar spec o design después de que las tareas ya se derivaron de ellos invalidaría el task breakdown.
+
+**Si el usuario quiere modificar spec/design después del lock:**
+1. El orquestador advierte que las tareas se invalidarán
+2. Si confirma → desbloquea, aplica cambio, re-ejecuta `sdd-tasks`
+3. Actualiza `state.yaml` reseteando la fase modificada y las tareas
 
 ### Función principal
 

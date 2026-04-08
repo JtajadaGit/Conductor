@@ -204,6 +204,17 @@ For phases with required dependencies, sub-agent reads directly from the backend
 
 Convention files under the agent's `_shared/` skills directory (project-level or global): `persistence-contract.md`, `openspec-convention.md`.
 
+### Artifact Lock Rule
+
+When `sdd-tasks` completes successfully, the orchestrator MUST set `locks.spec: true` and `locks.design: true` in `state.yaml`. This signals that spec and design are now "frozen" — tasks were derived from them, and modifying them would invalidate the task breakdown.
+
+If the user requests changes to spec or design after locks are set:
+1. WARN: "Spec/design are locked because tasks were already derived from them. Modifying them will invalidate the current task breakdown."
+2. If the user confirms, unlock, apply the change, and re-run `sdd-tasks` to regenerate tasks.
+3. Update `state.yaml`: set the modified phase back to `in_progress`, set `tasks` to `pending`, reset locks.
+
+This prevents spec-drift during implementation without adding ceremony.
+
 ### Recovery Rule
 
 - `openspec` → read `openspec/changes/*/state.yaml`

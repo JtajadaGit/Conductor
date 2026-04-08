@@ -81,6 +81,9 @@ phases:
   verify: pending | pass | fail
   archive: pending | done
 current_phase: {phase-name}
+locks:
+  spec: false    # set to true when tasks phase completes — warns if user tries to modify spec after this point
+  design: false  # set to true when tasks phase completes — warns if user tries to modify design after this point
 ```
 
 - **Written by**: orchestrator (after each sub-agent completes a phase)
