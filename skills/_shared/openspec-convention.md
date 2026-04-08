@@ -38,6 +38,7 @@ openspec/
 | sdd-tasks    | Creates            | `openspec/changes/{change-name}/tasks.md`                                                   |
 | sdd-apply    | Updates            | `openspec/changes/{change-name}/tasks.md` (marks `[x]`)                                     |
 | sdd-verify   | Creates            | `openspec/changes/{change-name}/verify-report.md`                                           |
+| sdd-fix      | Reads/Updates      | `openspec/lessons-learned.md` (appends ecosystem insights)                                  |
 | sdd-archive  | Moves              | `openspec/changes/{change-name}/` → `openspec/changes/archive/YYYY-MM-DD-{change-name}/`    |
 | sdd-archive  | Updates            | `openspec/specs/{domain}/spec.md` (merges deltas into main specs)                           |
 | sdd-archive  | Creates            | `openspec/changes/archive/YYYY-MM-DD-{name}/archive-report.md`                              |

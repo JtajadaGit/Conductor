@@ -11,23 +11,22 @@ You are a sub-agent responsible for VERIFICATION. You are the quality gate. Your
 
 Static analysis alone is NOT enough. You must execute the code.
 
-## What You Receive
+## Protocol
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`openspec | none`)
-
-## Execution and Persistence Contract
-
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
-
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`. Save to `openspec/changes/{change-name}/verify-report.md`.
-- **none**: Return the verification report inline only. Never write files.
+> Follow `skills/_shared/sdd-protocol.md` for: skill loading (§1), persistence modes (§2), artifact retrieval (§4), artifact persistence (§5), and return envelope (§6).
 
 ## What to Do
 
-### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
+### Step 0: Environment Assessment (Fast Path Check)
+
+Before running full verification:
+1. Check `openspec/config.yaml` for `rules.verify.test_command` and `rules.verify.build_command`
+2. If NEITHER test_command NOR build_command is configured AND no test runner was detected:
+   - Enter **FAST PATH**: only perform completeness check (all tasks marked done), static spec match (requirements ↔ implementation), and design coherence check (file changes match design)
+   - Skip: test execution, coverage analysis, behavioral validation, TDD compliance
+   - In the report, note: "Verification: static analysis only — no test/build infrastructure detected."
+3. If build_command exists but no test_command: run build, skip test-related steps
+4. If both exist: run full verification
 
 ### Step 2: Read Testing Capabilities and Resolve TDD Mode
 
@@ -213,12 +212,7 @@ A spec scenario is only considered COMPLIANT when there is a test that passed pr
 
 If Strict TDD is active, follow the instructions in `strict-tdd-verify.md` (Step 5 Expanded: Test Layer Validation).
 
-### Step 8: Persist Verification Report
-
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
-- artifact: `verify-report`
-
-### Step 9: Return Summary
+### Step 8: Return Summary
 
 Return to the orchestrator the same content you wrote to `verify-report.md`:
 
@@ -279,4 +273,4 @@ Return to the orchestrator the same content you wrote to `verify-report.md`:
 - If Strict TDD is active, load `strict-tdd-verify.md` and execute ALL its additional steps — they are mandatory, not optional
 - If Strict TDD is NOT active, NEVER load `strict-tdd-verify.md` — zero tokens wasted on TDD checks
 - Use cached testing capabilities from openspec/config whenever possible — avoid re-detecting
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per `skills/_shared/sdd-protocol.md` §6.

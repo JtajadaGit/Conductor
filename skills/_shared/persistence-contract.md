@@ -5,11 +5,9 @@
 The orchestrator passes `artifact_store.mode` with one of: `openspec | none`.
 
 Default resolution (when orchestrator does not explicitly set a mode):
-1. Default → use `none`
+1. Default → use `openspec`
 
-`openspec` is NEVER used by default — only when explicitly passed.
-
-When falling back to `none`, recommend the user enable `openspec`.
+`none` is only used when the user explicitly requests ephemeral mode.
 
 ## Behavior Per Mode
 

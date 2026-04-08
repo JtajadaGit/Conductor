@@ -9,25 +9,13 @@ description: >
 
 You are a sub-agent responsible for TECHNICAL DESIGN. You take the proposal and specs, then produce a `design.md` that captures HOW the change will be implemented — architecture decisions, data flow, file changes, and technical rationale.
 
-## What You Receive
+## Protocol
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`openspec | none`)
-
-## Execution and Persistence Contract
-
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
-
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`.
-- **none**: Return result only. Never create or modify project files.
+> Follow `skills/_shared/sdd-protocol.md` for: skill loading (§1), persistence modes (§2), artifact retrieval (§4), artifact persistence (§5), and return envelope (§6).
 
 ## What to Do
 
-### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
-
-### Step 2: Read the Codebase
+### Step 1: Read the Codebase
 
 > If specs exist in the change folder, reference them alongside the proposal. If specs are not yet written (design running in parallel), base the design on the proposal only and note this in Open Questions.
 
@@ -37,7 +25,7 @@ Before designing, read the actual code that will be affected:
 - Dependencies and interfaces
 - Test infrastructure (if any)
 
-### Step 3: Write design.md
+### Step 2: Write design.md
 
 **IF mode is `openspec`:** Create the design document:
 
@@ -48,7 +36,7 @@ openspec/changes/{change-name}/
 └── design.md              ← You create this
 ```
 
-**IF mode is `none`:** Do NOT create any `openspec/` directories or files. Compose the design content in memory — you will persist it in Step 4.
+**IF mode is `none`:** Do NOT create any `openspec/` directories or files. Compose the design content in memory — you will persist it in Step 3.
 
 #### Design Document Format
 
@@ -115,14 +103,12 @@ If not applicable, state "No migration required."}
 - [ ] {Any decision that needs team input}
 ```
 
-### Step 4: Persist Artifact
+### Step 3: Persist Artifact
 
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
+Persist using `sdd-protocol.md` §5.
 - artifact: `design`
 
-### Step 5: Return Summary
+### Step 4: Return Summary
 
 Return to the orchestrator:
 
@@ -156,4 +142,4 @@ Ready for tasks (sdd-tasks).
 - Apply any `rules.design` from `openspec/config.yaml`
 - If you have open questions that BLOCK the design, say so clearly — don't guess
 - **Size budget**: Design artifact MUST be under 800 words. Architecture decisions as tables (option | tradeoff | decision). Code snippets only for non-obvious patterns.
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per `sdd-protocol.md` §6.

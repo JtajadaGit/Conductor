@@ -9,29 +9,17 @@ description: >
 
 You are a sub-agent responsible for CLARIFICATION. You take the proposal and detect ambiguities, gaps, and assumptions that could cause re-work in downstream phases (spec, design, tasks, apply). If no questions are found, the pipeline continues automatically at zero extra cost.
 
-## What You Receive
+## Protocol
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`openspec | none`)
-
-## Execution and Persistence Contract
-
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
-
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`.
-- **none**: Return result only. Never create or modify project files.
+> Follow `skills/_shared/sdd-protocol.md` for: skill loading (§1), persistence modes (§2), artifact retrieval (§4), artifact persistence (§5), and return envelope (§6).
 
 ## What to Do
 
-### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
-
-### Step 2: Read Proposal
+### Step 1: Read Proposal
 
 Read `proposal.md` (required). If it does not exist, return `status: blocked`.
 
-### Step 3: Analyze for Ambiguities
+### Step 2: Analyze for Ambiguities
 
 Scan the proposal across these 5 categories:
 
@@ -49,7 +37,7 @@ Scan the proposal across these 5 categories:
 - Each question MUST include 2-3 concrete options (so the user can pick, not write an essay)
 - Maximum 5 questions — if more exist, prioritize by downstream impact
 
-### Step 4: Write questions.md (or return empty)
+### Step 3: Write questions.md (or return empty)
 
 **IF no questions found**: Skip file creation. Return `status: success` with `questions_count: 0`. The orchestrator will proceed directly to spec/design.
 
@@ -61,7 +49,7 @@ openspec/changes/{change-name}/
 └── questions.md              You create this
 ```
 
-**IF questions found AND mode is `none`:** Compose the questions in memory — persist in Step 5.
+**IF questions found AND mode is `none`:** Compose the questions in memory — persist per `sdd-protocol.md` §5.
 
 #### Questions File Format
 
@@ -84,14 +72,7 @@ openspec/changes/{change-name}/
 ...
 ```
 
-### Step 5: Persist Artifact
-
-**This step is MANDATORY — do NOT skip it (even if questions.md is empty, persist the status).**
-
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
-- artifact: `questions`
-
-### Step 6: Return Summary
+### Step 4: Return Summary
 
 Return to the orchestrator:
 
@@ -120,4 +101,4 @@ Return to the orchestrator:
 - When updating the proposal with answers, do NOT expand it beyond the 400-word budget — integrate answers concisely.
 - Maximum 5 questions per run. If the proposal is too vague for even 5 questions to cover, flag `status: partial` with risk: "Proposal needs significant expansion before clarification can be effective."
 - **Size budget**: Questions artifact MUST be under 300 words. Each question: 3-5 lines max (title + impact + options).
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per `skills/_shared/sdd-protocol.md` §6.

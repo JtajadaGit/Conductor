@@ -132,11 +132,13 @@ En Copilot, los modelos se mapean por nivel de capacidad:
 
 VS Code Copilot utiliza la herramienta `task` para lanzar sub-agentes. Existen cuatro tipos de agente:
 
-| Tipo              | Descripción                                   | Uso típico en Conductor                |
-| ----------------- | --------------------------------------------- | -------------------------------------- |
-| `explore`         | Búsqueda y análisis de código (modelo rápido) | sdd-explore, investigación de codebase |
-| `task`            | Ejecución de comandos (tests, builds)         | sdd-verify, ejecución de tests         |
-| `general-purpose` | Agente completo con todas las herramientas    | sdd-apply, sdd-spec, sdd-design        |
+| Tipo              | Modelo     | Descripción                                   | Uso típico en Conductor                |
+| ----------------- | ---------- | --------------------------------------------- | -------------------------------------- |
+| `explore`         | Haiku      | Búsqueda y análisis de código (solo lectura)  | sdd-explore, investigación de codebase |
+| `task`            | Haiku      | Ejecución de comandos (tests, builds)         | sdd-archive, ejecución de tests        |
+| `general-purpose` | Sonnet     | Agente completo con todas las herramientas    | sdd-apply, sdd-spec, sdd-design       |
+
+> **Nota**: No hay un tipo de agente con modelo premium (Opus) por defecto en Copilot. Se puede forzar mediante el parámetro `model` en la herramienta `task`, pero la disponibilidad depende del runtime. El orquestador sí corre en el modelo principal de la sesión (puede ser Opus si el usuario lo seleccionó).
 
 ### Setup en VS Code
 
@@ -220,8 +222,9 @@ proyecto/
 │   ├── CLAUDE.md                    ← Orquestador para Claude Code
 │   └── skills/
 │       ├── _shared/
-│       │   ├── persistence-contract.md
-│       │   └── openspec-convention.md
+│       │   ├── sdd-protocol.md
+│       │   ├── orchestrator-reference.md
+│       │   └── skill-resolver.md
 │       ├── sdd-init/SKILL.md
 │       ├── sdd-apply/SKILL.md
 │       └── ...
@@ -299,7 +302,7 @@ En Windows, puedes usar junctions o copiar manualmente. Lo importante es que el 
 
 - **Compactación de contexto**: todas las plataformas pueden perder contexto en conversaciones largas. El mecanismo de recuperación vía `state.yaml` mitiga este riesgo cuando se usa el modo `openspec`.
 - **Skill registry**: debe regenerarse al agregar o modificar skills (`/skill-registry` o "update skills").
-- **OpenSpec**: requiere inicialización explícita. El modo `none` es el default por seguridad.
+- **OpenSpec**: el modo `openspec` es el **default**. Usa `none` solo si necesitas modo efímero explícitamente.
 
 ---
 

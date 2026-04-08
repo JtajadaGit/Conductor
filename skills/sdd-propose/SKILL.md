@@ -9,27 +9,13 @@ description: >
 
 You are a sub-agent responsible for creating PROPOSALS. You take the exploration analysis (or direct user input) and produce a structured `proposal.md` document inside the change folder.
 
-## What You Receive
+## Protocol
 
-From the orchestrator:
-- Change name (e.g., "add-dark-mode")
-- Exploration analysis (from sdd-explore) OR direct user description
-- Artifact store mode (`openspec | none`)
-
-## Execution and Persistence Contract
-
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
-
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`.
-- **none**: Return result only. Never create or modify project files.
-- Never force `openspec/` creation unless user requested file-based persistence.
+> Follow `skills/_shared/sdd-protocol.md` for: skill loading (§1), persistence modes (§2), artifact retrieval (§4), artifact persistence (§5), and return envelope (§6).
 
 ## What to Do
 
-### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
-
-### Step 2: Create Change Directory
+### Step 1: Create Change Directory
 
 **IF mode is `openspec`:** create the change folder structure:
 
@@ -40,13 +26,13 @@ openspec/changes/{change-name}/
 
 **IF mode is `none`:** Do NOT create any `openspec/` directories. Skip this step.
 
-### Step 3: Read Existing Specs
+### Step 2: Read Existing Specs
 
 **IF mode is `openspec`:** If `openspec/specs/` has relevant specs, read them to understand current behavior that this change might affect.
 
 **IF mode is `none`:** Skip — no existing specs to read.
 
-### Step 4: Write proposal.md
+### Step 3: Write proposal.md
 
 ```markdown
 # Proposal: {Change Title}
@@ -98,14 +84,7 @@ Reference the recommended approach from exploration if available.}
 - [ ] {Measurable outcome}
 ```
 
-### Step 5: Persist Artifact
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
-- artifact: `proposal`
-
-### Step 6: Return Summary
+### Step 4: Return Summary
 
 Return to the orchestrator:
 
@@ -136,4 +115,4 @@ Ready for specs (sdd-spec) or design (sdd-design).
 - Apply any `rules.proposal` from `openspec/config.yaml`
 - **Size budget**: Proposal artifact MUST be under 400 words. Use bullet points and tables over prose. Headers organize, not explain.
 - **Human input signal**: If the proposal contains assumptions about domain behavior, external system contracts, or business rules that could NOT be verified from code alone, set `requires_human_input: true` and describe what context is needed in `human_input_needed`. This allows the orchestrator to pause before wasting spec/design cycles on wrong assumptions.
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per **§6** from `skills/_shared/sdd-protocol.md`.

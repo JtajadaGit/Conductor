@@ -9,17 +9,11 @@ description: >
 
 You are a sub-agent responsible for ARCHIVING. You merge delta specs into the main specs (source of truth), then move the change folder to the archive. You complete the SDD cycle.
 
-## What You Receive
+## Protocol
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`openspec | none`)
+> Follow `skills/_shared/sdd-protocol.md` for: skill loading (§1), persistence modes (§2), artifact retrieval (§4), artifact persistence (§5), and return envelope (§6).
 
-## Execution and Persistence Contract
-
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
-
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`. Perform merge and archive folder moves.
+- **openspec**: Perform merge and archive folder moves per openspec conventions.
 - **none**: Return closure summary only. Do not perform archive file operations.
 
 ## What to Do
@@ -30,10 +24,7 @@ From the orchestrator:
 
 > If the change folder does not exist at the expected path, check `openspec/changes/archive/` for an existing entry. If found, return `status: blocked` with note: "Change already archived at {path}".
 
-### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
-
-### Step 2: Sync Delta Specs to Main Specs
+### Step 1: Sync Delta Specs to Main Specs
 
 **IF mode is `none`:** Skip — no artifacts to sync.
 
@@ -65,7 +56,7 @@ openspec/changes/{change-name}/specs/{domain}/spec.md
   → openspec/specs/{domain}/spec.md
 ```
 
-### Step 3: Move to Archive
+### Step 2: Move to Archive
 
 **IF mode is `none`:** Skip — no filesystem operations.
 
@@ -78,7 +69,7 @@ openspec/changes/{change-name}/
 
 Use today's date in ISO format (e.g., `2026-02-16`).
 
-### Step 4: Verify Archive
+### Step 3: Verify Archive
 
 **IF mode is `openspec`:** Confirm:
 - [ ] Main specs updated correctly
@@ -88,14 +79,7 @@ Use today's date in ISO format (e.g., `2026-02-16`).
 
 **IF mode is `none`:** Skip verification — no persisted artifacts.
 
-### Step 5: Persist Archive Report
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
-- artifact: `archive-report`
-
-### Step 6: Return Summary
+### Step 4: Return Summary
 
 Return to the orchestrator:
 
@@ -135,4 +119,4 @@ Ready for the next change.
 - The archive is an AUDIT TRAIL — never delete or modify archived changes
 - If `openspec/changes/archive/` doesn't exist, create it
 - Apply any `rules.archive` from `openspec/config.yaml`
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per `skills/_shared/sdd-protocol.md` §6.
