@@ -52,6 +52,7 @@ Every phase MUST return a structured envelope to the orchestrator:
 - `artifacts`: list of artifact keys/paths written
 - `next_recommended`: the next SDD phase to run, or "none"
 - `risks`: risks discovered, or "None"
+- `requires_human_input`: `true` if the phase detected that human context/decisions are needed before downstream phases can produce good results. `false` otherwise. When `true`, include a `human_input_needed` field describing what is needed.
 - `skill_resolution`: how skills were loaded — `injected` (received Project Standards from orchestrator), `fallback-registry` (self-loaded from registry), `fallback-path` (loaded via SKILL: Load path), or `none` (no skills loaded)
 
 Example:
@@ -60,8 +61,9 @@ Example:
 **Status**: success
 **Summary**: Proposal created for `{change-name}`. Defined scope, approach, and rollback plan.
 **Artifacts**: `openspec/changes/{change-name}/proposal.md`
-**Next**: sdd-spec or sdd-design
+**Next**: sdd-clarify
 **Risks**: None
+**Requires Human Input**: false
 **Skill Resolution**: injected — {N} skills ({skill-1}, {skill-2}, ...)
 (other values: `fallback-registry`, `fallback-path`, or `none — no registry found`)
 ```

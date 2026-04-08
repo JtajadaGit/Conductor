@@ -595,7 +595,7 @@ Define las secciones comunes que TODAS las skills SDD siguen:
 - **Section A** — Cómo cargar skills relevantes
 - **Section B** — Cómo recuperar artefactos según el modo de persistencia
 - **Section C** — Cómo persistir artefactos producidos
-- **Section D** — Formato del sobre de retorno (`status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `skill_resolution`)
+- **Section D** — Formato del sobre de retorno (`status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `requires_human_input`, `skill_resolution`)
 
 ### persistence-contract.md — Contrato de Persistencia
 

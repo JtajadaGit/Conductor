@@ -135,4 +135,5 @@ Ready for specs (sdd-spec) or design (sdd-design).
 - Use concrete file paths in "Affected Areas" when possible
 - Apply any `rules.proposal` from `openspec/config.yaml`
 - **Size budget**: Proposal artifact MUST be under 400 words. Use bullet points and tables over prose. Headers organize, not explain.
+- **Human input signal**: If the proposal contains assumptions about domain behavior, external system contracts, or business rules that could NOT be verified from code alone, set `requires_human_input: true` and describe what context is needed in `human_input_needed`. This allows the orchestrator to pause before wasting spec/design cycles on wrong assumptions.
 - Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.

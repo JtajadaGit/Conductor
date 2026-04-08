@@ -70,6 +70,7 @@ Meta-commands(orchestrator handles, NOT delegated as skills):
 
 ### Error Handling for Meta-Commands
 
+- If a sub-agent returns `requires_human_input: true` → PAUSE, present the `human_input_needed` description to the user, wait for their response before launching the next phase
 - If a sub-agent returns `status: blocked` → STOP, report the blocker to the user, suggest resolution
 - If a sub-agent returns `status: partial` → report partial result, ask user whether to continue or retry
 - Maximum 2 retries per phase before escalating to the user
@@ -108,7 +109,7 @@ proposal ──→ clarify ──→ specs ──┐
 ```
 
 ### Result Contract
-Each phase returns: `status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `skill_resolution`.
+Each phase returns: `status`, `executive_summary`, `artifacts`, `next_recommended`, `risks`, `requires_human_input`, `skill_resolution`.
 
 ## Model Assignments
 
