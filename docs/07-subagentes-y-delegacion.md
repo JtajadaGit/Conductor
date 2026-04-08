@@ -448,4 +448,43 @@ Para features de alta incertidumbre técnica, batches pequeños son más económ
 
 ---
 
+## 10. Error Recovery Protocol
+
+Protocolo estandarizado para cuando las cosas fallan. Se aplica a TODAS las fases, no solo a meta-comandos.
+
+### Tabla de recuperación
+
+| Trigger | Acción | Comportamiento del orquestador |
+|---------|--------|-------------------------------|
+| `status: blocked` | **PAUSE → DISPLAY → OPTIONS** | Mostrar: fase, razón del bloqueo, riesgos. Ofrecer: (A) aportar info y reintentar, (B) saltar fase con warning, (C) abortar workflow. |
+| `status: partial` | **MERGE → CONTINUE** | Aceptar trabajo completado, crear tarea de continuación para lo pendiente. Preguntar al usuario: ¿reintentar o saltar? |
+| `requires_human_input: true` | **PAUSE → PRESENT → WAIT** | Presentar la descripción de `human_input_needed` al usuario. No lanzar siguiente fase hasta recibir respuesta. |
+| Sub-agente no responde (timeout) | **RETRY ONCE → ESCALATE** | Reintentar la fase una vez. Si falla de nuevo, reportar al usuario con contexto del error. NO reintentar una tercera vez. |
+| Compactación detectada | **AUTO-RECOVER** | Re-leer `.atl/skill-registry.md` + `openspec/principles.md`. Re-cachear. En modo `openspec`: también re-leer `state.yaml`. |
+| Artefacto excede presupuesto de palabras | **WARN → ACCEPT** | Aceptar el artefacto pero advertir que fases downstream consumirán más tokens. NO re-ejecutar la fase solo para recortar. |
+
+### Principio clave
+
+**Nunca ocultar errores silenciosamente.** Todo error DEBE reportarse al usuario con suficiente contexto para tomar una decisión. El orquestador NO toma decisiones de recuperación autónomamente — presenta opciones.
+
+### Ejemplo de error recovery
+
+```
+Orquestador: ⚠️ sdd-apply (batch 2) devolvió status: partial
+
+   Completado:
+   ✅ 2.1 Crear middleware de validación
+   ✅ 2.2 Agregar tipos TypeScript
+
+   Bloqueado:
+   ❌ 2.3 Implementar endpoint /refresh — error: dependencia circular detectada
+
+   Opciones:
+   A) Proporcionar contexto adicional y reintentar tarea 2.3
+   B) Saltar tarea 2.3 y continuar con batch 3 (se marcará como pendiente)
+   C) Abortar apply y volver a revisar el diseño
+```
+
+---
+
 [← Anterior: Modo TDD Estricto](./05-modo-tdd-estricto.md) | [Volver al README](../README.md) | [Siguiente: Plataformas →](./08-plataformas-compatibles.md)

@@ -91,6 +91,20 @@ Meta-commands(orchestrator handles, NOT delegated as skills):
 - `sdd-ff` parallelism: `sdd-spec` and `sdd-design` MAY run in parallel (both depend only on proposal, not on each other)
 - `sdd-ff` in `none` mode: ⚠️ each phase returns inline content that the orchestrator must accumulate in its own context to pass to the next phase. After 3+ phases, context can saturate. If running in `none` mode, WARN the user before launching sdd-ff: "Running fast-forward in ephemeral mode — context may be exhausted before completion. Consider enabling openspec."
 
+### Error Recovery Protocol
+
+Standardized behavior when things go wrong — applies to ALL phases, not just meta-commands.
+
+| Trigger | Action | Orchestrator behavior |
+|---------|--------|----------------------|
+| Sub-agent returns `status: blocked` | **PAUSE → DISPLAY → OPTIONS** | Show: phase name, blocker reason, risks. Offer: (A) provide missing info and retry, (B) skip phase with warning, (C) abort workflow. Log decision. |
+| Sub-agent returns `status: partial` | **MERGE → CONTINUE** | Accept completed work, create continuation task for remaining items. Ask user: retry remaining or skip? |
+| Sub-agent fails to return (timeout/crash) | **RETRY ONCE → ESCALATE** | Retry the same phase once. If it fails again, report to user with error context. Do NOT retry a third time. |
+| Compaction detected (skill_resolution ≠ injected) | **AUTO-RECOVER** | Re-read `.atl/skill-registry.md` + `openspec/principles.md`. Re-cache. Inject in all subsequent delegations. If `openspec` mode: also re-read `state.yaml` to reconstruct DAG position. |
+| Phase output violates artifact budget | **WARN → ACCEPT** | Accept the artifact but warn the user that downstream phases will consume more tokens. Do NOT re-run the phase just to trim the output. |
+
+**Key principle**: Never silently swallow errors. Every error MUST be reported to the user with enough context to make a decision. The orchestrator does NOT make recovery decisions autonomously — it presents options.
+
 ### Natural Language Triggers
 
 In environments without slash-command support (e.g., Copilot CLI in terminal), users may express commands as natural language. Recognize these patterns:
