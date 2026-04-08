@@ -323,4 +323,57 @@ Para nuevos miembros del equipo que se incorporan a un proyecto con Conductor:
 
 ---
 
+## Hooks Recomendados para Claude Code
+
+Claude Code soporta [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) — scripts de shell que se ejecutan automáticamente en respuesta a eventos del agente. Conductor puede beneficiarse de hooks para automatizar validaciones y logging.
+
+### Hook recomendado: validar state.yaml antes de commit
+
+Añade a `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -q 'git commit'; then if [ -d 'openspec/changes' ]; then for dir in openspec/changes/*/; do if [ -f \"$dir/state.yaml\" ] && [ \"$dir\" != 'openspec/changes/archive/' ]; then phase=$(grep 'current_phase' \"$dir/state.yaml\" 2>/dev/null | head -1); echo \"SDD active: $dir ($phase)\"; fi; done; fi; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Este hook muestra el estado SDD activo cuando se hace commit, recordando al usuario si hay un flujo SDD en progreso.
+
+### Hook recomendado: auto-approve de scripts SDD
+
+Para evitar confirmaciones repetitivas en operaciones SDD seguras:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Read(openspec/**)",
+      "Write(openspec/**)",
+      "Read(.atl/**)",
+      "Write(.atl/**)"
+    ]
+  }
+}
+```
+
+### Cuándo NO usar hooks
+
+- No uses hooks para forzar el flujo SDD — el orquestador ya lo gestiona
+- No uses hooks para validar artefactos — eso es trabajo de `sdd-verify`
+- No crees hooks que modifiquen artefactos SDD — las fases son la única fuente de modificación
+
+---
+
 [← Anterior: Comandos](./12-comandos-referencia.md) | [Volver al README](../README.md)
