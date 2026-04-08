@@ -155,11 +155,13 @@ ALL sub-agent launch prompts that involve reading, writing, or reviewing code MU
 1. Read `.atl/skill-registry.md` for full registry content
 2. Cache the **Compact Rules** section and the **User Skills** trigger table
 3. If no registry exists, warn and proceed without project-specific standards
+4. Read `openspec/principles.md` if it exists — cache its content as compact principles (max 5 lines). If it does not exist, skip silently.
 
 For each sub-agent launch:
 1. Match relevant skills by code context and task context
-2. Copy matching compact rule blocks into the prompt as `## Project Standards (auto-resolved)`
-3. Inject them BEFORE the task-specific instructions
+2. If project principles were cached, inject them as `## Project Principles (auto-resolved)` FIRST
+3. Copy matching compact rule blocks into the prompt as `## Project Standards (auto-resolved)`
+4. Inject them BEFORE the task-specific instructions
 4. **Always include the artifact store mode** (`openspec` or `none`) in the sub-agent prompt so it knows whether to read/write files
 
 ### Sub-Agent Context Protocol

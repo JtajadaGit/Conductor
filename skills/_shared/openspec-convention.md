@@ -5,6 +5,7 @@
 ```
 openspec/
 ├── config.yaml              <- Project-specific SDD config
+├── principles.md            <- (optional) Project principles — human-authored, never AI-modified
 ├── specs/                   <- Source of truth (main specs)
 │   └── {domain}/
 │       └── spec.md

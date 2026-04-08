@@ -57,6 +57,7 @@ Conductor opera en uno de dos modos de persistencia. El modo se resuelve al inic
 ```
 openspec/
 ├── config.yaml                         ← Configuración SDD del proyecto
+├── principles.md                       ← (opcional) Principios del proyecto — humano, inmutable
 ├── specs/                              ← Fuente de verdad (specs principales)
 │   └── {dominio}/
 │       └── spec.md                     ← Spec principal del dominio
@@ -155,6 +156,44 @@ testing:
 | `testing`    | Capacidades de testing detectadas por sdd-init |
 
 Las `rules` de cada fase se inyectan en el sub-agente correspondiente, guiando cómo debe producir su artefacto.
+
+---
+
+## principles.md (Opcional)
+
+El archivo `openspec/principles.md` es una **constitución lite** del proyecto: principios NON-NEGOTIABLE que todas las fases SDD deben respetar. Es creado y mantenido por humanos — la IA nunca lo modifica.
+
+### Formato
+
+```markdown
+# Project Principles
+
+1. **Spec-First**: No code without specifications. Every change MUST have specs before implementation.
+2. **Simplicity**: Prefer the simplest solution. No over-engineering or premature abstractions.
+3. **Test Coverage**: Every requirement MUST have at least one automated test.
+4. **Existing Patterns**: Follow the project's existing patterns, not generic best practices.
+5. **Explicit Dependencies**: No implicit dependencies. All imports and connections must be traceable.
+```
+
+### Cómo funciona
+
+1. El orquestador lee `openspec/principles.md` una vez por sesión (junto al skill registry)
+2. Cachea su contenido como líneas compactas (~30-50 tokens)
+3. Inyecta los principios como `## Project Principles (auto-resolved)` en cada sub-agente, **antes** de las compact rules de skills
+4. Si el archivo no existe, se omite silenciosamente — sin error, sin warning
+
+### Cuándo crearlo
+
+- Al integrar Conductor por primera vez en un proyecto con convenciones fuertes
+- Cuando el equipo tiene reglas no negociables que la IA debe seguir siempre
+- Para proyectos regulados (compliance, seguridad, accesibilidad)
+
+### Reglas
+
+- Máximo 5 principios (más de 5 diluye su efectividad)
+- Cada principio en 1 línea (nombre en negrita + descripción)
+- Nunca modificado por IA — solo humanos pueden editarlo
+- Si un sub-agente detecta que una decisión viola un principio, debe reportarlo como `risk` en su envelope
 
 ---
 

@@ -27,6 +27,25 @@ The orchestrator persists DAG state after each phase transition to enable SDD re
 | `openspec` | Write `openspec/changes/{change-name}/state.yaml` | Read `openspec/changes/{change-name}/state.yaml` |
 | `none`     | Not possible — warn user                          | Not possible                                     |
 
+## Project Principles (Optional)
+
+If `openspec/principles.md` exists, the orchestrator MUST:
+1. Read it once per session (alongside the skill registry)
+2. Inject its content as 2-3 compact lines in every sub-agent prompt, under `## Project Principles (auto-resolved)`, BEFORE the `## Project Standards (auto-resolved)` block
+3. Cache it — do not re-read per delegation
+
+`principles.md` defines NON-NEGOTIABLE project rules (max 5) that all phases must respect. It is human-authored and never modified by AI.
+
+Format:
+```markdown
+# Project Principles
+
+1. **{Principle Name}**: {One-line description}
+2. **{Principle Name}**: {One-line description}
+```
+
+If the file does not exist, skip — no error, no warning.
+
 ## Common Rules
 
 - `none` → do NOT create or modify any project files; return results inline only

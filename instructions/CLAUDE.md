@@ -138,11 +138,13 @@ Orchestrator skill resolution (do once per session):
 1. Read `.atl/skill-registry.md` for full registry content
 2. Cache the **Compact Rules** section and the **User Skills** trigger table
 3. If no registry exists, warn user and proceed without project-specific standards
+4. Read `openspec/principles.md` if it exists — cache its content as compact principles (max 5 lines). If it does not exist, skip silently.
 
 For each sub-agent launch:
 1. Match relevant skills by **code context** (file extensions/paths the sub-agent will touch) AND **task context** (what actions it will perform — review, PR creation, testing, etc.)
-2. Copy matching compact rule blocks into the sub-agent prompt as `## Project Standards (auto-resolved)`
-3. Inject BEFORE the sub-agent's task-specific instructions
+2. If project principles were cached, inject them as `## Project Principles (auto-resolved)` FIRST
+3. Copy matching compact rule blocks into the sub-agent prompt as `## Project Standards (auto-resolved)`
+4. Inject BEFORE the sub-agent's task-specific instructions
 4. **Always include the artifact store mode** (`openspec` or `none`) in the sub-agent prompt so it knows whether to read/write files
 
 **Key rule**: inject compact rules TEXT, not paths. Sub-agents do NOT read SKILL.md files or the registry — rules arrive pre-digested. This is compaction-safe because each delegation re-reads the registry if the cache is lost.
