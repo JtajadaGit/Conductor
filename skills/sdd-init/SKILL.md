@@ -1,126 +1,122 @@
 ---
 name: sdd-init
-description: >
-  Initialize Spec-Driven Development context in any project. Detects stack, conventions, testing capabilities, and bootstraps the active persistence backend.
-  Trigger: When user wants to initialize SDD in a project, or says "sdd init", "iniciar sdd", "openspec init".
+description: Initialize SDD context — detect tech stack, testing capabilities, bootstrap persistence and context files
+user-invocable: true
+disable-model-invocation: true
 ---
 
-## Purpose
+## Steps
 
-You are a sub-agent responsible for initializing the Spec-Driven Development (SDD) context in a project. You detect the project stack, conventions, and testing capabilities, then bootstrap the active persistence backend.
+### 1. Detect Stack
+Scan for markers **in project root only** (exclude `node_modules/`, `vendor/`, `.venv/`, `target/`): `package.json` (Node.js), `go.mod` (Go), `pyproject.toml`/`requirements.txt` (Python), `Cargo.toml` (Rust), `pom.xml`/`build.gradle` (Java/Kotlin), `composer.json` (PHP), `Gemfile` (Ruby), `*.csproj`/`*.sln` (.NET).
 
-You are an EXECUTOR for this phase, not the orchestrator. Do the initialization work yourself. Do NOT launch sub-agents, do NOT call `delegate` or `task`, and do NOT hand execution back unless you hit a real blocker that must be reported upstream.
+### 2. Detect Testing
 
-## Protocol
+| Category | Detect | Examples |
+|----------|--------|----------|
+| Test runner | Primary framework | jest, vitest, pytest, go test, cargo test |
+| Test layers | Available types | unit, integration, e2e |
+| Coverage | Reporter | istanbul, c8, coverage.py, go test -cover |
+| Quality | Linter/type-checker/formatter | eslint, ruff, clippy, tsc, mypy, prettier |
 
-> Follow `skills/_shared/sdd-protocol.md` for: persistence modes (§2), directory structure (§3), config reference (§8), and return envelope (§6).
+### 3. Detect Architecture
+Scan for patterns: directory structure, key config files, framework markers.
+Identify: architecture style (Clean, MVC, Hexagonal, layered), key modules/packages, entry points, notable conventions.
 
-## What to Do
+### 4. Resolve strict_tdd
+Priority chain (first match wins):
+1. System prompt marker `strict-tdd-mode` → use value
+2. Existing `openspec/config.yaml` `x-conductor.strict_tdd` → use value
+3. Test runner detected → default `true`
+4. No test runner → `false`
 
-### Step 1: Detect Project Context and Testing Capabilities
+### 5. Initialize Persistence
+- **Re-init** (openspec/ exists): READ existing config, MERGE (preserve user rules, update detected fields)
+- **First-init**: Ask user BEFORE executing if they want openspec mode. Default to `openspec`.
+- Create structure using **RELATIVE paths only** (e.g., `openspec/specs/`, NOT absolute paths):
+  ```
+  openspec/
+  ├── config.yaml
+  ├── context.md
+  ├── specs/
+  └── changes/
+      └── archive/
+  ```
+- **CRITICAL**: NEVER use absolute paths in mkdir or file writes. On Windows, absolute paths in bash create garbage directories.
 
-Read the project to understand:
-
-**Tech Stack**: Detect project type by scanning for: `package.json` (Node.js), `go.mod` (Go), `pyproject.toml` / `requirements.txt` / `setup.py` (Python), `Cargo.toml` (Rust), `pom.xml` / `build.gradle` (Java/Kotlin), `composer.json` (PHP), `Gemfile` (Ruby), `*.csproj` / `*.sln` (.NET).
-
-**Existing conventions**: linters, test frameworks, CI configurations, architecture patterns.
-
-**Testing Capabilities**: Scan for ALL testing infrastructure:
-
-| Category      | What to detect                | Examples                                                              |
-| ------------- | ----------------------------- | --------------------------------------------------------------------- |
-| Test runner   | Primary test framework        | jest, vitest, mocha, pytest, go test, cargo test                      |
-| Test layers   | Available test types          | unit, integration (@testing-library, httptest), e2e (playwright, cypress) |
-| Coverage tool | Code coverage reporter        | istanbul/nyc, c8, coverage.py, pytest-cov, go test -cover            |
-| Quality tools | Linter/type-checker/formatter | eslint, pylint, ruff, clippy, tsc --noEmit, mypy, prettier, black    |
-
-For each: record `{tool name, command}` or `NOT AVAILABLE`.
-
-**Strict TDD Mode**: Resolve with this priority chain (first match wins):
-1. System prompt / agent config marker `strict-tdd-mode` → use that value
-2. Existing `openspec/config.yaml` `strict_tdd` field → use that value
-3. Test runner detected → default `strict_tdd: true`
-4. No test runner → `strict_tdd: false` (note: "unavailable — no test runner")
-
-Do NOT ask the user interactively. The preference is resolved from existing config.
-
-### Step 2: Initialize Persistence Backend
-
-**If this is a re-init** (openspec/ or .atl/ already exists): READ existing config, MERGE detected values (preserve user-customized rules, update detected fields). Report what was updated vs. preserved.
-
-If mode resolves to `openspec`, create this directory structure:
-
-```
-openspec/
-├── config.yaml              ← Project-specific SDD config
-├── specs/                   ← Source of truth (empty initially)
-└── changes/                 ← Active changes
-    └── archive/             ← Completed changes
-```
-
-### Step 3: Generate and Persist Config
-
-Based on detection, create/update `openspec/config.yaml` (see `sdd-protocol.md` §8 for schema).
-
-Include the detected context, strict_tdd setting, default rules, and testing capabilities as a `testing:` section.
-
-**Testing Capabilities format** (persist in config.yaml):
-
+### 6. Generate `openspec/config.yaml`
 ```yaml
-testing:
+# OpenSpec-compliant fields
+schema: spec-driven
+
+context: |
+  Tech stack: {detected}
+  Architecture: {detected}
+  Testing: {detected}
+
+# Conductor extensions
+x-conductor:
   strict_tdd: {true/false}
-  detected: {date}
-  test_runner:
-    command: "{command}"
-    framework: "{name}"
-  layers:
-    unit: {true/false}
-    integration: {true/false}
-    e2e: {true/false}
-  coverage:
-    available: {true/false}
-    command: "{command or empty}"
-  quality:
-    linter: "{command or empty}"
-    type_checker: "{command or empty}"
-    formatter: "{command or empty}"
+  testing:
+    detected: {ISO date}
+    test_runner: { command: "", framework: "" }
+    layers: { unit: bool, integration: bool, e2e: bool }
+    coverage: { available: bool, command: "" }
+    quality: { linter: "", type_checker: "", formatter: "" }
+  hooks:
+    apply:
+      pre_hook: ""
+      post_hook: ""
+      post_hook_on_fail: retry
+      post_hook_max_retries: 3
+      checkpoint_every: 5
+    verify:
+      test_command: ""
+      build_command: ""
+      coverage_threshold: 0
 ```
 
-If mode is `none`: return detected context without writing project files.
+### 7. Generate `openspec/context.md`
+Single source of truth for repo context — survives compaction, read by orchestrator at session start. Platform-agnostic (lives in openspec/, not in any platform-specific directory).
+```markdown
+# Repo Context
+_Generated by sdd-init on {date}. Update manually as architecture evolves._
 
-### Step 4: Return Summary
+## Stack
+{detected stack, versions if visible}
 
-Return a structured summary:
+## Architecture
+{pattern: Clean/MVC/Hexagonal/etc.}
 
+## Key Directories
+| Path | Purpose |
+|------|---------|
+{detected modules and what they contain}
+
+## Entry Points
+{main files, CLI entrypoints, API roots}
+
+## Conventions
+{coding patterns, naming, notable rules detected}
+
+## Known Fragile Areas
+{leave blank — fill as discovered}
 ```
-## SDD Initialized
 
-**Project**: {project name}
-**Stack**: {detected stack}
-**Persistence**: {openspec | none}
-**Strict TDD Mode**: {enabled ✅ / disabled ❌ / unavailable (no test runner)}
+### 8. Copilot adapter (optional)
+If `.github/copilot-instructions.md` exists (Copilot detected), ALSO copy `openspec/context.md` to `.github/instructions/context.instructions.md` with `applyTo: "**/*"` frontmatter. This enables Copilot auto-loading.
 
-### Testing Capabilities
-{summary of detected capabilities}
+### 9. Invoke conventions (conditional)
+After init completes, scan for project-level custom skills (non-sdd). If found → trigger `/conventions` to generate `openspec/conventions.md`. If NO custom skills exist → skip and note "No custom skills detected — run /conventions after adding project skills."
 
-### Structure Created (openspec only)
-- openspec/config.yaml ← Project config with detected context + testing capabilities
-- openspec/specs/      ← Ready for specifications
-- openspec/changes/    ← Ready for change proposals
-
-### Next Steps
-- Run `skill-registry` to build/update the skill registry
-- Ready for sdd-explore or sdd-new
-```
-
-> **Note**: The orchestrator will invoke `skill-registry` as a separate step after init completes. Do NOT build the skill registry in this phase.
+### 10. Return Summary
+Report: stack detected, architecture pattern, persistence mode, strict TDD, context files created.
 
 ## Rules
-
-- NEVER create placeholder spec files — specs are created via sdd-spec during a change
-- ALWAYS detect the real tech stack, don't guess
-- NEVER behave like the orchestrator — execute directly and return results
-- Keep config.yaml context CONCISE — no more than 10 lines
-- ALWAYS detect and persist testing capabilities — downstream phases depend on it
-- If Strict TDD Mode is requested but no test runner exists, set strict_tdd: false and explain why
-- Return a structured envelope per `sdd-protocol.md` §6
+- NEVER create placeholder spec files
+- ALWAYS detect real stack, don't guess
+- Default to `openspec`, NOT `none`
+- Ask user BEFORE executing first-init
+- `openspec/context.md` is ALWAYS generated (both modes) — canonical source of truth
+- `openspec/context.md` IS version-controlled
+- `.github/instructions/` copies are ONLY created if Copilot is detected
