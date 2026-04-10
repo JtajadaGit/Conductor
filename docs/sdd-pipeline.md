@@ -48,11 +48,25 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 ---
 
+## Modos de Pipeline
+
+| Complejidad | Modo | Agent calls | Descripción |
+|-------------|------|-------------|-------------|
+| **Medium** | **Condensado** | 3 | `sdd-planner` (fast-forward) → `sdd-coder` → `sdd-reviewer` |
+| **Large** | **Completo** | Hasta 7 | Fases individuales secuenciales |
+
+### Condensado (default para medium)
+UNA sola llamada a `sdd-planner` con `PHASE: fast-forward` produce todos los artefactos de planificación (proposal + spec + design + tasks + state.yaml). El orquestador **no** crea directorios, no escribe state.yaml, no lee artefactos entre fases.
+
+### Completo (para large/vago)
+Fases individuales con agent calls separados. Permite gates (clarify, explore) y review interactivo.
+
 ## Fases — Tabla Resumen
 
 | Fase | Agente | Model tier | Lee | Produce | Budget |
 |------|--------|------------|-----|---------|--------|
-| explore | sdd-planner | standard | código fuente | `exploration.md` | — |
+| **fast-forward** | sdd-planner | high-capability | context.md + codebase | todos los artefactos planning | — |
+| explore | sdd-planner | standard | código fuente | `exploration.md` | <400 pal |
 | propose | sdd-planner | high-capability | exploration (opcional) | `proposal.md` | <400 pal |
 | clarify | sdd-planner | standard | proposal (req.) | `questions.md` (si >0) | <300 pal |
 | spec | sdd-planner | standard | proposal + questions | `specs/{domain}/spec.md` | <650 pal |
@@ -112,7 +126,7 @@ Default: Interactive.
 
 ### Qué se inyecta en cada delegación
 
-1. **Project Standards** — compact rules del skill-registry
+1. **Project Standards** — compact rules de `/conventions`
 2. **Project Principles** — de `openspec/principles.md` (si existe)
 3. **Phase** — instrucciones específicas de la fase
 4. **Context** — nombre del cambio, paths de artefactos, modo de persistencia
@@ -128,11 +142,11 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 |---------|----------|-------|
 | `/sdd-init` | Bootstrap: detecta stack, crea openspec, genera registry | 1 req |
 | `/sdd-new <name>` | Evalúa input → [explore?] → propose → clarify | 2-3 req |
-| `/sdd-ff <name>` | propose → clarify → spec → design → tasks | 4-5 req |
+| `/sdd-ff <name>` | Pipeline condensado (1 planner call) o completo según complejidad | 1-3 req |
 | `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |
 | `/sdd-status` | Muestra progreso (lee state.yaml) | 0 req |
 | `/sdd-archive` | Sync delta specs → main specs, mover a archive/ | 1 req |
-| `/skill-registry` | Genera/actualiza `openspec/conventions.md` | 1 req |
+| `/conventions` | Genera/actualiza `openspec/conventions.md` | 1 req |
 
 ---
 
@@ -201,6 +215,49 @@ x-conductor:
 ### Design Insights
 - Refresh token rotation adds complexity; use simple expiry for MVPs
 ```
+
+---
+
+## Paralelismo
+
+El orquestador busca activamente oportunidades de ejecución en paralelo:
+
+| Oportunidad | Cómo |
+|-------------|------|
+| Tareas `[P]` en apply | Divide tasks.md en grupos independientes, lanza múltiples `sdd-coder` simultáneos |
+| Apply + trabajo no-bloqueante | Coder en background, prepara contexto de verify en paralelo |
+| Cambios independientes | Pipelines separados en paralelo si tocan archivos distintos |
+| Explore + carga de contexto | Lee context files mientras el agente de exploración trabaja |
+
+**Regla**: NUNCA en paralelo cuando uno consume artefactos que el otro produce (ej: spec||design).
+
+---
+
+## Compaction Awareness
+
+Cuando el contexto crece largo, el orquestador guarda estado proactivamente:
+1. `state.yaml` actualizado antes de delegaciones grandes
+2. Decisiones clave (nombre del cambio, fase actual) recuperables desde artefactos en `openspec/`
+3. Tras compactación: relee `state.yaml`, `conventions.md`, `context.md`, `principles.md`
+
+---
+
+## Trivial Tracking
+
+Incluso cambios triviales/simples (sin pipeline SDD) crean un `state.yaml` mínimo:
+
+```yaml
+change: {name}
+created: {ISO-8601}
+updated: {ISO-8601}
+mode: openspec
+current_phase: done
+complexity: trivial|simple
+phases:
+  apply: done
+```
+
+Esto permite que `/sdd-status` muestre historial de **todos** los cambios, no solo los que pasaron por SDD.
 
 ---
 

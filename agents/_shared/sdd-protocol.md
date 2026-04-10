@@ -6,6 +6,10 @@
 
 You are an EXECUTOR, not an orchestrator. Execute the work yourself. NEVER launch sub-agents. NEVER read files you don't need for this phase.
 
+**ALWAYS use relative paths** for shell commands (mkdir, bash). NEVER pass absolute paths to `mkdir -p`. Example: `mkdir -p openspec/changes/foo/`, NOT `mkdir -p C:\...\openspec\changes\foo\`.
+
+**All artifacts** (proposal.md, spec.md, design.md, tasks.md, state.yaml, verify-report.md) MUST be written inside `openspec/changes/{change-name}/`. NEVER write SDD artifacts to project root.
+
 ## Skill Loading
 
 1. Check if `## Project Standards (auto-resolved)` was injected in your prompt → use it. Do NOT read SKILL.md files.
@@ -59,6 +63,7 @@ openspec/
 - **Delta specs**: ADDED/MODIFIED/REMOVED/RENAMED sections (when main spec exists). Apply order: RENAMED → REMOVED → MODIFIED → ADDED
 - **Full specs**: when domain is new (no existing main spec)
 - **Missing required artifact** → return `status: blocked` with `risks: 'Missing prerequisite: {artifact}'`
+- **Post-apply deviation**: If apply agent deviates from design.md (e.g., different API due to ecosystem constraint), it MUST append a `## Deviations` section to design.md documenting: what changed, why, and the accepted alternative. This keeps design.md as accurate source of truth.
 
 ## Return Envelope
 
@@ -79,10 +84,12 @@ Every phase MUST return:
 | exploration | 400 | Approaches table + brief analysis |
 | proposal | 400 | Bullet points and tables > prose |
 | questions | 300 | 3-5 lines per question max |
-| specs | 650 | Requirement tables over narrative |
+| specs | 650 **per domain** | Requirement tables over narrative |
 | design | 800 | Decision tables, ASCII diagrams |
 | tasks | 530 | Excl. Consistency Check section |
 | verify-report | unlimited | Full report |
+
+Note: spec budget is **per domain**, not total. A change touching 3 domains = up to 1950w of specs.
 
 Headers organize, not explain. Prefer tables and bullets over prose.
 
@@ -100,9 +107,9 @@ If `openspec/lessons-learned.md` exists:
 - sdd-coder MUST append after each successful fix
 - sdd-coder SHOULD append after discovering ecosystem gotchas during apply (not just fixes)
 - sdd-planner SHOULD read it to inform design decisions
-- sdd-reviewer SHOULD flag new discoveries for lessons-learned in verify-report
+- sdd-reviewer MUST reference lessons-learned.md in verify-report if new entries were added during apply
 
-Format:
+Format (MUST follow this structure):
 ```markdown
 # Lessons Learned
 ## YYYY-MM-DD: {change-name}
@@ -111,6 +118,19 @@ Format:
 ### Design Insights
 - {actionable insight}
 ```
+
+- Heading MUST use format `## YYYY-MM-DD: {change-name}` (not a description)
+- Subsections (`### Ecosystem Gotchas`, `### Design Insights`) are REQUIRED structure
+- Entries older than 6 months SHOULD be reviewed for staleness during `/sdd-init` re-init
+
+## Context Updates
+
+After a successful verify phase, the reviewer SHOULD include a `## Suggested context.md Updates` section in verify-report.md when:
+- New "Known Fragile Areas" were discovered during apply/verify
+- Ecosystem constraints affect future changes (e.g., Zone.js fakeAsync limitations)
+- Architecture changed significantly (new components, changed entry points)
+
+The orchestrator MAY apply these suggestions to `openspec/context.md` after archive.
 
 ## state.yaml Schema
 
@@ -134,6 +154,19 @@ locks:
   spec: false
   design: false
 ```
+
+### state.yaml Update Rules
+
+ALL fields above are REQUIRED. Agents creating state.yaml MUST include every field.
+
+| When | Who updates | What |
+|------|-------------|------|
+| Planning complete (fast-forward or tasks done) | sdd-planner | All planning phases = `done`, `apply: pending`, locks set |
+| Apply complete | sdd-coder | `apply: done`, `current_phase: verify` |
+| Verify complete | sdd-reviewer | `verify: pass` or `fail`, `updated: {now}` |
+| Archive complete | orchestrator | `archive: done` |
+
+**In Auto mode**: planning agent writes initial state; apply and verify agents MUST still update their own phase. These updates are NOT optional bookkeeping — they are phase gates for `/sdd-continue` and DAG recovery.
 
 ## Config Reference
 

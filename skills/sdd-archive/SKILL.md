@@ -33,8 +33,12 @@ openspec/changes/{change-name}/
 ### 5. Output
 `archive-report.md` with: specs synced, archive contents, source of truth updated.
 
+### 6. Update context.md (if verify-report suggested updates)
+If `verify-report.md` contains a `## Suggested context.md Updates` section, apply those updates to `openspec/context.md`.
+
 ## Rules
 - NEVER archive with CRITICAL issues in verify report
 - ALWAYS sync delta specs BEFORE moving to archive
 - Archive is AUDIT TRAIL — never delete or modify archived changes
 - Use ISO date format (YYYY-MM-DD)
+- After archive, `openspec/specs/` will contain the promoted main specs — this is the source of truth for future changes

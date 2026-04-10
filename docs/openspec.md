@@ -23,7 +23,7 @@ OpenSpec es el sistema de persistencia de Conductor: artefactos SDD en disco, re
 openspec/
 ├── config.yaml                   ← OpenSpec standard (schema, context) + Conductor extensions (x-conductor)
 ├── context.md                    ← Repo context (stack, arquitectura, entry points) — canónico
-├── conventions.md                ← Skills, compact rules, convenciones — generado por skill-registry
+├── conventions.md                ← Convenciones del equipo — generado por /conventions
 ├── principles.md                 ← (Conductor ext.) Principios NON-NEGOTIABLE — solo humanos editan
 ├── lessons-learned.md            ← (Conductor ext.) Lecciones acumulativas entre cambios (append-only)
 ├── specs/                        ← Fuente de verdad (specs principales)
@@ -95,7 +95,7 @@ x-conductor:
 
 ## state.yaml
 
-El mecanismo de recuperación del DAG. El orquestador lo actualiza tras cada transición de fase.
+El mecanismo de recuperación del DAG. Cada agente actualiza su propia fase al completarla (el orquestador NO escribe state.yaml).
 
 ```yaml
 change: add-user-auth
@@ -166,22 +166,25 @@ Registro append-only de lecciones entre cambios. Crece con cada `sdd-coder` fix 
 
 | Actor | Puede leer | Puede escribir |
 |-------|------------|----------------|
-| Orquestador | `state.yaml`, git status | `state.yaml` |
-| sdd-planner | Artefactos de fases previas, código fuente | Su artefacto de fase |
-| sdd-coder | tasks + spec + design + código | Código fuente + `tasks.md [x]` |
-| sdd-reviewer | spec + tasks + código | `verify-report.md` |
+| Orquestador | `state.yaml`, git status | Lectura para recovery (NO escribe state.yaml) |
+| sdd-planner | Artefactos de fases previas, código fuente | Su artefacto de fase + `state.yaml` (inicial) |
+| sdd-coder | tasks + spec + design + código + `state.yaml` | Código fuente + `tasks.md [x]` + `state.yaml` (apply: done) |
+| sdd-reviewer | spec + tasks + código + `state.yaml` | `verify-report.md` + `state.yaml` (verify: pass/fail) |
 | sdd-archive | Todos los artefactos | Main specs + archive/ |
 
-Ningún sub-agente lee `state.yaml` — eso es responsabilidad exclusiva del orquestador.
+Cada agente es responsable de actualizar `state.yaml` para su fase. El orquestador lo lee para recovery/compactación, pero **nunca** lo escribe.
 
 ---
 
 ## Archivado
 
-Al ejecutar `/sdd-archive`:
+Tras verify PASS, el orquestador sugiere automáticamente `/sdd-archive`. Al ejecutarlo:
 1. **Sync delta specs** → `openspec/specs/{domain}/spec.md` (apply order: RENAMED → REMOVED → MODIFIED → ADDED)
 2. **Mover** `openspec/changes/{nombre}/` → `openspec/changes/archive/YYYY-MM-DD-{nombre}/`
-3. El archive es audit trail — **nunca eliminar ni modificar**
+3. **Update context.md** — si `verify-report.md` contiene sugerencias de actualización
+4. El archive es audit trail — **nunca eliminar ni modificar**
+
+> **Nota**: `openspec/specs/` permanece vacío hasta el primer archive. Es el archive quien promueve las delta specs a specs principales.
 
 Reglas:
 - NUNCA archivar con CRITICAL issues en verify-report

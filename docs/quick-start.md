@@ -79,7 +79,7 @@ tu-proyecto/
 │       ├── sdd-continue/
 │       ├── sdd-status/
 │       ├── sdd-archive/
-│       └── skill-registry/
+│       └── conventions/
 ├── .github/                         ← GitHub Copilot (si dual)
 │   ├── copilot-instructions.md
 │   ├── agents/
@@ -87,7 +87,7 @@ tu-proyecto/
 ├── .github/
 │   └── instructions/
 │       ├── context.instructions.md      ← Contexto del repo (generado por /sdd-init)
-│       └── conventions.instructions.md  ← Convenciones y skills (generado por /skill-registry)
+│       └── conventions.instructions.md  ← Convenciones del equipo (generado por /conventions)
 └── openspec/                        ← Artefactos SDD (creados por /sdd-init)
 ```
 
@@ -118,7 +118,7 @@ El primer comando en cualquier proyecto nuevo:
 1. Detecta stack tecnológico (Node.js, Python, Go, Rust, .NET...)
 2. Detecta framework de testing y configura `strict_tdd`
 3. Crea estructura `openspec/` (si confirmas persistencia)
-4. Genera `openspec/conventions.md` con compact rules del proyecto
+4. Genera `openspec/conventions.md` con convenciones del equipo (si hay custom skills)
 
 Resultado esperado:
 ```
@@ -126,7 +126,7 @@ Resultado esperado:
    Stack: Node.js + TypeScript + Express
    Testing: Jest (detectado), strict_tdd: true
    Persistencia: openspec (habilitado)
-   Skill registry: generado
+   Conventions: generado
 ```
 
 ---
@@ -167,7 +167,7 @@ Desde ahí:
 | `/sdd-init` no reconocido | Skills no copiados al path correcto | Verificar `.claude/skills/` o `.github/skills/` |
 | Orquestador ejecuta código directamente | Instrucciones no cargadas | Verificar `.claude/CLAUDE.md` o `copilot-instructions.md` |
 | No se crean artefactos | Modo `none` activo | Habilitar openspec: "activa openspec" |
-| Sub-agentes ignoran convenciones | Registry no generado | Ejecutar `/skill-registry` |
+| Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/conventions` |
 
 ---
 

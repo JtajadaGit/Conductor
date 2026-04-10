@@ -122,7 +122,39 @@ El modelo puede usar patrones de versiones antiguas. Soluciones:
 
 ---
 
-## 4. Monorepos
+## 4. Team Conventions (`/conventions`)
+
+En equipos multi-persona, `/conventions` genera `openspec/conventions.md` — un contrato compartido que todas las IAs (Claude, Copilot, Cursor) en todas las máquinas del equipo leen.
+
+### Qué escanea
+
+| Fuente | Qué extrae |
+|--------|------------|
+| `openspec/config.yaml` | Stack del proyecto |
+| `.editorconfig`, `prettier.config.*`, `eslint.config.*` | Estándares de formato y calidad |
+| `tsconfig.json`, `biome.json`, `ruff.toml` | Strictness, linting |
+| `openspec/principles.md` | Principios non-negotiable del equipo |
+| `openspec/lessons-learned.md` | Lecciones acumuladas |
+| `*/SKILL.md` (project-level only) | Custom skills del proyecto (no personales) |
+
+### Resultado
+
+```markdown
+# Project Conventions
+## Stack
+## Team Standards
+## Skills Available
+## Compact Rules
+## Project Config Files
+```
+
+- **Commit-ready**: `conventions.md` se versiona y se revisa como cualquier otro artefacto del equipo
+- Si Copilot está configurado, también genera `.github/instructions/conventions.instructions.md`
+- Al re-ejecutar, **merge** nuevos hallazgos con adiciones manuales existentes
+
+---
+
+## 5. Monorepos
 
 `sdd-init` detecta stack desde la raíz. En monorepos con stacks mixtos:
 
@@ -144,7 +176,7 @@ Para cambios cross-package, considera split en SDD changes separados por paquete
 
 ---
 
-## 5. Sin Git
+## 6. Sin Git
 
 Conductor funciona sin Git, con limitaciones:
 
@@ -161,7 +193,7 @@ Recomendaciones:
 
 ---
 
-## 6. Cuándo Romper las Reglas
+## 7. Cuándo Romper las Reglas
 
 ### Inline Fix Exception
 
@@ -175,9 +207,9 @@ Recomendaciones:
 
 ### Spec-Before-Design Rule
 
-**Paralelo OK cuando** el cambio es bien conocido y la propuesta es suficientemente detallada para que ambas fases trabajen independientemente.
+**Nunca en paralelo.** Design consume lo que spec produce (escenarios, requisitos, criterios de aceptación). Si corren en paralelo, el design se escribiría sin saber qué dice la spec → inconsistencias garantizadas.
 
-**Secuencial crítico cuando** las specs añadirán requisitos no obvios en la propuesta (edge cases, seguridad, constraints que design debe contemplar).
+En pipeline condensado (`PHASE: fast-forward`), el planner las genera secuencialmente dentro de una sola llamada.
 
 ### Zero-Tolerance Consistency Check
 

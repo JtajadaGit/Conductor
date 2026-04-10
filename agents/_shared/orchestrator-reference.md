@@ -33,8 +33,16 @@ If user requests changes after locks:
 
 ## sdd-ff Rules
 
+### Condensed Pipeline (default for medium)
+- Single `sdd-planner` call with `PHASE: fast-forward`
+- Planner creates directory, produces all artifacts, writes state.yaml
+- **Orchestrator does NOT create directories or write state.yaml** — the planner handles everything
+- If planner returns `requires_human_input: true` → present clarify questions, re-launch after answers
+- If planner returns `consistency_block: true` → present issues, wait for user
+
+### Full Pipeline (for large/vague changes)
 - Abort rule: if any phase fails, stop and report which phases completed successfully
-- Clarify gate: after propose, run clarify. If `questions_count > 0`, STOP fast-forward and present questions. Resume after answers.
+- Clarify gate: after propose, run clarify. If `questions_count > 0`, STOP and present questions
 - spec BEFORE design (spec-driven, NO parallel)
 - `none` mode: WARN user before launching — context may exhaust after 3+ phases
 
@@ -68,6 +76,7 @@ Sub-agents get a fresh context with NO memory.
 
 | Phase | Reads | Writes |
 |-------|-------|--------|
+| **fast-forward** | user request, context.md, main specs, principles, lessons-learned | dir + proposal.md + spec.md + design.md + tasks.md + state.yaml |
 | explore | user request | `exploration.md` |
 | propose | exploration (opt), main specs (opt) | `proposal.md` |
 | clarify | proposal (req) | `questions.md` |
@@ -81,6 +90,8 @@ Sub-agents get a fresh context with NO memory.
 
 For phases with required dependencies, sub-agent reads directly from filesystem — orchestrator passes paths, NOT content.
 
+**Critical**: In condensed mode (fast-forward), the planner agent handles ALL file I/O. The orchestrator does NOT create directories, write state.yaml, or read artifacts between phases.
+
 > **`none` mode exception**: orchestrator MUST pass previous phase's result content in the prompt.
 
 ## Mode `none` Handling
@@ -90,11 +101,20 @@ For phases with required dependencies, sub-agent reads directly from filesystem 
 | `openspec` | read `openspec/changes/*/state.yaml` |
 | `none` | Not persisted — explain to user. `sdd-continue` unavailable. |
 
-## State Tracking Optimization
+## State Tracking Responsibility
 
-In **Auto mode** (uninterrupted pipeline): write `state.yaml` only TWICE — at creation (all pending) and at completion (final state). Mid-flight writes have zero value since no one reads them.
+The orchestrator does NOT update state.yaml between phases. Each agent is responsible for updating its own phase status:
 
-In **Interactive mode**: write `state.yaml` after each phase transition (user may stop and resume via `/sdd-continue`).
+| Agent | Updates |
+|-------|---------|
+| sdd-planner (fast-forward) | Writes initial state.yaml with all planning = `done`, `apply: pending` |
+| sdd-planner (individual phase) | Updates its phase to `done` |
+| sdd-coder | Sets `apply: done`, `current_phase: verify` |
+| sdd-reviewer | Sets `verify: pass` or `fail` |
+
+In **Interactive mode**: orchestrator MAY additionally read state.yaml between phases for status display.
+
+**Critical**: state.yaml updates by agents are NOT optional. They are phase gates for `/sdd-continue` and DAG recovery after compaction.
 
 ## Execution Log
 

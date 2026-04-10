@@ -43,30 +43,36 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
 |------|----------|---------|
 | **Instructions** | `instructions/CLAUDE.md` o `copilot-instructions.md` | Orquestador SDD (uno por plataforma) |
 | **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
-| **Skills** | `skills/sdd-*/` + `skill-registry/` | Flujos invocables on-demand (0 tokens hasta uso) |
+| **Skills** | `skills/sdd-*/` + `conventions/` | Flujos invocables on-demand (0 tokens hasta uso) |
 
 ### Características principales
 
 | Feature | Descripción |
 |---------|-------------|
 | **Hard Stop Rule** | Evalúa complejidad antes de actuar: trivial/simple → delega directo, medio/grande → sugiere SDD |
+| **Condensed Pipeline** | Cambios medium → 1 sola llamada al planner produce todos los artefactos. 3 agents total vs 7+ |
 | **Execution Mode** | Auto (back-to-back) o Interactive (pausa tras cada fase). Se elige al inicio de sesión |
 | **Model Routing** | Asigna tier de modelo por fase: high-capability para propose/design, standard para el resto, fast para inline |
 | **Inline vs Delegate** | 1-3 archivos → puede ser inline. 4+ archivos → siempre delegar |
 | **Artifact Locks** | Spec y design se bloquean tras completar tasks (previene spec-drift) |
 | **Lessons Learned** | Registro append-only de errores y soluciones entre sesiones |
-| **Skill Resolution Feedback** | Auto-recarga registry si un sub-agente pierde contexto tras compactación |
 | **OpenSpec Compliant** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
-| **Parallelism Markers** | Tasks se marcan con `[P]` cuando pueden ejecutarse en paralelo |
+| **Parallel Agents** | Tareas `[P]` en tasks.md se ejecutan con múltiples agents simultáneos. Background agents para no bloquear |
 | **Spec Self-Validation** | Auto-verifica escenarios, no-impl-details y markers resueltos antes de avanzar |
-| **Delegation Anti-patterns** | Reglas explícitas de cuándo SIEMPRE delegar |
+| **Visual Output** | Delegation boxes (`┌─ ... ─┐`), pipeline progress bar (`● ◉ ○ ⊘`), gate warnings — todo visible |
+| **Agent State Updates** | Cada agente actualiza state.yaml al completar su fase (no depende del orquestador) |
+| **Design Reconciliation** | El coder documenta desviaciones del design con `## Deviations` |
+| **Compaction Awareness** | Antes de que el contexto crezca, guarda estado en artefactos para recovery sin pérdida |
+| **Trivial Tracking** | Incluso cambios triviales/simples crean `state.yaml` mínimo para historial completo |
+| **Auto-Archive Suggest** | Tras verify PASS, sugiere automáticamente `/sdd-archive` para promover specs |
+| **Team Conventions** | `conventions` genera `conventions.md` compartido — contrato entre personas e IAs del equipo |
 
 ### Contexto persistente (sin re-explorar en cada sesión)
 
 | Artefacto | Generado por | Lo lee |
 |-----------|-------------|--------|
 | `openspec/context.md` | sdd-init | Orquestador al iniciar sesión (+ copia a `.github/instructions/` si Copilot) |
-| `openspec/conventions.md` | skill-registry | Orquestador al iniciar sesión (+ copia a `.github/instructions/` si Copilot) |
+| `openspec/conventions.md` | conventions | Todos los agentes y plataformas. Contrato compartido del equipo (commit-ready) |
 | `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
 
 ---
@@ -85,11 +91,11 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 |---------|-------------|-------|
 | `/sdd-init` | Detecta stack, crea openspec, genera context files | 1 req |
 | `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify | 2-3 req |
-| `/sdd-ff <name>` | Fast-forward: propose → clarify → spec → design → tasks | 4-5 req |
+| `/sdd-ff <name>` | Fast-forward: condensado (1 planner) o completo según complejidad | 1-3 req |
 | `/sdd-continue` | Continuar siguiente fase pendiente | 1 req |
 | `/sdd-status` | Mostrar progreso del cambio activo | 0 req |
 | `/sdd-archive` | Archivar cambio completado | 1 req |
-| `/skill-registry` | Generar/actualizar context files y registry | 1 req |
+| `/conventions` | Generar/actualizar convenciones del equipo desde config files | 1 req |
 
 ---
 
@@ -118,7 +124,7 @@ Conductor/
 │   ├── sdd-continue/SKILL.md
 │   ├── sdd-status/SKILL.md
 │   ├── sdd-archive/SKILL.md
-│   └── skill-registry/SKILL.md
+│   └── conventions/SKILL.md
 └── docs/
     ├── quick-start.md
     ├── sdd-pipeline.md
@@ -166,39 +172,38 @@ ORQUESTADOR:
   → 1 agente, ~30s, 0 artefactos markdown
 ```
 
-### Cambio complejo (pipeline completo)
+### Cambio medium (pipeline condensado — 3 agents)
 ```
-USUARIO: /sdd-ff add-user-auth "Añadir autenticación JWT con refresh tokens"
+USUARIO: /sdd-ff add-animations "Añadir animaciones CSS al contenido"
 ORQUESTADOR:
-  1. Complexity Gate → multi-file, necesita diseño, testable → MEDIUM ✓
+  1. Complexity Gate → multi-file, necesita diseño → MEDIUM ✓
   2. SDD Init Guard → openspec/config.yaml existe ✓
-  3. Input Assessment → scope claro → SKIP explore
-  4. Crea state.yaml (auto mode: solo al inicio y al final)
 
-  ── PROPOSE (sdd-planner, model: opus) ─────────────────────────
-  Contexto inyectado: openspec/context.md + principles.md + conventions.md
-  Output: proposal.md (≤400 words)
+  ── FAST-FORWARD (sdd-planner, model: opus) ────────────────────
+  UNA sola llamada produce: proposal.md + spec.md + design.md + tasks.md + state.yaml
+  El planner crea el directorio, lee codebase, genera todos los artefactos.
+  Orquestador NO crea dirs, NO escribe state, NO lee artefactos entre fases.
+  → "Planning complete. ¿Continúo con apply?"
 
-  ── CLARIFY (sdd-planner, model: sonnet) ───────────────────────
-  2 preguntas → GATE PAUSA → usuario responde → continúa
+  ── APPLY (sdd-coder, model: sonnet) ──────────────────────────
+  ── VERIFY (sdd-reviewer, model: sonnet) ──────────────────────
+```
 
-  ── SPEC (sdd-planner, model: sonnet) ──────────────────────────
-  Self-validation: ✓ escenarios, ✓ no impl details, ✓ markers resueltos
-
-  ── DESIGN (sdd-planner, model: opus) ──────────────────────────
-  Lee exploration.md + lessons-learned.md. Principles gate: ✓
-
-  ── TASKS (sdd-planner, model: sonnet) ─────────────────────────
-  Tasks con [P] markers. Consistency Check ✓. Locks activados.
-
-  → state.yaml final escrito. "Planning complete. ¿Continúo con apply?"
+### Cambio large (pipeline completo)
+```
+USUARIO: /sdd-new add-user-auth "Añadir autenticación JWT con refresh tokens"
+ORQUESTADOR:
+  1. Complexity Gate → multi-domain, vago → LARGE ✓
+  2. explore → propose → clarify (GATE si hay preguntas) → spec → design → tasks
+  3. Cada fase = 1 llamada a sdd-planner
+  → "Planning complete. ¿Continúo con apply?"
 ```
 
 **Validación:**
 - ✅ Complexity Gate bloquea pipeline para cambios triviales
-- ✅ Model tiers diferenciados (opus/sonnet/haiku)
-- ✅ Orquestador NUNCA lee código fuente
-- ✅ state.yaml escrito solo 2 veces en auto mode
+- ✅ Pipeline condensado: 3 agents para medium (vs 7+ antes)
+- ✅ Orquestador NUNCA crea directorios ni escribe state.yaml (lo hace el agent)
+- ✅ Paths siempre relativos (previene bug Windows)
 - ✅ Todo en `openspec/` (no `.github/instructions/`)
 
 ---

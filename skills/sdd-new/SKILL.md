@@ -16,32 +16,47 @@ BEFORE creating any artifacts, evaluate the request against the Hard Stop Rule:
 |------------|--------|--------|
 | **Trivial** | ≤5 lines, 1-2 files, clear intent | Delegate directly to `sdd-coder`. **No pipeline. No artifacts. No state.yaml.** |
 | **Simple** | Clear scope, single concern, ≤4 files | Delegate directly to `sdd-coder`. **No pipeline.** |
-| **Medium** | Multi-file, needs design, testable | Proceed with SDD pipeline below. |
-| **Large** | Vague, multi-domain, needs exploration | Proceed with SDD pipeline below. |
+| **Medium** | Multi-file, needs design, testable | **Condensed pipeline** (single planner call). |
+| **Large** | Vague, multi-domain, needs exploration | **Full pipeline** (explore first, then ask user about `/sdd-ff`). |
 
-**For Trivial/Simple**: tell the user "Cambio simple — delegando directamente al coder sin pipeline SDD." Then delegate to `sdd-coder` with the user's request as direct instructions. Done. No further steps.
+**For Trivial/Simple**:
+1. Tell the user "Cambio simple — delegando directamente al coder sin pipeline SDD."
+2. Delegate to `sdd-coder` with the user's request.
+3. After coder completes, log the change minimally:
+   - Create `openspec/changes/{change-name}/` with a single `state.yaml`:
+     ```yaml
+     change: {change-name}
+     created: {ISO-8601}
+     updated: {ISO-8601}
+     mode: openspec
+     current_phase: done
+     complexity: trivial|simple
+     phases:
+       apply: done
+     ```
+   - This enables `/sdd-status` to show history of ALL changes, not just SDD ones.
 
-**For Medium/Large**: continue to Step 1.
+### Step 1: Medium → Condensed Pipeline
 
-### Step 1: Input Assessment
+1. Delegate to `sdd-planner` with `PHASE: fast-forward` and the change description
+2. The planner creates everything in ONE call (dir, proposal, spec, design, tasks, state.yaml)
+3. Present summary. Pause: "Planning complete. ¿Continúo con apply?"
+4. On confirm → delegate to `sdd-coder`, then `sdd-reviewer`
 
-- **Detailed** (scope + approach + constraints, or >100 words with clear scope):
-  → SKIP explore, go directly to propose → clarify
-- **Vague** (just a name, or <30 words, or unclear scope):
-  → explore → propose → clarify
-- **Uncertain**: ask user "Do you need me to explore the codebase or do you already have a clear approach?"
+### Step 1 (alt): Large → Full Pipeline
 
-### Step 2: Execution Flow
+1. Delegate to `sdd-planner` with `PHASE: explore`
+2. Present exploration results
+3. Ask user: "¿Quieres continuar con el pipeline completo? Usa `/sdd-ff {name}` para fast-forward."
 
-1. If openspec mode: create `openspec/changes/{change-name}/` directory
-2. Initialize `state.yaml` with DAG state (all phases `pending`)
-3. For each phase in sequence: delegate to `sdd-planner` with corresponding phase
-4. **Clarify gate**: if `questions_count > 0` → PAUSE, present questions to user, wait for answers
-5. When clarify completes with 0 questions → present summary:
-   > "Planning complete through clarify. Continue with spec → design → tasks? Or stop here?"
-6. If user confirms → continue pipeline (or suggest `/sdd-ff` for full fast-forward)
+### Step 2: Orchestrator Boundaries
+
+- **Do NOT create directories.** The planner creates them.
+- **Do NOT write state.yaml.** The planner writes it.
+- **Do NOT read artifacts between phases.** The next agent reads them.
+- **ALWAYS use relative paths.** Never absolute.
 
 ## Rules
 - Step 0 is NON-NEGOTIABLE. NEVER skip the complexity gate.
-- Do NOT read source code yourself to evaluate complexity — use the user's description and `openspec/context.md` metadata only.
-- If uncertain about complexity, ask the user: "This looks simple enough for direct delegation. Want me to skip the SDD pipeline?"
+- Do NOT read source code to evaluate complexity — use description + `openspec/context.md` only.
+- If uncertain about complexity, ask: "This looks simple enough for direct delegation. Want me to skip the SDD pipeline?"
