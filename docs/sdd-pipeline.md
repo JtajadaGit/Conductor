@@ -132,7 +132,7 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 | `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |
 | `/sdd-status` | Muestra progreso (lee state.yaml) | 0 req |
 | `/sdd-archive` | Sync delta specs → main specs, mover a archive/ | 1 req |
-| `/skill-registry` | Genera/actualiza `.github/instructions/conventions.instructions.md` | 1 req |
+| `/skill-registry` | Genera/actualiza `openspec/conventions.md` | 1 req |
 
 ---
 
@@ -212,7 +212,7 @@ x-conductor:
 | `status: blocked` | STOP, reportar blocker, sugerir path |
 | `status: partial` | Preguntar: continuar o reintentar |
 | `consistency_block: true` | Bloquear apply, mostrar issues |
-| `skill_resolution: none\|fallback-*` | Auto-releer `.github/instructions/conventions.instructions.md` |
+| `skill_resolution: none\|fallback-*` | Auto-releer `openspec/conventions.md` |
 | Max 2 retries | Escalar al usuario |
 
 ---

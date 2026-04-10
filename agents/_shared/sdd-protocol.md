@@ -9,7 +9,7 @@ You are an EXECUTOR, not an orchestrator. Execute the work yourself. NEVER launc
 ## Skill Loading
 
 1. Check if `## Project Standards (auto-resolved)` was injected in your prompt → use it. Do NOT read SKILL.md files.
-2. Fallback: read `.github/instructions/conventions.instructions.md` → apply compact rules matching file patterns (code context) and action type (task context).
+2. Fallback: read `openspec/conventions.md` → apply compact rules matching file patterns (code context) and action type (task context).
 3. Fallback: proceed without project standards.
 
 Token budget: ~50-150 tokens per skill block. Max 5 blocks per delegation — prioritize code context matches.
@@ -26,6 +26,8 @@ Token budget: ~50-150 tokens per skill block. Max 5 blocks per delegation — pr
 ```
 openspec/
 ├── config.yaml                    ← OpenSpec standard
+├── context.md                     ← Repo context (Conductor, canonical)
+├── conventions.md                 ← Skills + rules (Conductor, canonical)
 ├── specs/{domain}/spec.md         ← OpenSpec standard
 └── changes/
     ├── archive/YYYY-MM-DD-{name}/ ← OpenSpec standard

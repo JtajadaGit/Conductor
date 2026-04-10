@@ -22,6 +22,8 @@ OpenSpec es el sistema de persistencia de Conductor: artefactos SDD en disco, re
 ```
 openspec/
 ├── config.yaml                   ← OpenSpec standard (schema, context) + Conductor extensions (x-conductor)
+├── context.md                    ← Repo context (stack, arquitectura, entry points) — canónico
+├── conventions.md                ← Skills, compact rules, convenciones — generado por skill-registry
 ├── principles.md                 ← (Conductor ext.) Principios NON-NEGOTIABLE — solo humanos editan
 ├── lessons-learned.md            ← (Conductor ext.) Lecciones acumulativas entre cambios (append-only)
 ├── specs/                        ← Fuente de verdad (specs principales)

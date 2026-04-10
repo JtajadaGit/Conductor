@@ -102,7 +102,7 @@ x-conductor:
 
 ### Sub-agentes ignoran convenciones tras compactación
 
-El orquestador se auto-recupera cuando detecta `skill_resolution: none|fallback-*` en la respuesta del sub-agente — relee `.github/instructions/conventions.instructions.md` automáticamente. Si no ocurre: di "update skills" o "reload registry".
+El orquestador se auto-recupera cuando detecta `skill_resolution: none|fallback-*` en la respuesta del sub-agente — relee `openspec/conventions.md` automáticamente. Si no ocurre: di "update skills" o "reload registry".
 
 ### `state.yaml` tiene estado inconsistente
 

@@ -59,7 +59,7 @@ Copy-Item -Recurse Conductor\skills\ tu-proyecto\.github\skills\
 
 #### Ambas plataformas (dual)
 
-Combina los dos bloques anteriores. Los directorios `openspec/` y `.github/instructions/` son compartidos — cualquier plataforma lee y escribe los mismos artefactos.
+Combina los dos bloques anteriores. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos.
 
 ### Paso 3: Estructura resultante
 
@@ -118,7 +118,7 @@ El primer comando en cualquier proyecto nuevo:
 1. Detecta stack tecnológico (Node.js, Python, Go, Rust, .NET...)
 2. Detecta framework de testing y configura `strict_tdd`
 3. Crea estructura `openspec/` (si confirmas persistencia)
-4. Genera `.github/instructions/conventions.instructions.md` con compact rules del proyecto
+4. Genera `openspec/conventions.md` con compact rules del proyecto
 
 Resultado esperado:
 ```

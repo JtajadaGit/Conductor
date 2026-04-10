@@ -65,8 +65,8 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
 
 | Artefacto | Generado por | Lo lee |
 |-----------|-------------|--------|
-| `.github/instructions/context.instructions.md` | sdd-init | Copilot automático + Orquestador Claude al iniciar sesión |
-| `.github/instructions/conventions.instructions.md` | skill-registry | Copilot automático + Orquestador Claude al iniciar sesión |
+| `openspec/context.md` | sdd-init | Orquestador al iniciar sesión (+ copia a `.github/instructions/` si Copilot) |
+| `openspec/conventions.md` | skill-registry | Orquestador al iniciar sesión (+ copia a `.github/instructions/` si Copilot) |
 | `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
 
 ---
@@ -145,80 +145,61 @@ cp -r Conductor/skills/                               tu-proyecto/.github/skills
 ```
 
 ### Dual (ambas plataformas)
-Combina los dos bloques. `openspec/` y `.github/instructions/` son compartidos — cualquier plataforma lee y escribe los mismos artefactos.
+Combina los dos bloques. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos. `.github/instructions/` se genera automáticamente si Copilot está configurado.
 
 ### Primer uso
 ```
-/sdd-init    ← detecta stack, genera openspec/ y .github/instructions/
+/sdd-init    ← detecta stack, genera openspec/ (context.md + config.yaml)
 ```
 
 ---
 
-## Prueba de Concepto: traza de `/sdd-ff add-user-auth`
+## Prueba de Concepto: trazas de ejemplo
 
+### Cambio trivial (short-circuit)
+```
+USUARIO: /sdd-new "añade título animado al header"
+ORQUESTADOR:
+  1. Complexity Gate → scope claro, single concern, ≤4 archivos → SIMPLE
+  2. "Cambio simple — delegando directamente al coder sin pipeline SDD."
+  3. Delega a sdd-coder (model: sonnet) con instrucciones directas
+  → 1 agente, ~30s, 0 artefactos markdown
+```
+
+### Cambio complejo (pipeline completo)
 ```
 USUARIO: /sdd-ff add-user-auth "Añadir autenticación JWT con refresh tokens"
-
 ORQUESTADOR:
-  1. SDD Init Guard → ¿existe openspec/config.yaml? ✓
-  2. Execution Mode → (cacheado: Auto)
-  3. Input Assessment → 12 palabras, scope claro → SKIP explore
-  4. Crea openspec/changes/add-user-auth/state.yaml (all pending)
+  1. Complexity Gate → multi-file, necesita diseño, testable → MEDIUM ✓
+  2. SDD Init Guard → openspec/config.yaml existe ✓
+  3. Input Assessment → scope claro → SKIP explore
+  4. Crea state.yaml (auto mode: solo al inicio y al final)
 
-  ── PROPOSE (sdd-planner, high-capability) ─────────────────────
-  Contexto inyectado:
-    - ## Repo Context (desde context.instructions.md)
-    - ## Project Principles (desde principles.md)
-    - ## Project Standards (desde conventions.instructions.md)
-    - PHASE: propose
-    - Artifact store: openspec
-    - Change: add-user-auth
+  ── PROPOSE (sdd-planner, model: opus) ─────────────────────────
+  Contexto inyectado: openspec/context.md + principles.md + conventions.md
+  Output: proposal.md (≤400 words)
 
-  Output: openspec/changes/add-user-auth/proposal.md (≤400 words)
-  Return: { status: success, artifacts: [proposal.md], next: clarify }
-  state.yaml → propose: done
+  ── CLARIFY (sdd-planner, model: sonnet) ───────────────────────
+  2 preguntas → GATE PAUSA → usuario responde → continúa
 
-  ── CLARIFY (sdd-planner, standard) ────────────────────────────
-  Inputs: proposal.md (required)
-  Output: questions.md con 2 preguntas (refresh token strategy, session storage)
-  Return: { status: success, questions_count: 2, requires_human_input: true }
+  ── SPEC (sdd-planner, model: sonnet) ──────────────────────────
+  Self-validation: ✓ escenarios, ✓ no impl details, ✓ markers resueltos
 
-  GATE → PAUSA. Presenta preguntas al usuario.
-  Usuario responde → continúa.
-  state.yaml → clarify: done
+  ── DESIGN (sdd-planner, model: opus) ──────────────────────────
+  Lee exploration.md + lessons-learned.md. Principles gate: ✓
 
-  ── SPEC (sdd-planner, standard) ───────────────────────────────
-  Inputs: proposal.md + questions.md
-  Lee openspec/specs/auth/ si existe (delta spec) o crea full spec
-  Self-validation: ✓ cada req tiene GIVEN/WHEN/THEN, ✓ no impl details
-  Output: openspec/changes/add-user-auth/specs/auth/spec.md (≤650 words)
-  state.yaml → spec: done
+  ── TASKS (sdd-planner, model: sonnet) ─────────────────────────
+  Tasks con [P] markers. Consistency Check ✓. Locks activados.
 
-  ── DESIGN (sdd-planner, high-capability) ──────────────────────
-  Inputs: proposal.md + specs/auth/spec.md (REQUIRED)
-  Lee: exploration.md (no existe, skip), lessons-learned.md (si existe)
-  Principles gate: ✓ pass/fail table vs principles.md
-  Output: openspec/changes/add-user-auth/design.md (≤800 words)
-  state.yaml → design: done
-
-  ── TASKS (sdd-planner, standard) ──────────────────────────────
-  Inputs: spec.md + design.md (REQUIRED)
-  Output: tasks.md con [P] markers, hierarchical numbering
-  Consistency Check: coverage ✓, alignment ✓, contradictions ✓, completeness ✓
-  state.yaml → tasks: done, locks: { spec: true, design: true }
-
-ORQUESTADOR:
-  "Planning complete. 5 fases ejecutadas. ¿Continúo con apply?"
+  → state.yaml final escrito. "Planning complete. ¿Continúo con apply?"
 ```
 
-**Validación del flujo:**
-- ✅ Sub-agentes reciben contexto inyectado (no descubren)
-- ✅ OpenSpec artifacts en estructura estándar
-- ✅ Extensions (state.yaml, locks) claramente separadas
-- ✅ Gates funcionan (clarify pausa, consistency check)
-- ✅ No hay duplicación de info entre artifacts
-- ✅ Cada fase tiene I/O explícito
-- ✅ `config.yaml` usa `x-conductor` para extensiones
+**Validación:**
+- ✅ Complexity Gate bloquea pipeline para cambios triviales
+- ✅ Model tiers diferenciados (opus/sonnet/haiku)
+- ✅ Orquestador NUNCA lee código fuente
+- ✅ state.yaml escrito solo 2 veces en auto mode
+- ✅ Todo en `openspec/` (no `.github/instructions/`)
 
 ---
 

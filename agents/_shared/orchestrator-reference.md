@@ -10,7 +10,7 @@
 | `status: blocked` | PAUSE → DISPLAY → OPTIONS | Show blocker. Offer: (A) provide info and retry, (B) skip with warning, (C) abort. |
 | `status: partial` | MERGE → CONTINUE | Accept completed work. Ask: retry remaining or skip? |
 | Timeout/crash | RETRY ONCE → ESCALATE | Retry once. If fails again, report to user. No third attempt. |
-| Compaction detected (`skill_resolution ≠ injected`) | AUTO-RECOVER | Re-read `.github/instructions/conventions.instructions.md` + `openspec/principles.md`. Re-cache. If openspec: re-read `state.yaml`. |
+| Compaction detected (`skill_resolution ≠ injected`) | AUTO-RECOVER | Re-read `openspec/conventions.md` + `openspec/principles.md`. Re-cache. If openspec: re-read `state.yaml`. |
 | Artifact budget violated | WARN → ACCEPT | Accept but warn that downstream phases consume more tokens. |
 
 **Key principle**: Never silently swallow errors. Every error MUST be reported with enough context for the user to decide.
@@ -27,7 +27,7 @@ If user requests changes after locks:
 ## Compaction Recovery
 
 1. Re-read `state.yaml` to reconstruct DAG state
-2. Re-read `.github/instructions/conventions.instructions.md` to restore compact rules cache
+2. Re-read `openspec/conventions.md` to restore compact rules cache
 3. Re-read `openspec/principles.md` if exists
 4. Resume from `current_phase` in state.yaml
 
@@ -48,8 +48,8 @@ If user requests changes after locks:
 ## Sub-Agent Launch Pattern
 
 **Once per session**:
-1. Read `.github/instructions/conventions.instructions.md`, cache Compact Rules and User Skills trigger table
-2. Read `.github/instructions/context.instructions.md`, cache repo context
+1. Read `openspec/conventions.md`, cache Compact Rules and User Skills trigger table
+2. Read `openspec/context.md`, cache repo context
 3. If no registry, warn and proceed without project-specific standards
 4. Read `openspec/principles.md` if it exists, cache as compact principles (max 5 lines)
 
@@ -89,6 +89,12 @@ For phases with required dependencies, sub-agent reads directly from filesystem 
 |------|----------|
 | `openspec` | read `openspec/changes/*/state.yaml` |
 | `none` | Not persisted — explain to user. `sdd-continue` unavailable. |
+
+## State Tracking Optimization
+
+In **Auto mode** (uninterrupted pipeline): write `state.yaml` only TWICE — at creation (all pending) and at completion (final state). Mid-flight writes have zero value since no one reads them.
+
+In **Interactive mode**: write `state.yaml` after each phase transition (user may stop and resume via `/sdd-continue`).
 
 ## Execution Log
 
