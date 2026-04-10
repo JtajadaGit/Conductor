@@ -1,224 +1,230 @@
 # Conductor
 
-**Core de orquestación de agentes IA para equipos**
+**Framework SDD compacto, agnóstico de stack, multi-platform (Claude Code · GitHub Copilot · Cursor · Gemini CLI)**
 
 ---
 
 ## ¿Qué es Conductor?
 
-Conductor es un framework de orquestación que convierte a los agentes de IA (Claude Code, GitHub Copilot) en equipos de ingeniería estructurados. En lugar de conversar libremente con un modelo, Conductor establece un **orquestador central** que delega trabajo a **sub-agentes especializados**, cada uno con un rol claro, un contexto limpio y reglas de calidad inyectadas automáticamente.
+Un orquestador que convierte agentes IA en equipos de ingeniería estructurados. Un **orquestador central** delega trabajo a **3 agentes especializados** con contexto fresco y convenciones del proyecto inyectadas automáticamente.
 
-El problema que resuelve es concreto: cuando un agente IA trabaja en una conversación larga, el contexto crece sin control, las decisiones se vuelven inconsistentes y la calidad decae. Conductor elimina este problema separando la coordinación de la ejecución. El orquestador piensa y decide; los sub-agentes ejecutan con contexto fresco y reglas precisas.
-
-Conductor está diseñado para **equipos reales** que usan IA como herramienta de desarrollo. Si trabajas solo o en equipo, con Claude Code o con GitHub Copilot, Conductor te da un flujo de trabajo reproducible, predecible y auditable para llevar ideas de la exploración a producción.
+Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el diseño, el diseño dirige la implementación. Compatible con [OpenSpec](https://openspec.dev/) — los artefactos base (`specs/`, `changes/`, `config.yaml`) siguen la convención estándar; Conductor extiende con phase gates, artifact locks y sub-agent context injection bajo el namespace `x-conductor`.
 
 ---
 
-## ✨ Características principales
-
-- **Flujo SDD completo** — Spec-Driven Development: de la idea al código verificado en fases estructuradas (explore → propose → spec → design → tasks → apply → verify → archive)
-- **Skills agnósticos** — 12+ skills especializados que funcionan con cualquier stack tecnológico
-- **Multi-plataforma** — Compatible con Claude Code, GitHub Copilot (VS Code) y Copilot CLI (terminal)
-- **Modo TDD estricto** — Ciclo RED → GREEN → REFACTOR integrado opcionalmente en la fase de implementación
-- **Persistencia OpenSpec**— Artefactos versionados en disco que sobreviven a reinicios de sesión y compactación de contexto
-- **Optimización de modelos** — Asignación inteligente de modelos por fase (opus para decisiones, sonnet para ejecución, haiku para cierre)
-- **Delegación segura** — Sub-agentes con contexto fresco y reglas pre-inyectadas; sin fugas de estado
-- **Skill Registry** — Resolución automática de convenciones de proyecto e inyección en cada sub-agente
-- **Recuperación ante compactación** — Estado persistido en `state.yaml` que permite retomar flujos interrumpidos
-
----
-
-## 🏗️ Arquitectura
+## Arquitectura
 
 ```
                  ┌─────────────────────────────────┐
-                 │          👤 USUARIO             │
-                 │    (comandos / conversación)    │
+                 │           USUARIO               │
                  └───────────────┬─────────────────┘
-                                 │
                                  ▼
                  ┌─────────────────────────────────┐
-                 │        🧠​ ORQUESTADOR           │
-                 │  Coordina, NO ejecuta            │
-                 │  Resuelve skills del registro    │
-                 │  Asigna modelo por fase          │
-                 │  Persiste estado del DAG         │
+                 │        ORQUESTADOR               │
+                 │  Coordina · NO ejecuta           │
+                 │  instructions/ (per platform)    │
                  └───────────────┬─────────────────┘
-                                 │
-          ┌──────────┬───────────┼───────────┬──────────┐
-          ▼          ▼           ▼           ▼          ▼
-      ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
-      │explore │ │propose │ │  spec  │ │ design │  ...
-      │(sonnet)│ │ (opus) │ │(sonnet)│ │ (opus) │
-      └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘
-           │          │          │           │
-           └──────────┴──────┬───┴───────────┘
-                             ▼
-                 ┌─────────────────────────────────┐
-                 │   📦 SKILLS (reglas compactas)  │
-                 │  testing · naming · patterns    │
-                 └─────────────────────────────────┘
-
-      Sub-agentes: contexto fresco, sin memoria
+              ┌──────────────────┼──────────────────┐
+              ▼                  ▼                   ▼
+      ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+      │ sdd-planner  │  │  sdd-coder   │  │ sdd-reviewer │
+      │ explore      │  │ apply        │  │ verify       │
+      │ propose      │  │ fix          │  │              │
+      │ clarify      │  │              │  │              │
+      │ spec         │  │              │  │              │
+      │ design       │  │              │  │              │
+      │ tasks        │  │              │  │              │
+      └──────────────┘  └──────────────┘  └──────────────┘
 ```
 
-Cada sub-agente arranca con **contexto fresco** (sin memoria de la conversación), recibe las reglas del proyecto pre-inyectadas y devuelve un resultado estructurado al orquestador.
+### Capas
+
+| Capa | Archivos | Función |
+|------|----------|---------|
+| **Instructions** | `instructions/CLAUDE.md` o `copilot-instructions.md` | Orquestador SDD (uno por plataforma) |
+| **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
+| **Skills** | `skills/sdd-*/` + `skill-registry/` | Flujos invocables on-demand (0 tokens hasta uso) |
+
+### Características principales
+
+| Feature | Descripción |
+|---------|-------------|
+| **Hard Stop Rule** | Evalúa complejidad antes de actuar: trivial/simple → delega directo, medio/grande → sugiere SDD |
+| **Execution Mode** | Auto (back-to-back) o Interactive (pausa tras cada fase). Se elige al inicio de sesión |
+| **Model Routing** | Asigna tier de modelo por fase: high-capability para propose/design, standard para el resto, fast para inline |
+| **Inline vs Delegate** | 1-3 archivos → puede ser inline. 4+ archivos → siempre delegar |
+| **Artifact Locks** | Spec y design se bloquean tras completar tasks (previene spec-drift) |
+| **Lessons Learned** | Registro append-only de errores y soluciones entre sesiones |
+| **Skill Resolution Feedback** | Auto-recarga registry si un sub-agente pierde contexto tras compactación |
+| **OpenSpec Compliant** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
+| **Parallelism Markers** | Tasks se marcan con `[P]` cuando pueden ejecutarse en paralelo |
+| **Spec Self-Validation** | Auto-verifica escenarios, no-impl-details y markers resueltos antes de avanzar |
+| **Delegation Anti-patterns** | Reglas explícitas de cuándo SIEMPRE delegar |
+
+### Contexto persistente (sin re-explorar en cada sesión)
+
+| Artefacto | Generado por | Lo lee |
+|-----------|-------------|--------|
+| `.github/instructions/context.instructions.md` | sdd-init | Copilot automático + Orquestador Claude al iniciar sesión |
+| `.github/instructions/conventions.instructions.md` | skill-registry | Copilot automático + Orquestador Claude al iniciar sesión |
+| `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
 
 ---
 
-## 🔄 Flujo SDD (vista rápida)
+## Pipeline SDD
 
 ```
-                          ┌─────────┐
-                          │ explore │ (opcional)
-                          └────┬────┘
-                               │
-                               ▼
-                          ┌─────────┐
-                          │ propose │
-                          └────┬────┘
-                               │
-                    ┌──────────┴──────────┐
-                    ▼                     ▼
-               ┌─────────┐          ┌─────────┐
-               │  spec   │          │ design  │    ← paralelos
-               └────┬────┘          └────┬────┘
-                    │                    │
-                    └─────────┬──────────┘
-                              ▼
-                          ┌─────────┐
-                          │  tasks  │
-                          └────┬────┘
-                               │
-                               ▼
-                          ┌─────────┐
-                          │  apply  │ (batches)
-                          └────┬────┘
-                               │
-                               ▼
-                          ┌─────────┐
-                          │ verify  │
-                          └────┬────┘
-                               │
-                               ▼
-                          ┌─────────┐
-                          │ archive │
-                          └─────────┘
+init? → [explore?] → propose → clarify? → spec → design → tasks → apply ⟲ fix → verify → archive?
 ```
-
-> **Nota**: `spec` y `design` son **paralelos** — ambos dependen solo de `proposal`, no entre sí.
 
 ---
 
-## 🚀 Inicio Rápido
+## Comandos
 
-### 1. Clonar o copiar los archivos de Conductor
-
-```bash
-# Opción A: clonar el repo completo
-git clone https://github.com/<tu-org>/Conductor.git
-
-# Opción B: copiar los archivos de configuración a tu proyecto
-
-# Para GitHub Copilot (Linux/Mac)
-cp instructions/copilot-instructions.md tu-proyecto/.github/copilot-instructions.md
-cp -r skills/ tu-proyecto/.github/skills/
-
-# Para GitHub Copilot (Windows PowerShell)
-Copy-Item instructions\copilot-instructions.md tu-proyecto\.github\copilot-instructions.md
-Copy-Item -Recurse skills\ tu-proyecto\.github\skills\
-
-# Para Claude Code (Linux/Mac)
-cp instructions/CLAUDE.md tu-proyecto/.claude/CLAUDE.md
-cp -r skills/ tu-proyecto/.claude/skills/
-
-# Para Claude Code (Windows PowerShell)
-Copy-Item instructions\CLAUDE.md tu-proyecto\.claude\CLAUDE.md
-Copy-Item -Recurse skills\ tu-proyecto\.claude\skills\
-```
-
-### 2. Inicializar SDD en tu proyecto
-
-```
-/sdd-init
-```
-
-El orquestador detectará tu stack tecnológico, framework de testing, convenciones y creará la configuración base.
-
-### 3. Crear tu primer feature
-
-```
-/sdd-new autenticación-jwt
-```
-
-Esto lanza automáticamente una exploración del codebase seguida de una propuesta de cambio. A partir de ahí, usa `/sdd-continue` para avanzar fase por fase o `/sdd-ff` para avanzar rápido hasta tener el plan completo.
-
-> 📖 Guía completa: [Inicio Rápido](./docs/01-inicio-rapido.md)
+| Comando | Descripción | Coste |
+|---------|-------------|-------|
+| `/sdd-init` | Detecta stack, crea openspec, genera context files | 1 req |
+| `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify | 2-3 req |
+| `/sdd-ff <name>` | Fast-forward: propose → clarify → spec → design → tasks | 4-5 req |
+| `/sdd-continue` | Continuar siguiente fase pendiente | 1 req |
+| `/sdd-status` | Mostrar progreso del cambio activo | 0 req |
+| `/sdd-archive` | Archivar cambio completado | 1 req |
+| `/skill-registry` | Generar/actualizar context files y registry | 1 req |
 
 ---
 
-## 💻 Plataformas Compatibles
-
-| Plataforma                   | Instrucciones (source)                 | Skills (source)   | Destino en proyecto   | Estado     |
-| ---------------------------- | -------------------------------------- | ----------------- | --------------------- | ---------- |
-| **Claude Code**              | `instructions/CLAUDE.md`               | `skills/`         | `.claude/`            | ✅ Completo |
-| **GitHub Copilot (VS Code)** | `instructions/copilot-instructions.md` | `skills/`         | `.github/`            | ✅ Completo |
-| **Copilot CLI (Terminal)**   | `instructions/copilot-instructions.md` | `skills/`         | `.github/`            | ✅ Completo |
-
-Los skills son idénticos para todas las plataformas. Solo cambia el archivo de instrucciones del orquestador y la ruta de destino en el proyecto.
-
-> 📖 Detalle completo: [Plataformas Compatibles](./docs/08-plataformas-compatibles.md)
-
----
-
-## 📚 Documentación
-
-| #   | Documento                                                               | Descripción                                |
-| --- | ----------------------------------------------------------------------- | ------------------------------------------ |
-| 01  | [Inicio Rápido](./docs/01-inicio-rapido.md)                             | Guía de inicio rápido                      |
-| 02  | [Arquitectura](./docs/02-arquitectura.md)                               | Arquitectura y modelo de agentes           |
-| 03  | [Flujo SDD Completo](./docs/03-flujo-sdd-completo.md)                   | Flujo SDD completo paso a paso             |
-| 04  | [Catálogo de Skills](./docs/04-catalogo-skills.md)                      | Catálogo de todos los skills disponibles   |
-| 05  | [Modo TDD Estricto](./docs/05-modo-tdd-estricto.md)                     | Modo TDD estricto (RED → GREEN → REFACTOR) |
-| 06  | [Sub-agentes y Delegación](./docs/07-subagentes-y-delegacion.md)        | Sub-agentes y delegación                   |
-| 08  | [Plataformas Compatibles](./docs/08-plataformas-compatibles.md)         | Plataformas compatibles                    |
-| 09  | [OpenSpec y Persistencia](./docs/09-openspec-y-persistencia.md)         | OpenSpec y persistencia de artefactos      |
-| 10  | [Consumo de Tokens](./docs/10-consumo-tokens.md)                        | Consumo de tokens y requests               |
-| 11  | [Crear Skills Personalizados](./docs/11-crear-skills-personalizados.md) | Crear skills personalizados                |
-| 12  | [Referencia de Comandos](./docs/12-comandos-referencia.md)              | Referencia completa de comandos            |
-| 13  | [Mejores Prácticas](./docs/13-mejores-practicas.md)                     | Mejores prácticas y patrones               |
-
----
-
-## 📁 Estructura del Proyecto
+## Estructura del Repositorio
 
 ```
 Conductor/
-├── README.md                              ← Este archivo
 ├── instructions/
-│   ├── CLAUDE.md                          ← Instrucciones del orquestador (Claude Code)
-│   └── copilot-instructions.md            ← Instrucciones del orquestador (GitHub Copilot)
+│   ├── CLAUDE.md                    ← Orquestador para Claude Code
+│   └── copilot-instructions.md      ← Orquestador para GitHub Copilot (VS Code / CLI)
+├── agents/
+│   ├── _shared/
+│   │   ├── sdd-protocol.md          ← Protocolo SDD para agentes (on-demand)
+│   │   └── orchestrator-reference.md ← Referencia orquestador (on-demand)
+│   ├── sdd-planner/AGENT.md
+│   ├── sdd-coder/
+│   │   ├── AGENT.md
+│   │   └── strict-tdd.md
+│   └── sdd-reviewer/
+│       ├── AGENT.md
+│       └── strict-tdd-verify.md
 ├── skills/
-│   ├── _shared/                           ← Protocolos compartidos entre skills
-│   │   ├── skill-resolver.md              ← Protocolo de resolución de skills
-│   │   ├── sdd-phase-common.md            ← Convenciones comunes de fases SDD
-│   │   ├── persistence-contract.md        ← Contrato de persistencia
-│   │   └── openspec-convention.md         ← Convención de archivos OpenSpec
-│   ├── skill-registry/SKILL.md            ← Genera/actualiza el registro de skills
-│   ├── skill-creator/SKILL.md             ← Crea nuevos skills personalizados
-│   ├── sdd-init/SKILL.md                  ← Inicialización de SDD
-│   ├── sdd-explore/SKILL.md               ← Exploración e investigación
-│   ├── sdd-propose/SKILL.md               ← Generación de propuestas
-│   ├── sdd-spec/SKILL.md                  ← Escritura de especificaciones
-│   ├── sdd-design/SKILL.md                ← Diseño técnico
-│   ├── sdd-tasks/SKILL.md                 ← Desglose de tareas
-│   ├── sdd-apply/SKILL.md                 ← Implementación (+ strict-tdd.md)
-│   ├── sdd-verify/SKILL.md                ← Verificación (+ strict-tdd-verify.md)
-│   ├── sdd-archive/SKILL.md               ← Archivado y cierre
+│   ├── sdd-init/SKILL.md
+│   ├── sdd-new/SKILL.md
+│   ├── sdd-ff/SKILL.md
+│   ├── sdd-continue/SKILL.md
+│   ├── sdd-status/SKILL.md
+│   ├── sdd-archive/SKILL.md
+│   └── skill-registry/SKILL.md
 └── docs/
-    └── *.md                               ← Documentación completa
+    ├── quick-start.md
+    ├── sdd-pipeline.md
+    ├── openspec.md
+    └── advanced.md
 ```
 
-> **Modelo de despliegue:** Este repo es un template. Los skills se mantienen en una sola copia (`skills/`) y se copian al directorio de la plataforma destino (`.github/skills/` o `.claude/skills/`) en cada proyecto.
+---
 
+## Deploy por Plataforma
 
+### Claude Code
+```bash
+cp Conductor/instructions/CLAUDE.md            tu-proyecto/.claude/CLAUDE.md
+cp -r Conductor/agents/                        tu-proyecto/.claude/agents/
+cp -r Conductor/skills/                        tu-proyecto/.claude/skills/
+```
+
+### GitHub Copilot (VS Code / CLI)
+```bash
+cp Conductor/instructions/copilot-instructions.md     tu-proyecto/.github/copilot-instructions.md
+cp -r Conductor/agents/                               tu-proyecto/.github/agents/
+cp -r Conductor/skills/                               tu-proyecto/.github/skills/
+```
+
+### Dual (ambas plataformas)
+Combina los dos bloques. `openspec/` y `.github/instructions/` son compartidos — cualquier plataforma lee y escribe los mismos artefactos.
+
+### Primer uso
+```
+/sdd-init    ← detecta stack, genera openspec/ y .github/instructions/
+```
+
+---
+
+## Prueba de Concepto: traza de `/sdd-ff add-user-auth`
+
+```
+USUARIO: /sdd-ff add-user-auth "Añadir autenticación JWT con refresh tokens"
+
+ORQUESTADOR:
+  1. SDD Init Guard → ¿existe openspec/config.yaml? ✓
+  2. Execution Mode → (cacheado: Auto)
+  3. Input Assessment → 12 palabras, scope claro → SKIP explore
+  4. Crea openspec/changes/add-user-auth/state.yaml (all pending)
+
+  ── PROPOSE (sdd-planner, high-capability) ─────────────────────
+  Contexto inyectado:
+    - ## Repo Context (desde context.instructions.md)
+    - ## Project Principles (desde principles.md)
+    - ## Project Standards (desde conventions.instructions.md)
+    - PHASE: propose
+    - Artifact store: openspec
+    - Change: add-user-auth
+
+  Output: openspec/changes/add-user-auth/proposal.md (≤400 words)
+  Return: { status: success, artifacts: [proposal.md], next: clarify }
+  state.yaml → propose: done
+
+  ── CLARIFY (sdd-planner, standard) ────────────────────────────
+  Inputs: proposal.md (required)
+  Output: questions.md con 2 preguntas (refresh token strategy, session storage)
+  Return: { status: success, questions_count: 2, requires_human_input: true }
+
+  GATE → PAUSA. Presenta preguntas al usuario.
+  Usuario responde → continúa.
+  state.yaml → clarify: done
+
+  ── SPEC (sdd-planner, standard) ───────────────────────────────
+  Inputs: proposal.md + questions.md
+  Lee openspec/specs/auth/ si existe (delta spec) o crea full spec
+  Self-validation: ✓ cada req tiene GIVEN/WHEN/THEN, ✓ no impl details
+  Output: openspec/changes/add-user-auth/specs/auth/spec.md (≤650 words)
+  state.yaml → spec: done
+
+  ── DESIGN (sdd-planner, high-capability) ──────────────────────
+  Inputs: proposal.md + specs/auth/spec.md (REQUIRED)
+  Lee: exploration.md (no existe, skip), lessons-learned.md (si existe)
+  Principles gate: ✓ pass/fail table vs principles.md
+  Output: openspec/changes/add-user-auth/design.md (≤800 words)
+  state.yaml → design: done
+
+  ── TASKS (sdd-planner, standard) ──────────────────────────────
+  Inputs: spec.md + design.md (REQUIRED)
+  Output: tasks.md con [P] markers, hierarchical numbering
+  Consistency Check: coverage ✓, alignment ✓, contradictions ✓, completeness ✓
+  state.yaml → tasks: done, locks: { spec: true, design: true }
+
+ORQUESTADOR:
+  "Planning complete. 5 fases ejecutadas. ¿Continúo con apply?"
+```
+
+**Validación del flujo:**
+- ✅ Sub-agentes reciben contexto inyectado (no descubren)
+- ✅ OpenSpec artifacts en estructura estándar
+- ✅ Extensions (state.yaml, locks) claramente separadas
+- ✅ Gates funcionan (clarify pausa, consistency check)
+- ✅ No hay duplicación de info entre artifacts
+- ✅ Cada fase tiene I/O explícito
+- ✅ `config.yaml` usa `x-conductor` para extensiones
+
+---
+
+## Documentación
+
+- [Quick Start](docs/quick-start.md) — Instalación y primer uso
+- [Pipeline SDD](docs/sdd-pipeline.md) — Fases, TDD, hooks
+- [OpenSpec](docs/openspec.md) — Persistencia, artefactos, recuperación
+- [Avanzado](docs/advanced.md) — Tokens, mejores prácticas, troubleshooting
