@@ -50,7 +50,7 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
 | Feature | Descripción |
 |---------|-------------|
 | **Hard Stop Rule** | Evalúa complejidad antes de actuar: trivial/simple → delega directo, medio/grande → sugiere SDD |
-| **Condensed Pipeline** | Cambios medium → 1 sola llamada al planner produce todos los artefactos. 3 agents total vs 7+ |
+| **Condensed Pipeline** | Cambios medium → 1 sola llamada al planner produce todos los artefactos. 3 agents total |
 | **Execution Mode** | Auto (back-to-back) o Interactive (pausa tras cada fase). Se elige al inicio de sesión |
 | **Model Routing** | Asigna tier de modelo por fase: high-capability para propose/design, standard para el resto, fast para inline |
 | **Inline vs Delegate** | 1-3 archivos → puede ser inline. 4+ archivos → siempre delegar |
@@ -201,7 +201,7 @@ ORQUESTADOR:
 
 **Validación:**
 - ✅ Complexity Gate bloquea pipeline para cambios triviales
-- ✅ Pipeline condensado: 3 agents para medium (vs 7+ antes)
+- ✅ Pipeline condensado: 3 agents para cambios medium
 - ✅ Orquestador NUNCA crea directorios ni escribe state.yaml (lo hace el agent)
 - ✅ Paths siempre relativos (previene bug Windows)
 - ✅ Todo en `openspec/` (no `.github/instructions/`)
