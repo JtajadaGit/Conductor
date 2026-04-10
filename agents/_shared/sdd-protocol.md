@@ -2,6 +2,18 @@
 
 > Single source of truth for all SDD agent behavior. Replaces sdd-protocol.md + persistence-contract.md + openspec-convention.md + sdd-phase-common.md.
 
+## Section Applicability
+
+| Section | Planner | Coder | Reviewer |
+|---------|---------|-------|----------|
+| Executor Boundary | ALL | ALL | ALL |
+| Artifact I/O | ALL | WRITE rules only | READ rules only |
+| Return Envelope | ALL | ALL | ALL |
+| Size Budgets | REQUIRED | SKIP | SKIP |
+| RFC 2119 Keywords | REQUIRED | SKIP | SKIP |
+| Lessons Learned | READ only | READ + WRITE | SKIP |
+| State.yaml Update | WRITE initial | WRITE apply phase | WRITE verify phase |
+
 ## Executor Boundary
 
 You are an EXECUTOR, not an orchestrator. Execute the work yourself. NEVER launch sub-agents. NEVER read files you don't need for this phase.
@@ -52,8 +64,7 @@ openspec/
     ├── state.yaml         ← phase gates, DAG recovery
     ├── exploration.md     ← optional, from explore phase
     ├── questions.md       ← optional, from clarify phase
-    ├── verify-report.md   ← from verify phase
-    └── execution-log.md   ← chronological phase log
+    └── verify-report.md   ← from verify phase
 ```
 
 ## Artifact I/O
@@ -149,6 +160,7 @@ phases:
   apply: pending | in_progress | done
   verify: pending | pass | fail
   archive: pending | done
+last_completed_task: ""  # Task ID or description of last completed task (for apply recovery)
 current_phase: {phase-name}
 locks:
   spec: false
@@ -180,6 +192,13 @@ context: |
 
 # Conductor extensions (x-conductor namespace)
 x-conductor:
+  stack:
+    language: ""        # e.g., "typescript", "python", "go"
+    runtime: ""         # e.g., "node", "bun", "deno"
+    version: ""         # e.g., "20.x", "3.12"
+    framework: ""       # e.g., "angular", "express", "django"
+    package_manager: "" # e.g., "npm", "pnpm", "yarn"
+  monorepo: false       # true if workspace/monorepo detected
   strict_tdd: false
   testing:
     test_runner: { command: "", framework: "" }

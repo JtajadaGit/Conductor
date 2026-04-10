@@ -59,6 +59,8 @@ For each design decision:
 3. If `strict_tdd: false` or not set → skip, note "strict_tdd not enabled"
 4. CRITICAL if this step is skipped when `strict_tdd: true` — it is MANDATORY
 
+> **Note**: Assertion quality audit (scanning for tautological assertions) SHOULD be handled by a `post_hook` linter script when available. Only perform inline assertion scanning if no linter is configured.
+
 ### Step 5: Testing
 
 **5a**: Test files exist for each spec scenario?

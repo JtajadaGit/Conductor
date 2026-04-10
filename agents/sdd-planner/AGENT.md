@@ -74,6 +74,7 @@ phases:
   apply: pending
   verify: pending
   archive: pending
+last_completed_task: ""
 locks:
   spec: true
   design: true

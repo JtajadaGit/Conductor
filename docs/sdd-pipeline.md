@@ -132,7 +132,7 @@ Default: Interactive.
 4. **Context** — nombre del cambio, paths de artefactos, modo de persistencia
 5. **Return Envelope** — status, summary, artifacts, next, risks
 
-Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el registry directamente.
+Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el conventions directamente.
 
 ---
 
@@ -140,7 +140,7 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 
 | Comando | Qué hace | Coste |
 |---------|----------|-------|
-| `/sdd-init` | Bootstrap: detecta stack, crea openspec, genera registry | 1 req |
+| `/sdd-init` | Bootstrap: detecta stack, crea openspec, genera conventions del equipo | 1 req |
 | `/sdd-new <name>` | Evalúa input → [explore?] → propose → clarify | 2-3 req |
 | `/sdd-ff <name>` | Pipeline condensado (1 planner call) o completo según complejidad | 1-3 req |
 | `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |

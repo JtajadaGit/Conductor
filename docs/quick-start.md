@@ -149,6 +149,7 @@ Desde ahí:
 /sdd-apply       # implementar
 /sdd-verify      # verificar
 /sdd-archive     # cerrar
+/conventions     # generar/actualizar convenciones del equipo
 ```
 
 ---

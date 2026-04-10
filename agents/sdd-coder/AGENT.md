@@ -24,6 +24,10 @@ Verify `tasks.md`, `spec.md`, and `design.md` exist and are non-empty. If any mi
 If `openspec/lessons-learned.md` exists, read it to avoid known errors.
 
 ### Step 1: Pre-hook
+> Steps 1 and 4 ONLY apply when hooks are configured in `x-conductor.hooks.apply`. If `pre_hook` and `post_hook` are empty strings → skip directly to Step 2.
+
+If no hooks configured (empty `pre_hook`) → skip to Step 2.
+
 If `pre_hook` configured in `x-conductor.hooks.apply` → execute BEFORE implementation.
 - Fails → `status: blocked`, stop immediately.
 
@@ -39,6 +43,8 @@ For each task:
 4. Mark `[x]` in `tasks.md`
 
 ### Step 4: Post-hook
+If no hooks configured (empty `post_hook`) → skip to Step 5.
+
 If `post_hook` configured in `x-conductor.hooks.apply` → execute after each batch (or every `checkpoint_every` tasks):
 - exit 0 → continue
 - exit ≠ 0 + `retry` → read error, fix, re-execute (max `post_hook_max_retries`)

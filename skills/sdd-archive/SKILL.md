@@ -18,23 +18,24 @@ For each delta spec in `openspec/changes/{change-name}/specs/`:
 - **Main spec doesn't exist**: copy delta as full spec to `openspec/specs/{domain}/spec.md`
 - If merge would be destructive (removing large sections) → WARN and ask confirmation.
 
-### 3. Move to Archive
+### 3. Update context.md (if verify-report suggested updates)
+If `verify-report.md` contains a `## Suggested context.md Updates` section, apply those updates to `openspec/context.md`.
+
+### 4. Move to Archive
 ```
 openspec/changes/{change-name}/
   → openspec/changes/archive/YYYY-MM-DD-{change-name}/
 ```
 
-### 4. Verify
+### 5. Verify
 - [ ] Main specs updated correctly
+- [ ] Context.md updated (if applicable)
 - [ ] Change folder moved to archive
 - [ ] Archive contains all artifacts
 - [ ] Active changes directory no longer has this change
 
-### 5. Output
+### 6. Output
 `archive-report.md` with: specs synced, archive contents, source of truth updated.
-
-### 6. Update context.md (if verify-report suggested updates)
-If `verify-report.md` contains a `## Suggested context.md Updates` section, apply those updates to `openspec/context.md`.
 
 ## Rules
 - NEVER archive with CRITICAL issues in verify report

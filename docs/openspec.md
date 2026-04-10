@@ -38,10 +38,8 @@ openspec/
     │       ├── design.md
     │       ├── tasks.md
     │       ├── verify-report.md
-    │       └── execution-log.md
     └── {nombre-del-cambio}/      ← Cambio activo
         ├── state.yaml            ← (Conductor ext.) Estado del DAG (sobrevive compactación)
-        ├── execution-log.md      ← (Conductor ext.) Log cronológico de fases
         ├── exploration.md        ← (Conductor ext., opcional) de fase explore
         ├── proposal.md
         ├── specs/{dominio}/spec.md  ← Delta spec

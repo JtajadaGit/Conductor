@@ -56,7 +56,7 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
 | **Inline vs Delegate** | 1-3 archivos → puede ser inline. 4+ archivos → siempre delegar |
 | **Artifact Locks** | Spec y design se bloquean tras completar tasks (previene spec-drift) |
 | **Lessons Learned** | Registro append-only de errores y soluciones entre sesiones |
-| **OpenSpec Compliant** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
+| **OpenSpec Compatible** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
 | **Parallel Agents** | Tareas `[P]` en tasks.md se ejecutan con múltiples agents simultáneos. Background agents para no bloquear |
 | **Spec Self-Validation** | Auto-verifica escenarios, no-impl-details y markers resueltos antes de avanzar |
 | **Visual Output** | Delegation boxes (`┌─ ... ─┐`), pipeline progress bar (`● ◉ ○ ⊘`), gate warnings — todo visible |
@@ -198,13 +198,6 @@ ORQUESTADOR:
   3. Cada fase = 1 llamada a sdd-planner
   → "Planning complete. ¿Continúo con apply?"
 ```
-
-**Validación:**
-- ✅ Complexity Gate bloquea pipeline para cambios triviales
-- ✅ Pipeline condensado: 3 agents para cambios medium
-- ✅ Orquestador NUNCA crea directorios ni escribe state.yaml (lo hace el agent)
-- ✅ Paths siempre relativos (previene bug Windows)
-- ✅ Todo en `openspec/` (no `.github/instructions/`)
 
 ---
 

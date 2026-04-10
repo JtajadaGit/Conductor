@@ -57,9 +57,10 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 | Complexity | Pipeline mode | Agent calls |
 |------------|--------------|-------------|
 | **Medium** | **Condensed** — single `sdd-planner` call with `PHASE: fast-forward` produces proposal + spec + design + tasks | 1 plan + 1 apply + 1 verify = **3 agents** |
-| **Large** | **Full** — sequential phases, separate agent per phase | Up to 7 agents |
+| **Large** | **Condensed + explore pre-step** — run `sdd-planner` with `PHASE: explore` first, then `PHASE: fast-forward` for the rest | 1 explore + 1 plan + 1 apply + 1 verify = **4 agents** |
+| **Interactive** (user-requested) | **Full decomposed** — sequential phases, separate agent per phase | Up to 7 agents |
 
-**Default to condensed** unless the change is large/vague or needs explore/clarify with human input.
+**Default to condensed for ALL pipeline changes.** Full decomposed pipeline only when user explicitly chooses Interactive mode.
 
 ### Skip rules
 - **Skip explore**: input >100w with scope + approach + constraints → skip. Input <30w or vague → execute.
@@ -91,15 +92,15 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 | New change | sdd-new | "new change {name}", "nuevo cambio {name}" |
 | Fast-forward | sdd-ff | "fast forward {name}", "plan everything" |
 | Continue | sdd-continue | "continue", "next phase", "continuar" |
-| Apply | sdd-apply | "apply", "implement", "implementar" |
-| Verify | sdd-verify | "verify", "check", "verificar" |
+| Apply | sdd-continue | "apply", "implement", "implementar" |
+| Verify | sdd-continue | "verify", "check", "verificar" |
 | Archive | sdd-archive | "archive", "close change", "archivar" |
 | Status | sdd-status | "status", "show progress", "estado" |
 | Conventions | conventions | "update conventions", "actualizar convenciones", "generate conventions" |
 
 ## SDD Init Guard
 
-Before any SDD command (sdd-new, sdd-ff, sdd-continue, sdd-apply, sdd-verify), check if `openspec/config.yaml` exists. If NOT → suggest running `/sdd-init` first. Do NOT block — the user may intentionally use `none` mode.
+Before any SDD command (sdd-new, sdd-ff, sdd-continue), check if `openspec/config.yaml` exists. If NOT → suggest running `/sdd-init` first. Do NOT block — the user may intentionally use `none` mode.
 
 ## Delegation Rules
 
@@ -131,7 +132,7 @@ Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.
 | Multiple independent changes | MAY run separate pipelines in parallel if touching different files |
 | Explore + context loading | Read context files while explore agent is running |
 
-**Rules**: NEVER parallel when one consumes artifacts the other produces. Use `┌─ PARALLEL ─┐` box to show running agents. Prefer background agents (`run_in_background`) so the user sees progress.
+**Rules**: NEVER parallel when one consumes artifacts the other produces. Before launching parallel coders, verify tasks touch different files. If file overlap detected → run sequentially. Use `┌─ PARALLEL ─┐` box to show running agents. Prefer background agents (`run_in_background`) so the user sees progress.
 
 ## Error Handling
 
@@ -141,6 +142,7 @@ Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.
 - Max 2 retries per phase before escalating to user
 - `consistency_block: true` → block apply, surface issues to user
 - `skill_resolution: none|fallback-*` in response → re-read `openspec/conventions.md` immediately (auto-correct context loss)
+- After agent returns, validate `state.yaml` has required fields (change, current_phase, phases). If malformed → re-read artifacts and reconstruct.
 - Advanced recovery → read `agents/_shared/orchestrator-reference.md`
 
 ## Compaction Awareness

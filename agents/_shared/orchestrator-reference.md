@@ -9,7 +9,7 @@
 |---------|--------|----------|
 | `status: blocked` | PAUSE → DISPLAY → OPTIONS | Show blocker. Offer: (A) provide info and retry, (B) skip with warning, (C) abort. |
 | `status: partial` | MERGE → CONTINUE | Accept completed work. Ask: retry remaining or skip? |
-| Timeout/crash | RETRY ONCE → ESCALATE | Retry once. If fails again, report to user. No third attempt. |
+| Timeout/crash | RETRY (MAX 2) → ESCALATE | Max 2 retries per phase before escalating to user. |
 | Compaction detected (`skill_resolution ≠ injected`) | AUTO-RECOVER | Re-read `openspec/conventions.md` + `openspec/principles.md`. Re-cache. If openspec: re-read `state.yaml`. |
 | Artifact budget violated | WARN → ACCEPT | Accept but warn that downstream phases consume more tokens. |
 
@@ -63,7 +63,7 @@ If user requests changes after locks:
 
 **Per delegation**:
 1. Match skills by code context (file patterns) AND task context (actions)
-2. Inject repo context from `context.instructions.md`
+2. Inject repo context from `openspec/context.md`
 3. Inject principles as `## Project Principles (auto-resolved)` FIRST
 4. Inject matching compact rules as `## Project Standards (auto-resolved)`
 5. Always include artifact store mode (`openspec` or `none`)
@@ -116,11 +116,3 @@ In **Interactive mode**: orchestrator MAY additionally read state.yaml between p
 
 **Critical**: state.yaml updates by agents are NOT optional. They are phase gates for `/sdd-continue` and DAG recovery after compaction.
 
-## Execution Log
-
-After each phase, append to `openspec/changes/{name}/execution-log.md`:
-
-```markdown
-| Timestamp | Phase | Status | Duration | Notes |
-|-----------|-------|--------|----------|-------|
-```
