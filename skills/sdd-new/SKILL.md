@@ -28,7 +28,6 @@ BEFORE creating any artifacts, evaluate the request against the Hard Stop Rule:
      change: {change-name}
      created: {ISO-8601}
      updated: {ISO-8601}
-     mode: openspec
      current_phase: done
      complexity: trivial|simple
      phases:

@@ -28,19 +28,19 @@ Execute ALL planning phases in sequence within this single context:
 ### FF-2: Propose
 1. Read existing main specs if they exist
 2. Analyze request → create `proposal.md` (400w max)
-3. Include: Intent, Scope (In/Out), Approach, Affected Areas, Risks, Rollback, Success Criteria
+3. Include: Why (intent + motivation), What Changes (scope in/out), Capabilities (new + modified capability names in kebab-case — drives spec generation), Approach, Impact (affected areas, risks, rollback), Success Criteria
 
 ### FF-3: Clarify (internal)
 1. Analyze proposal for ambiguities across 5 categories
-2. If 0 questions → continue (most common for medium changes)
-3. If questions exist → set `requires_human_input: true` in return envelope, include questions inline. STOP here — do not produce spec/design/tasks until answers received.
+2. If 0 questions → continue (most common for medium changes), set `clarify: skipped` in state.yaml
+3. If questions exist → set `requires_human_input: true` in return envelope, include questions inline, set `clarify: pending` and `current_phase: clarify` in state.yaml. STOP here — do not produce spec/design/tasks until answers received. Max 2 clarify rounds before forcing decision.
 
 ### FF-4: Spec
-1. Identify affected domains
-2. Delta spec (existing domain) or full spec (new domain)
-3. GIVEN/WHEN/THEN scenarios, RFC 2119 keywords
+1. Identify affected domains (capabilities) from proposal's Capabilities section
+2. Delta spec (existing domain): ADDED/MODIFIED/REMOVED sections. Full spec (new domain): complete requirements.
+3. OpenSpec heading format: `# {domain} Specification`, `### Requirement: {Name}`, `#### Scenario: {Name}`. GIVEN/WHEN/THEN scenarios, RFC 2119 keywords.
 4. Self-validate: scenarios exist, no impl details, no unresolved markers
-5. Output: `specs/{domain}/spec.md` (650w max)
+5. Output: **MUST** be `specs/{domain}/spec.md` inside the change directory (e.g., `openspec/changes/{change-name}/specs/app/spec.md`). NEVER write as flat `spec.md` — the archive step needs domain subdirectories to promote specs to `openspec/specs/`. (650w max)
 
 ### FF-5: Design
 1. **Read codebase** — actual files, not guesses
@@ -62,7 +62,6 @@ Execute ALL planning phases in sequence within this single context:
 change: {change-name}
 created: {ISO-8601}
 updated: {ISO-8601}
-mode: openspec
 current_phase: apply
 phases:
   explore: skipped
@@ -107,12 +106,11 @@ Trigger: orchestrator sends `PHASE: propose`
 
 1. Read exploration (if exists) + existing main specs (if openspec)
 2. Create `proposal.md`:
-   - **Intent**: what problem, why now
-   - **Scope**: In (concrete deliverables) / Out (deferred)
+   - **Why**: what problem, why now (intent + motivation)
+   - **What Changes**: concrete deliverables in / deferred out
+   - **Capabilities**: New capabilities (kebab-case IDs) + Modified capabilities — drives spec domain generation
    - **Approach**: high-level technical strategy
-   - **Affected Areas**: table (Area | Impact | Description)
-   - **Risks**: table (Risk | Likelihood | Mitigation)
-   - **Rollback Plan**: specific revert strategy
+   - **Impact**: table (Area | Impact | Description), risks, rollback plan
    - **Success Criteria**: measurable outcomes
 3. `requires_human_input: true` if assumptions unverifiable from code
 4. Budget: 400 words max
@@ -142,11 +140,11 @@ Trigger: orchestrator sends `PHASE: spec`
 **Outputs**: `specs/{domain}/spec.md`
 
 1. Input: `proposal.md` + `questions.md` (if exists)
-2. Identify affected domains from proposal's Affected Areas
+2. Identify affected domains (capabilities) from proposal's Capabilities section
 3. Read existing main specs if they exist (`openspec/specs/{domain}/spec.md`)
-4. **Delta spec** (main spec exists): ADDED, MODIFIED, REMOVED, RENAMED sections
+4. **Delta spec** (main spec exists): ADDED, MODIFIED, REMOVED sections (OpenSpec standard). Optional: RENAMED (Conductor extension).
 5. **Full spec** (new domain): complete requirements
-6. Format: GIVEN/WHEN/THEN for scenarios, RFC 2119 for requirement strength
+6. Format: OpenSpec heading structure — `# {domain} Specification`, `## Purpose`, `## Requirements`, `### Requirement: {Name}`, `#### Scenario: {Name}`. Use GIVEN/WHEN/THEN for scenarios, RFC 2119 keywords (MUST/SHALL/SHOULD/MAY) for requirement strength.
 7. Each requirement: ≥1 scenario, happy path + edge case, testable
 8. Output: `specs/{domain}/spec.md`
 9. Budget: 650 words max

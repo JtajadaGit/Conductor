@@ -38,4 +38,3 @@ Same gate as sdd-new. Evaluate BEFORE launching:
 - NEVER create directories or write state.yaml from the orchestrator. The planner agent does it.
 - ALWAYS use relative paths. NEVER absolute paths.
 - The user explicitly chose `/sdd-ff` — but trivial changes don't need planning phases.
-- In `none` mode: WARN user — full planning without persistence may exhaust context.

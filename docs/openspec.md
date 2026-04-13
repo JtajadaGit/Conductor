@@ -2,18 +2,13 @@
 
 OpenSpec es el sistema de persistencia de Conductor: artefactos SDD en disco, recuperación tras compactación, y auditoría de decisiones.
 
-> **Conductor extiende OpenSpec** con phase gates (`state.yaml`), artifact locks, execution logs y sub-agent context injection. Los artefactos base (`specs/`, `changes/`, `config.yaml`) siguen la convención OpenSpec estándar — lo que Conductor añade son las capas de orquestación y control de flujo.
+> **Conductor extiende OpenSpec** con phase gates (`state.yaml`), artifact locks, verify phase, context.md y sub-agent context injection. Los artefactos base (`specs/`, `changes/`, `config.yaml` con `schema`/`context`/`rules`, `proposal.md`, `design.md`, `tasks.md`) siguen la convención OpenSpec estándar — lo que Conductor añade son las capas de orquestación y control de flujo. Campos bajo `x-conductor` en config.yaml son extensiones.
 
 ---
 
-## Modos de Persistencia
+## Persistencia
 
-| Modo | Almacenamiento | Recuperable | Cuándo usar |
-|------|---------------|-------------|-------------|
-| `openspec` | Filesystem (`openspec/`) | ✅ Sí | Proyectos con múltiples sesiones, equipos, features sustanciales |
-| `none` | Inline en conversación | ❌ No | Tareas rápidas, exploración sin compromiso |
-
-`openspec` NO se activa por defecto — solo cuando el usuario lo solicita explícitamente (o durante `/sdd-init`).
+Todos los artefactos SDD persisten en `openspec/` en el filesystem. Esto es obligatorio para el DAG recovery, phase gates, `/sdd-continue` y resiliencia ante compactación. Se inicializa con `/sdd-init`.
 
 ---
 
@@ -21,50 +16,62 @@ OpenSpec es el sistema de persistencia de Conductor: artefactos SDD en disco, re
 
 ```
 openspec/
-├── config.yaml                   ← OpenSpec standard (schema, context) + Conductor extensions (x-conductor)
-├── context.md                    ← Repo context (stack, arquitectura, entry points) — canónico
-├── conventions.md                ← Convenciones del equipo — generado por /conventions
-├── principles.md                 ← (Conductor ext.) Principios NON-NEGOTIABLE — solo humanos editan
-├── lessons-learned.md            ← (Conductor ext.) Lecciones acumulativas entre cambios (append-only)
-├── specs/                        ← Fuente de verdad (specs principales)
+├── config.yaml                   ← OpenSpec standard (schema, context, rules) + Conductor ext. (x-conductor)
+├── context.md                    ← (Conductor ext.) Expande config.yaml context: con arquitectura y team standards
+├── principles.md                 ← (Conductor ext., opcional) NON-NEGOTIABLE — solo humanos editan
+├── lessons-learned.md            ← (Conductor ext., opcional) Append-only entre cambios
+├── specs/                        ← OpenSpec standard — fuente de verdad (specs principales)
 │   └── {dominio}/
 │       └── spec.md
-└── changes/
+└── changes/                      ← OpenSpec standard
     ├── archive/
     │   └── YYYY-MM-DD-{nombre}/  ← Cambio completado (audit trail, nunca modificar)
-    │       ├── state.yaml
-    │       ├── proposal.md
-    │       ├── specs/
-    │       ├── design.md
-    │       ├── tasks.md
-    │       ├── verify-report.md
+    │       ├── state.yaml        ← (Conductor ext.)
+    │       ├── proposal.md       ← OpenSpec standard
+    │       ├── specs/            ← OpenSpec standard (delta specs)
+    │       ├── design.md         ← OpenSpec standard
+    │       ├── tasks.md          ← OpenSpec standard
+    │       ├── verify-report.md  ← (Conductor ext.)
     └── {nombre-del-cambio}/      ← Cambio activo
-        ├── state.yaml            ← (Conductor ext.) Estado del DAG (sobrevive compactación)
-        ├── exploration.md        ← (Conductor ext., opcional) de fase explore
-        ├── proposal.md
-        ├── specs/{dominio}/spec.md  ← Delta spec
-        ├── design.md
-        ├── tasks.md
-        └── verify-report.md
+        ├── state.yaml            ← (Conductor ext.) Estado del DAG
+        ├── exploration.md        ← (Conductor ext., opcional)
+        ├── proposal.md           ← OpenSpec standard
+        ├── specs/{dominio}/spec.md  ← OpenSpec standard (delta spec)
+        ├── design.md             ← OpenSpec standard
+        ├── tasks.md              ← OpenSpec standard
+        ├── questions.md          ← (Conductor ext., opcional)
+        └── verify-report.md      ← (Conductor ext.)
 ```
 
 ---
 
 ## config.yaml
 
-Generado por `/sdd-init`. Campos `schema` y `context` son estándar OpenSpec. Todo bajo `x-conductor` es extensión de Conductor.
+Generado por `/sdd-init`. Contiene campos OpenSpec estándar (`schema`, `context`, `rules`) y extensiones Conductor (`x-conductor`).
 
 ```yaml
-# OpenSpec standard fields
 schema: spec-driven
 
-context: |
-  Tech stack: Node.js 20, TypeScript, Express
+# --- OpenSpec standard ---
+context: |                                    # Inyectado en TODOS los prompts de artefactos
+  Tech stack: TypeScript 5.x, Express, Node 20
+  API style: RESTful
   Architecture: Clean Architecture
-  Testing: Vitest + Testing Library
+rules:                                        # Restricciones por artefacto (solo inyectadas en el artefacto correspondiente)
+  specs:
+    - Use Given/When/Then format
+  tasks:
+    - Size tasks for single-session completion
 
-# Conductor extensions
+# --- Conductor extensions ---
 x-conductor:
+  stack:
+    language: "typescript"
+    runtime: "node"
+    version: "20.x"
+    framework: "express"
+    package_manager: "npm"
+  monorepo: false
   strict_tdd: true
   testing:
     test_runner: { command: "npx vitest run", framework: vitest }
@@ -89,17 +96,18 @@ x-conductor:
       coverage_threshold: 80
 ```
 
+> **Nota**: `context:` (campo en config.yaml) es el estándar OpenSpec para inyección en prompts. `context.md` (archivo separado) es una extensión Conductor que expande esa info con arquitectura detallada, directorios y team standards.
+
 ---
 
-## state.yaml
+## state.yaml (Conductor extension)
 
-El mecanismo de recuperación del DAG. Cada agente actualiza su propia fase al completarla (el orquestador NO escribe state.yaml).
+No existe en OpenSpec estándar (OpenSpec trackea progreso via checkboxes en `tasks.md`). Conductor añade `state.yaml` como mecanismo de recuperación del DAG y phase gates. Cada agente actualiza su propia fase al completarla (el orquestador NO escribe state.yaml).
 
 ```yaml
 change: add-user-auth
 created: 2026-04-01T10:30:00Z
 updated: 2026-04-01T11:45:00Z
-mode: openspec
 current_phase: apply
 phases:
   explore: done
@@ -177,7 +185,7 @@ Cada agente es responsable de actualizar `state.yaml` para su fase. El orquestad
 ## Archivado
 
 Tras verify PASS, el orquestador sugiere automáticamente `/sdd-archive`. Al ejecutarlo:
-1. **Sync delta specs** → `openspec/specs/{domain}/spec.md` (apply order: RENAMED → REMOVED → MODIFIED → ADDED)
+1. **Sync delta specs** → `openspec/specs/{domain}/spec.md` (apply order: REMOVED → MODIFIED → ADDED; si existe sección RENAMED, se aplica primero)
 2. **Mover** `openspec/changes/{nombre}/` → `openspec/changes/archive/YYYY-MM-DD-{nombre}/`
 3. **Update context.md** — si `verify-report.md` contiene sugerencias de actualización
 4. El archive es audit trail — **nunca eliminar ni modificar**

@@ -31,9 +31,11 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
       │ explore      │  │ apply        │  │ verify       │
       │ propose      │  │ fix          │  │              │
       │ clarify      │  │              │  │              │
-      │ spec         │  │              │  │              │
-      │ design       │  │              │  │              │
-      │ tasks        │  │              │  │              │
+      │ spec         │  │  ┌─ parallel ─┐│              │
+      │ design       │  │  │ worktree A ││              │
+      │ tasks        │  │  │ worktree B ││              │
+      │              │  │  │ worktree N ││              │
+      │              │  │  └────────────┘│              │
       └──────────────┘  └──────────────┘  └──────────────┘
 ```
 
@@ -57,7 +59,7 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
 | **Artifact Locks** | Spec y design se bloquean tras completar tasks (previene spec-drift) |
 | **Lessons Learned** | Registro append-only de errores y soluciones entre sesiones |
 | **OpenSpec Compatible** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
-| **Parallel Agents** | Tareas `[P]` en tasks.md se ejecutan con múltiples agents simultáneos. Background agents para no bloquear |
+| **Parallel Apply** | Tareas `[P]` con archivos disjuntos → coders paralelos en worktrees aislados. Wave 1 (parallel [P]) → merge → Wave 2 (sequential [S] + reconciliación) |
 | **Spec Self-Validation** | Auto-verifica escenarios, no-impl-details y markers resueltos antes de avanzar |
 | **Visual Output** | Delegation boxes (`┌─ ... ─┐`), pipeline progress bar (`● ◉ ○ ⊘`), gate warnings — todo visible |
 | **Agent State Updates** | Cada agente actualiza state.yaml al completar su fase (no depende del orquestador) |
@@ -65,14 +67,13 @@ Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el
 | **Compaction Awareness** | Antes de que el contexto crezca, guarda estado en artefactos para recovery sin pérdida |
 | **Trivial Tracking** | Incluso cambios triviales/simples crean `state.yaml` mínimo para historial completo |
 | **Auto-Archive Suggest** | Tras verify PASS, sugiere automáticamente `/sdd-archive` para promover specs |
-| **Team Conventions** | `conventions` genera `conventions.md` compartido — contrato entre personas e IAs del equipo |
+| **Team Conventions** | `/conventions` actualiza `## Team Standards` en `context.md` — contrato entre personas e IAs del equipo |
 
 ### Contexto persistente (sin re-explorar en cada sesión)
 
 | Artefacto | Generado por | Lo lee |
 |-----------|-------------|--------|
-| `openspec/context.md` | sdd-init | Orquestador al iniciar sesión (+ copia a `.github/instructions/` si Copilot) |
-| `openspec/conventions.md` | conventions | Todos los agentes y plataformas. Contrato compartido del equipo (commit-ready) |
+| `openspec/context.md` | sdd-init + conventions | Orquestador al iniciar sesión. Incluye repo context + team standards |
 | `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
 
 ---
@@ -95,7 +96,7 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 | `/sdd-continue` | Continuar siguiente fase pendiente | 1 req |
 | `/sdd-status` | Mostrar progreso del cambio activo | 0 req |
 | `/sdd-archive` | Archivar cambio completado | 1 req |
-| `/conventions` | Generar/actualizar convenciones del equipo desde config files | 1 req |
+| `/conventions` | Generar/actualizar `## Team Standards` en `context.md` desde config files | 1 req |
 
 ---
 
@@ -151,7 +152,7 @@ cp -r Conductor/skills/                               tu-proyecto/.github/skills
 ```
 
 ### Dual (ambas plataformas)
-Combina los dos bloques. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos. `.github/instructions/` se genera automáticamente si Copilot está configurado.
+Combina los dos bloques. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos.
 
 ### Primer uso
 ```
@@ -172,7 +173,7 @@ ORQUESTADOR:
   → 1 agente, ~30s, 0 artefactos markdown
 ```
 
-### Cambio medium (pipeline condensado — 3 agents)
+### Cambio medium (pipeline condensado — 3+ agents)
 ```
 USUARIO: /sdd-ff add-animations "Añadir animaciones CSS al contenido"
 ORQUESTADOR:
@@ -181,11 +182,15 @@ ORQUESTADOR:
 
   ── FAST-FORWARD (sdd-planner, model: opus) ────────────────────
   UNA sola llamada produce: proposal.md + spec.md + design.md + tasks.md + state.yaml
-  El planner crea el directorio, lee codebase, genera todos los artefactos.
-  Orquestador NO crea dirs, NO escribe state, NO lee artefactos entre fases.
   → "Planning complete. ¿Continúo con apply?"
 
-  ── APPLY (sdd-coder, model: sonnet) ──────────────────────────
+  ── APPLY ──────────────────────────────────────────────────────
+  Evalúa tasks.md: 6 tareas [P] con archivos disjuntos → parallel apply
+  ┌─ PARALLEL ─┐
+  │ ◉ coder-A (worktree): tasks 1.1, 2.1 → component files
+  │ ◉ coder-B (worktree): tasks 2.2, 2.3 → styles + template
+  └────────────┘
+  Merge worktrees → coder sequential: tasks [S] 3.1 + reconciliación
   ── VERIFY (sdd-reviewer, model: sonnet) ──────────────────────
 ```
 

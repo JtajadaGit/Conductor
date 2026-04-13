@@ -100,16 +100,16 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 ## SDD Init Guard
 
-Before any SDD command (sdd-new, sdd-ff, sdd-continue), check if `openspec/config.yaml` exists. If NOT → suggest running `/sdd-init` first. Do NOT block — the user may intentionally use `none` mode.
+Before any SDD command (sdd-new, sdd-ff, sdd-continue), check if `openspec/config.yaml` exists. If NOT → suggest running `/sdd-init` first.
 
 ## Delegation Rules
 
 Every agent delegation includes:
-1. **Project Standards** — compact rules from conventions (auto-loaded or injected)
+1. **Project Standards** — compact rules from `openspec/context.md` `## Team Standards` (auto-loaded or injected)
 2. **Project Principles** — from `openspec/principles.md` if exists
 3. **Phase** — which SDD phase and its specific instructions
-4. **Context** — change name, artifact paths, persistence mode
-5. **Return Envelope** — structured result: status, summary, artifacts, next, risks
+4. **Context** — change name, affected domain(s), artifact_base_path, persistence mode
+5. **Return Envelope** — structured result: status, summary, artifacts, next, risks, skill_resolution
 
 Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.md files or the registry directly.
 
@@ -123,25 +123,30 @@ Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.
 - Running tests or builds → delegate
 - Reading files as prep for edits, then editing → delegate the whole thing
 
-**Parallelism** — ACTIVELY seek opportunities to run agents in parallel:
+**Parallelism** — exploit platform capabilities, keep the orchestrator thread clean:
 
 | Opportunity | How |
 |-------------|-----|
-| `[P]` tasks in apply | Split tasks.md into independent groups, launch multiple `sdd-coder` agents simultaneously |
-| Apply + non-blocking work | Run coder in background, prepare verify context in parallel |
-| Multiple independent changes | MAY run separate pipelines in parallel if touching different files |
-| Explore + context loading | Read context files while explore agent is running |
+| **[P] tasks in apply (parallel coders)** | If ≥4 `[P]` tasks with disjoint file sets → partition into groups by file ownership (from design.md File Changes table). Launch each group as a separate `sdd-coder` with `run_in_background: true` and `isolation: "worktree"`. Each coder receives `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]` — writes only code, does NOT update tasks.md or state.yaml. After all complete, launch one final sequential coder for any `[S]` tasks — this coder also reconciles tasks.md (`[x]` for all completed tasks) and updates state.yaml (`apply: done`). |
+| **Explore in background** | Launch explore with `run_in_background: true` while orchestrator prepares context for next phase. |
+| **Independent changes** | Separate pipelines in parallel if they touch different files and don't modify global files (config.yaml, lessons-learned.md). |
 
-**Rules**: NEVER parallel when one consumes artifacts the other produces. Before launching parallel coders, verify tasks touch different files. If file overlap detected → run sequentially. Use `┌─ PARALLEL ─┐` box to show running agents. Prefer background agents (`run_in_background`) so the user sees progress.
+**Rules**:
+- Planning phases (propose → spec → design → tasks): ALWAYS sequential — each consumes what the previous produces.
+- verify MUST wait for ALL apply work (parallel + sequential) to complete.
+- archive MUST wait for verify PASS.
+- Use `┌─ PARALLEL ─┐` box to show running background agents.
+- If <4 `[P]` tasks or overlapping files → single coder, no parallelism (overhead > benefit).
 
 ## Error Handling
 
 - `requires_human_input: true` → PAUSE, surface to user, wait for input
 - `status: blocked` → STOP, report blocker, suggest resolution path
-- `status: partial` → ask user: continue or retry?
-- Max 2 retries per phase before escalating to user
-- `consistency_block: true` → block apply, surface issues to user
-- `skill_resolution: none|fallback-*` in response → re-read `openspec/conventions.md` immediately (auto-correct context loss)
+- `status: partial` → PAUSE, show `last_completed_task`, ask user: (A) retry remaining, (B) abort. Do NOT auto-retry.
+- `verify: fail` → PAUSE, show verify-report.md. Offer: (A) fix and re-apply, (B) re-plan, (C) abort.
+- Max 2 retries per phase before escalating to user. Fix cycle hard limit: 5 iterations → hard stop.
+- `consistency_block: true` → block apply, surface issues. User must: (A) unlock spec/design and re-plan, (B) abort.
+- `skill_resolution: none` in response → re-read `openspec/context.md` `## Team Standards` immediately (auto-correct context loss)
 - After agent returns, validate `state.yaml` has required fields (change, current_phase, phases). If malformed → re-read artifacts and reconstruct.
 - Advanced recovery → read `agents/_shared/orchestrator-reference.md`
 
@@ -150,7 +155,7 @@ Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.
 When context is growing large (many tool calls, long conversation), proactively save state:
 1. Ensure `state.yaml` is up to date before any large delegation
 2. Key context (change name, current phase, decisions made) MUST be recoverable from `openspec/` artifacts alone
-3. After compaction: re-read `state.yaml`, `conventions.md`, `context.md`, `principles.md`
+3. After compaction: re-read `state.yaml`, `context.md` (includes Team Standards), `principles.md`
 
 ## Post-Pipeline Actions
 

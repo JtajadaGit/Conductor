@@ -1,6 +1,6 @@
 # SDD Protocol — Unified Reference for All Agents
 
-> Single source of truth for all SDD agent behavior. Replaces sdd-protocol.md + persistence-contract.md + openspec-convention.md + sdd-phase-common.md.
+> Single source of truth for all SDD agent behavior.
 
 ## Section Applicability
 
@@ -13,6 +13,8 @@
 | RFC 2119 Keywords | REQUIRED | SKIP | SKIP |
 | Lessons Learned | READ only | READ + WRITE | SKIP |
 | State.yaml Update | WRITE initial | WRITE apply phase | WRITE verify phase |
+| Phase Dependencies | REFERENCE | REFERENCE | REFERENCE |
+| Concurrency Safety | REFERENCE | REQUIRED | REQUIRED |
 
 ## Executor Boundary
 
@@ -20,61 +22,54 @@ You are an EXECUTOR, not an orchestrator. Execute the work yourself. NEVER launc
 
 **ALWAYS use relative paths** for shell commands (mkdir, bash). NEVER pass absolute paths to `mkdir -p`. Example: `mkdir -p openspec/changes/foo/`, NOT `mkdir -p C:\...\openspec\changes\foo\`.
 
+**Path normalization (Windows)**: When tool results return absolute paths with backslashes, convert to relative Unix-style paths before using in shell commands. Example: `C:\workspace\openspec\specs\` → `openspec/specs/`.
+
 **All artifacts** (proposal.md, spec.md, design.md, tasks.md, state.yaml, verify-report.md) MUST be written inside `openspec/changes/{change-name}/`. NEVER write SDD artifacts to project root.
 
 ## Skill Loading
 
 1. Check if `## Project Standards (auto-resolved)` was injected in your prompt → use it. Do NOT read SKILL.md files.
-2. Fallback: read `openspec/conventions.md` → apply compact rules matching file patterns (code context) and action type (task context).
-3. Fallback: proceed without project standards.
+2. Fallback: read `openspec/context.md` → find `## Team Standards` section → apply compact rules matching file patterns and action type.
+3. Fallback: proceed without project standards. MANDATORY: set `skill_resolution: none` in return envelope.
 
 Token budget: ~50-150 tokens per skill block. Max 5 blocks per delegation — prioritize code context matches.
 
 ## Persistence
 
-| Mode | Read from | Write to | Project files |
-|------|-----------|----------|---------------|
-| `openspec` (default) | Filesystem | Filesystem | Yes |
-| `none` | Orchestrator prompt | Nowhere | Never |
+All SDD artifacts persist to `openspec/` on the filesystem. This is required for DAG recovery, phase gates, `/sdd-continue`, and compaction resilience.
 
-### OpenSpec Structure (core)
+### OpenSpec Structure
 
 ```
 openspec/
-├── config.yaml                    ← OpenSpec standard
-├── context.md                     ← Repo context (Conductor, canonical)
-├── conventions.md                 ← Skills + rules (Conductor, canonical)
-├── specs/{domain}/spec.md         ← OpenSpec standard
-└── changes/
-    ├── archive/YYYY-MM-DD-{name}/ ← OpenSpec standard
+├── config.yaml                    ← OpenSpec standard (schema, context, rules) + Conductor extensions (x-conductor)
+├── context.md                     ← (Conductor ext.) Repo context + team standards — expands config.yaml context:
+├── principles.md                  ← (Conductor ext., optional) Human-authored, never AI-modified
+├── lessons-learned.md             ← (Conductor ext., optional) Append-only
+├── specs/{domain}/spec.md         ← Main specs (promoted by archive) — OpenSpec standard
+└── changes/                       ← OpenSpec standard
+    ├── archive/YYYY-MM-DD-{name}/ ← Completed changes (audit trail)
     └── {change-name}/
+        ├── state.yaml             ← (Conductor ext.) Phase gates, DAG recovery
         ├── proposal.md            ← OpenSpec standard
-        ├── specs/{domain}/spec.md ← OpenSpec standard (delta)
+        ├── specs/{domain}/spec.md ← Delta spec — OpenSpec standard
         ├── design.md              ← OpenSpec standard
-        └── tasks.md               ← OpenSpec standard
-```
-
-### Conductor Extensions (not part of OpenSpec)
-
-```
-openspec/
-├── principles.md          (optional, human-authored, never AI-modified)
-├── lessons-learned.md     (optional, append-only)
-└── changes/{change-name}/
-    ├── state.yaml         ← phase gates, DAG recovery
-    ├── exploration.md     ← optional, from explore phase
-    ├── questions.md       ← optional, from clarify phase
-    └── verify-report.md   ← from verify phase
+        ├── tasks.md               ← OpenSpec standard
+        ├── exploration.md         ← (Conductor ext., optional) From explore phase
+        ├── questions.md           ← (Conductor ext., optional) From clarify phase
+        └── verify-report.md       ← (Conductor ext.) From verify phase
 ```
 
 ## Artifact I/O
 
 - **Read**: direct filesystem access at `openspec/changes/{change-name}/{artifact}.md`
 - **Write**: create directory if not exists. READ before UPDATE (don't overwrite blindly).
-- **Delta specs**: ADDED/MODIFIED/REMOVED/RENAMED sections (when main spec exists). Apply order: RENAMED → REMOVED → MODIFIED → ADDED
-- **Full specs**: when domain is new (no existing main spec)
 - **Missing required artifact** → return `status: blocked` with `risks: 'Missing prerequisite: {artifact}'`
-- **Post-apply deviation**: If apply agent deviates from design.md (e.g., different API due to ecosystem constraint), it MUST append a `## Deviations` section to design.md documenting: what changed, why, and the accepted alternative. This keeps design.md as accurate source of truth.
+- **Missing optional artifact** → log warning, continue with empty defaults
+- **Malformed required file** → return `status: blocked` with parse error details
+- **Delta specs**: ADDED/MODIFIED/REMOVED sections (OpenSpec standard). Apply order: REMOVED → MODIFIED → ADDED. Optional Conductor extension: RENAMED section (applied first, before REMOVED).
+- **Full specs**: when domain is new (no existing main spec)
+- **Post-apply deviation**: If apply agent deviates from design.md, it MUST append a `## Deviations` section documenting: what changed, why, and the accepted alternative.
 
 ## Return Envelope
 
@@ -86,7 +81,53 @@ Every phase MUST return:
 - `next_recommended`: next SDD phase or "none"
 - `risks`: discovered risks or "None"
 - `requires_human_input`: `true` → orchestrator PAUSES
-- `skill_resolution`: `injected` | `fallback-registry` | `fallback-path` | `none`
+- `skill_resolution`: REQUIRED. Values: `injected` | `fallback-context` | `none`. If `none` → orchestrator re-reads context.md on next phase.
+
+## Phase Dependencies (DAG)
+
+```
+explore? → propose → clarify? → spec → design → tasks → apply ⟲ fix → verify → archive?
+```
+
+| Phase | Required prerequisites (MUST be `done`/`skipped`) |
+|-------|---------------------------------------------------|
+| explore | (none) |
+| propose | explore (if not skipped) |
+| clarify | propose |
+| spec | propose, clarify (if not skipped) |
+| design | spec |
+| tasks | spec, design |
+| apply | tasks |
+| verify | apply (MUST be `done`, not `in_progress`) |
+| archive | verify (MUST be `pass`) |
+
+**Enforcement**: Before starting ANY phase, verify prerequisites from this table. If any prerequisite is `pending` or `in_progress` → return `status: blocked, risks: 'Prerequisite {phase} not complete'`.
+
+## Concurrency Safety
+
+**Protected files** — serialized access only:
+- `openspec/changes/{change-name}/state.yaml` — only ONE agent writes at a time
+- `openspec/changes/{change-name}/tasks.md` — only the reconciliation coder marks [x]
+- `openspec/config.yaml` — global, NOT modifiable during apply
+- `openspec/lessons-learned.md` — serialize appends (one agent at a time)
+
+**Parallel [P] tasks** — safe with worktree isolation:
+- `[P]` markers indicate tasks with NO data dependency between them.
+- When ≥4 `[P]` tasks exist with disjoint file sets → orchestrator MAY dispatch parallel coders, each in its own worktree.
+- **Parallel coders** receive `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]`. They write ONLY code files. They do NOT update tasks.md or state.yaml.
+- After all parallel coders complete, the orchestrator launches ONE sequential coder for `[S]` tasks. This coder also reconciles tasks.md (marks all completed tasks `[x]`) and updates state.yaml (`apply: done`).
+- If <4 `[P]` tasks or files overlap → single coder handles everything (standard mode).
+
+**Phase sequencing**: apply → verify → archive MUST be strictly sequential. NEVER overlap phases that write to state.yaml.
+
+## Error Recovery
+
+| Condition | Recovery path |
+|-----------|---------------|
+| `apply: partial` | Read `last_completed_task` from state.yaml. Re-launch coder — it skips tasks marked `[x]`, resumes from first unchecked. Orchestrator MUST pause and ask user: (A) retry remaining, (B) abort. Do NOT auto-retry. |
+| `verify: fail` | Display verify-report.md to user. Options: (A) fix code and re-run apply (reset `apply: pending`), (B) review spec/design and re-plan, (C) abort. |
+| Fix cycle exhausted | After `post_hook_max_retries` exceeded → `status: partial`. After 5 fix iterations → hard stop. Orchestrator MUST pause. Do NOT auto-retry apply. |
+| `in_progress` phase (agent crash) | Orchestrator asks user: (A) retry (re-launch agent for same phase), (B) abort. If retry, agent reads state.yaml and resumes. |
 
 ## Size Budgets
 
@@ -103,6 +144,23 @@ Every phase MUST return:
 Note: spec budget is **per domain**, not total. A change touching 3 domains = up to 1950w of specs.
 
 Headers organize, not explain. Prefer tables and bullets over prose.
+
+## Spec Format (OpenSpec standard)
+
+```markdown
+# {domain} Specification
+## Purpose
+## Requirements
+### Requirement: {Name}
+{Description using MUST/SHALL/SHOULD/MAY per RFC 2119}
+#### Scenario: {Name}
+- **GIVEN** {precondition} (optional)
+- **WHEN** {action}
+- **THEN** {outcome}
+- **AND** {additional outcome}
+```
+
+Delta specs add section headers: `## ADDED Requirements`, `## MODIFIED Requirements`, `## REMOVED Requirements`.
 
 ## RFC 2119 Keywords
 
@@ -131,15 +189,14 @@ Format (MUST follow this structure):
 ```
 
 - Heading MUST use format `## YYYY-MM-DD: {change-name}` (not a description)
-- Subsections (`### Ecosystem Gotchas`, `### Design Insights`) are REQUIRED structure
 - Entries older than 6 months SHOULD be reviewed for staleness during `/sdd-init` re-init
 
 ## Context Updates
 
 After a successful verify phase, the reviewer SHOULD include a `## Suggested context.md Updates` section in verify-report.md when:
 - New "Known Fragile Areas" were discovered during apply/verify
-- Ecosystem constraints affect future changes (e.g., Zone.js fakeAsync limitations)
-- Architecture changed significantly (new components, changed entry points)
+- Ecosystem constraints affect future changes
+- Architecture changed significantly
 
 The orchestrator MAY apply these suggestions to `openspec/context.md` after archive.
 
@@ -149,7 +206,7 @@ The orchestrator MAY apply these suggestions to `openspec/context.md` after arch
 change: {change-name}
 created: {ISO-8601}
 updated: {ISO-8601}
-mode: openspec
+current_phase: {phase-name}
 phases:
   explore: pending | done | skipped
   propose: pending | done
@@ -160,8 +217,7 @@ phases:
   apply: pending | in_progress | done
   verify: pending | pass | fail
   archive: pending | done
-last_completed_task: ""  # Task ID or description of last completed task (for apply recovery)
-current_phase: {phase-name}
+last_completed_task: ""  # Task ID for apply recovery
 locks:
   spec: false
   design: false
@@ -173,24 +229,33 @@ ALL fields above are REQUIRED. Agents creating state.yaml MUST include every fie
 
 | When | Who updates | What |
 |------|-------------|------|
-| Planning complete (fast-forward or tasks done) | sdd-planner | All planning phases = `done`, `apply: pending`, locks set |
-| Apply complete | sdd-coder | `apply: done`, `current_phase: verify` |
+| Planning complete | sdd-planner | All planning phases = `done`, `apply: pending`, locks set |
+| Apply complete | sdd-coder | `apply: done`, `current_phase: verify`, `updated: {now}` |
+| Apply partial | sdd-coder | `apply: in_progress`, `last_completed_task: {id}`, `updated: {now}` |
 | Verify complete | sdd-reviewer | `verify: pass` or `fail`, `updated: {now}` |
 | Archive complete | orchestrator | `archive: done` |
 
-**In Auto mode**: planning agent writes initial state; apply and verify agents MUST still update their own phase. These updates are NOT optional bookkeeping — they are phase gates for `/sdd-continue` and DAG recovery.
+**In Auto mode**: each agent MUST update state.yaml for its own phase. These updates are phase gates for `/sdd-continue` and DAG recovery.
+
+**Atomic writes**: When updating state.yaml, modify ONLY your phase's fields. Read → modify target fields only → write. Do NOT reconstruct the entire file from memory.
 
 ## Config Reference
 
 ```yaml
-# openspec/config.yaml — OpenSpec-compliant fields
+# openspec/config.yaml
 schema: spec-driven
-context: |
-  Tech stack: {detected}
-  Architecture: {detected}
-  Testing: {detected}
 
-# Conductor extensions (x-conductor namespace)
+# --- OpenSpec standard fields ---
+context: |                    # Short context injected into ALL artifact prompts
+  Tech stack: ...
+  API style: ...
+rules:                        # Per-artifact constraints (injected only for matching artifact)
+  proposal: []
+  specs: []
+  design: []
+  tasks: []
+
+# --- Conductor extensions (x-conductor namespace) ---
 x-conductor:
   stack:
     language: ""        # e.g., "typescript", "python", "go"
@@ -217,3 +282,5 @@ x-conductor:
       build_command: ""
       coverage_threshold: 0
 ```
+
+> **OpenSpec vs Conductor**: `schema`, `context`, `rules` are OpenSpec standard fields. Everything under `x-conductor` is a Conductor extension. `context.md` (separate file) is also a Conductor extension — OpenSpec uses only the `context:` field for prompt injection.

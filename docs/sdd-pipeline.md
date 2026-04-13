@@ -146,7 +146,7 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 | `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |
 | `/sdd-status` | Muestra progreso (lee state.yaml) | 0 req |
 | `/sdd-archive` | Sync delta specs → main specs, mover a archive/ | 1 req |
-| `/conventions` | Genera/actualiza `openspec/conventions.md` | 1 req |
+| `/conventions` | Genera/actualiza `## Team Standards` en `openspec/context.md` | 1 req |
 
 ---
 
@@ -220,16 +220,41 @@ x-conductor:
 
 ## Paralelismo
 
-El orquestador busca activamente oportunidades de ejecución en paralelo:
+### Wave-based Apply (parallel coders)
+
+Cuando `tasks.md` tiene ≥4 tareas `[P]` con archivos target disjuntos, el orquestador ejecuta apply en waves:
+
+```
+Wave 1 (parallel):   [P] grupo A ──┐    [P] grupo B ──┐    [P] grupo C ──┐
+                     (worktree)    │    (worktree)    │    (worktree)    │
+                                   ▼                   ▼                   ▼
+Merge:               ─────────── merge branches secuencial ──────────────
+                                         │
+Wave 2 (sequential): ─── [S] tasks + reconciliación tasks.md + state.yaml
+```
+
+- **Claude Code**: `run_in_background: true` + `isolation: "worktree"` por coder
+- **Copilot CLI**: `/fleet` con wave-based DAG dispatch
+- Coders paralelos reciben `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]` — escriben SOLO código
+- El coder de Wave 2 reconcilia `tasks.md` (`[x]`) y `state.yaml` (`apply: done`)
+
+### Otras oportunidades
 
 | Oportunidad | Cómo |
 |-------------|------|
-| Tareas `[P]` en apply | Divide tasks.md en grupos independientes, lanza múltiples `sdd-coder` simultáneos |
-| Apply + trabajo no-bloqueante | Coder en background, prepara contexto de verify en paralelo |
+| Explore en background | Lanzar explore en background mientras se prepara contexto |
 | Cambios independientes | Pipelines separados en paralelo si tocan archivos distintos |
-| Explore + carga de contexto | Lee context files mientras el agente de exploración trabaja |
 
-**Regla**: NUNCA en paralelo cuando uno consume artefactos que el otro produce (ej: spec||design).
+### Cuándo NO paralelizar
+
+- <4 tareas `[P]` (overhead de worktree + merge > ahorro)
+- Archivos target se solapan entre grupos
+- Usuario eligió modo Interactive (quiere ver cada paso)
+
+**Reglas**:
+- Fases de planning (propose → spec → design → tasks): SIEMPRE secuenciales
+- verify espera a TODO el apply (parallel + sequential)
+- archive espera a verify PASS
 
 ---
 
@@ -238,7 +263,7 @@ El orquestador busca activamente oportunidades de ejecución en paralelo:
 Cuando el contexto crece largo, el orquestador guarda estado proactivamente:
 1. `state.yaml` actualizado antes de delegaciones grandes
 2. Decisiones clave (nombre del cambio, fase actual) recuperables desde artefactos en `openspec/`
-3. Tras compactación: relee `state.yaml`, `conventions.md`, `context.md`, `principles.md`
+3. Tras compactación: relee `state.yaml`, `context.md` (incluye team standards), `principles.md`
 
 ---
 
@@ -250,7 +275,6 @@ Incluso cambios triviales/simples (sin pipeline SDD) crean un `state.yaml` míni
 change: {name}
 created: {ISO-8601}
 updated: {ISO-8601}
-mode: openspec
 current_phase: done
 complexity: trivial|simple
 phases:
@@ -269,7 +293,7 @@ Esto permite que `/sdd-status` muestre historial de **todos** los cambios, no so
 | `status: blocked` | STOP, reportar blocker, sugerir path |
 | `status: partial` | Preguntar: continuar o reintentar |
 | `consistency_block: true` | Bloquear apply, mostrar issues |
-| `skill_resolution: none\|fallback-*` | Auto-releer `openspec/conventions.md` |
+| `skill_resolution: none\|fallback-*` | Auto-releer `## Team Standards` en `openspec/context.md` |
 | Max 2 retries | Escalar al usuario |
 
 ---

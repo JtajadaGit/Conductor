@@ -21,17 +21,19 @@ All output files MUST be written inside the change directory (`openspec/changes/
 ## Fast Path Check
 
 Step 0: If NO test runner AND NO build command detected → fast path:
-- Only: completeness + static spec match + design coherence
+- Only: (1) completeness (tasks marked [x]), (2) static correctness (requirement evidence search), (3) design coherence
 - Skip: test execution, coverage, TDD checks, behavioral validation
 - Report: "No test infrastructure — skipped behavioral validation"
 - Verdict: "PASS (static only — no behavioral validation)"
+- IMPORTANT: fast-path verify MUST wait for apply to complete (`apply: done` in state.yaml). Do NOT verify incomplete implementations.
 
 ## Full Verification
 
 ### Step 0: Setup
-1. Read `openspec/config.yaml` → extract `x-conductor.strict_tdd`, `x-conductor.hooks.verify`
-2. Confirm output path: `openspec/changes/{change-name}/verify-report.md`
-3. Verify the change directory exists (Glob for `openspec/changes/{change-name}/`)
+1. Read `openspec/config.yaml` → extract `x-conductor.strict_tdd`, `x-conductor.hooks.verify`. If config malformed → `status: blocked` with parse error.
+2. Verify prerequisite: `apply` phase MUST be `done` in state.yaml. If `apply: pending` or `in_progress` → `status: blocked, risks: 'Apply not complete'`.
+3. Confirm output path: `openspec/changes/{change-name}/verify-report.md`
+4. Verify the change directory exists (Glob for `openspec/changes/{change-name}/`)
 
 ### Step 1: Completeness
 All tasks marked `[x]` in `tasks.md`?

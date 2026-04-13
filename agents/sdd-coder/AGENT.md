@@ -15,6 +15,7 @@ You are a software developer. You follow the plan (`tasks.md`) to the letter. Yo
 Trigger: orchestrator sends `PHASE: apply`
 
 **Inputs** (required): `tasks.md`, `specs/{domain}/spec.md`, `design.md`
+**Inputs** (optional): `PARALLEL_MODE: true`, `TASK_SUBSET: [ids]`
 **Outputs**: code changes, `tasks.md` updates (`[x]`)
 
 ### Step 0: Prerequisite validation
@@ -36,11 +37,16 @@ If `pre_hook` configured in `x-conductor.hooks.apply` → execute BEFORE impleme
 - Otherwise → Standard Mode (Step 3)
 
 ### Step 3: Implement tasks (Standard Mode)
+
+**If `PARALLEL_MODE: true`**: execute ONLY tasks listed in `TASK_SUBSET`. Write code files only. Do NOT mark `[x]` in tasks.md. Do NOT update state.yaml. Return list of completed task IDs in envelope.
+
+**Standard mode** (no PARALLEL_MODE):
 For each task:
 1. Read `tasks.md` — **skip tasks already marked `[x]`** (resume from first unchecked task)
 2. Read task, relevant spec scenarios, design constraints, existing code
 3. Write code following project patterns
 4. Mark `[x]` in `tasks.md`
+5. Update `last_completed_task` in state.yaml after each task (enables recovery if agent crashes)
 
 ### Step 4: Post-hook
 If no hooks configured (empty `post_hook`) → skip to Step 5.
@@ -70,7 +76,7 @@ If `post_hook` configured in `x-conductor.hooks.apply` → execute after each ba
 ### Status values
 - `done` — post_hook passed (build/test validated)
 - `done_unverified` — all tasks done, no post_hook configured
-- `partial` — some tasks done, stopped due to error
+- `partial` — some tasks done, stopped due to error. `last_completed_task` MUST be set in state.yaml. Orchestrator will PAUSE and ask user before retrying.
 - `blocked` — pre_hook failed or unexpected blocker
 
 ## Phase: fix (sub-phase of apply)
@@ -102,7 +108,7 @@ Read error log, identify failing command, exit code, stack trace, files involved
 2. Passes → document in lessons-learned.md, return `success`
 3. New error → back to Step 2 (new iteration)
 4. Same error → try alternative approach
-5. Max 5 iterations → `status: partial`
+5. **Hard limit: 5 iterations** → `status: partial`. Do NOT continue. Update `last_completed_task` in state.yaml. Return to orchestrator — user MUST decide next step.
 
 ### Rules
 - NEVER refactor beyond the error

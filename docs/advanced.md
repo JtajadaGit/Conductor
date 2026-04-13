@@ -15,11 +15,14 @@
 | spec | 1 | standard | medio |
 | design | 1 | high-capability | alto |
 | tasks | 1 | standard | medio |
-| apply (por batch) | 1 | standard | medio |
+| apply (sequential) | 1 | standard | medio |
+| apply (parallel, por coder) | 1 per worktree | standard | medio × N coders |
+| apply (reconciliación) | 1 | standard | bajo |
 | verify | 1 | standard | medio |
 | archive | 1 | fast | bajo |
 
-Ciclo completo típico: **~11 premium requests** (feature mediana, 3 batches de apply).
+Ciclo completo típico: **~11 premium requests** (feature mediana, apply sequential).
+Con parallel apply (3 coders): **~13 requests** (+2 por coders adicionales, pero ~60% más rápido en wall-clock).
 
 ### Presupuestos de artefactos (impactan tokens downstream)
 
@@ -102,7 +105,7 @@ x-conductor:
 
 ### Sub-agentes ignoran convenciones tras compactación
 
-El orquestador se auto-recupera cuando detecta `skill_resolution: none|fallback-*` en la respuesta del sub-agente — relee `openspec/conventions.md` automáticamente. Si no ocurre: di "update skills" o "reload conventions".
+El orquestador se auto-recupera cuando detecta `skill_resolution: none|fallback-*` en la respuesta del sub-agente — relee la sección `## Team Standards` de `openspec/context.md` automáticamente. Si no ocurre: di "update skills" o "reload conventions".
 
 ### `state.yaml` tiene estado inconsistente
 
@@ -124,7 +127,7 @@ El modelo puede usar patrones de versiones antiguas. Soluciones:
 
 ## 4. Team Conventions (`/conventions`)
 
-En equipos multi-persona, `/conventions` genera `openspec/conventions.md` — un contrato compartido que todas las IAs (Claude, Copilot, Cursor) en todas las máquinas del equipo leen.
+En equipos multi-persona, `/conventions` actualiza la sección `## Team Standards` dentro de `openspec/context.md` — un contrato compartido que todas las IAs (Claude, Copilot, Cursor) en todas las máquinas del equipo leen.
 
 ### Qué escanea
 
@@ -139,17 +142,16 @@ En equipos multi-persona, `/conventions` genera `openspec/conventions.md` — un
 
 ### Resultado
 
+Actualiza `openspec/context.md` con las siguientes secciones:
+
 ```markdown
-# Project Conventions
-## Stack
 ## Team Standards
 ## Skills Available
 ## Compact Rules
 ## Project Config Files
 ```
 
-- **Commit-ready**: `conventions.md` se versiona y se revisa como cualquier otro artefacto del equipo
-- Si Copilot está configurado, también genera `.github/instructions/conventions.instructions.md`
+- **Commit-ready**: `context.md` se versiona y se revisa como cualquier otro artefacto del equipo
 - Al re-ejecutar, **merge** nuevos hallazgos con adiciones manuales existentes
 
 ---
@@ -160,11 +162,23 @@ En equipos multi-persona, `/conventions` genera `openspec/conventions.md` — un
 
 ```yaml
 # openspec/config.yaml — describir manualmente el monorepo
-context: |
-  Monorepo:
-  - packages/frontend: React 19, TypeScript, Vite
-  - packages/backend: Go 1.22, Chi router
-  - packages/shared: TypeScript, tipos compartidos
+x-conductor:
+  monorepo: true
+  stack:
+    # Stack principal o dominante
+    language: "typescript"
+    runtime: "node"
+    version: "20.x"
+    framework: "react"
+    package_manager: "npm"
+```
+
+```markdown
+<!-- openspec/context.md — describir stacks por paquete -->
+## Stack
+- **packages/frontend**: React 19, TypeScript, Vite
+- **packages/backend**: Go 1.22, Chi router
+- **packages/shared**: TypeScript, tipos compartidos
 ```
 
 Al crear cambios, ser explícito sobre el paquete objetivo:
