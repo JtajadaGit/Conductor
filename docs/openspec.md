@@ -67,6 +67,7 @@ Cada fichero OpenSpec tiene consumidores específicos. Esta tabla elimina ambig�
 
 | Sección | Quién lo lee | Cuándo | Para qué |
 |---------|-------------|--------|----------|
+| `## Stack` (1 línea) | **Todos** (inyectado por orquestador) | Cada delegación | Resumen autosuficiente — el agente no necesita leer config.yaml para saber el stack |
 | `## Architecture` | **Todos** (inyectado por orquestador) | Cada delegación | "No NgModules, usa app.config.ts" — evita que el coder invente |
 | `## Key Directories` | **Todos** (inyectado) | Cada delegación | Saber dónde buscar/crear ficheros |
 | `## Entry Points` | **Todos** (inyectado) | Cada delegación | Identificar ficheros críticos |
@@ -80,12 +81,13 @@ Cada fichero OpenSpec tiene consumidores específicos. Esta tabla elimina ambig�
 ```
 config.yaml context:       → resumen 1-línea para prompt injection (planner)
 config.yaml x-conductor:   → config ejecutable para coder/reviewer
-context.md:                → contenido EXCLUSIVO (arquitectura, dirs, entry points, formatting, spec patterns)
-                             NO repite stack (está en config.yaml)
+context.md ## Stack:       → 1 línea autosuficiente con detalle arquitectónico (inyectado a todos)
+context.md resto:          → contenido EXCLUSIVO (arquitectura, dirs, entry points, formatting, spec patterns)
                              NO repite runner/coverage commands (están en x-conductor.testing)
+                             NO repite hooks (están en x-conductor.hooks)
 ```
 
-> **Regla**: si un dato está en `config.yaml`, NO se repite en `context.md`. Si un dato es exclusivo de `context.md` (arquitectura, directorios, formatting rules), NO se pone en `config.yaml`.
+> **Regla de duplicación mínima**: `## Stack` en context.md es la ÚNICA duplicación permitida (1 línea, ~18 tokens) porque context.md debe ser autosuficiente. Todo lo demás: si está en `config.yaml`, NO se repite en `context.md`.
 
 ---
 
@@ -137,20 +139,23 @@ x-conductor:
       coverage_threshold: 80
 ```
 
-> **Nota**: `context:` (campo en config.yaml) es un resumen 1-línea estándar OpenSpec inyectado en prompts. `context.md` (archivo separado) es una extensión Conductor con contenido exclusivo: arquitectura, directorios, entry points y team standards (NO duplica stack).
+> **Nota**: `context:` (campo en config.yaml) es un resumen 1-línea estándar OpenSpec inyectado en prompts de artefactos. `context.md` (archivo separado) es una extensión Conductor que complementa con contenido que el coder/reviewer necesitan: arquitectura, directorios, entry points y team standards.
 
 ### Sincronización de Stack
 
-Los datos de stack aparecen en dos ubicaciones con propósitos distintos:
+Los datos de stack aparecen en tres formatos con propósitos distintos:
 
-| Ubicación | Propósito | Actualizado por |
-|-----------|-----------|-----------------|
-| `config.yaml` → `context:` | Resumen 1-línea inyectado en prompts (todos los artefactos) | `/sdd-init` (auto) |
-| `config.yaml` → `x-conductor.stack` | Fuente legible por máquina para la lógica del pipeline | `/sdd-init` (auto) |
+| Ubicación | Formato | Propósito | Actualizado por |
+|-----------|---------|-----------|-----------------|
+| `config.yaml` → `context:` | 1 línea | Inyección en prompts de artefactos (planner) | `/sdd-init` (auto) |
+| `config.yaml` → `x-conductor.stack` | YAML estructurado | Lógica del pipeline, auto-detección | `/sdd-init` (auto) |
+| `context.md` → `## Stack` | 1 línea con detalle arquitectónico | Contexto autosuficiente para agentes (inyectado por orquestador) | `/sdd-init` (auto) |
 
-`context.md` ya **NO** contiene `## Stack` — se eliminó para evitar duplicación. `context.md` se enfoca en contenido exclusivo: arquitectura, directorios clave, entry points, formatting/linting y spec patterns.
+**Por qué `## Stack` en context.md si ya está en config.yaml**: context.md debe ser **autosuficiente** — los agentes lo reciben inyectado y no deben necesitar leer otro fichero para entender el stack. Una cross-reference ("ver config.yaml") costaría más tokens (file read extra) que 1 línea de resumen (~18 tokens). La línea en context.md puede incluir detalle arquitectónico extra (p. ej., "no NgModules") que no está en el campo `context:`.
 
-**Regla de sincronización**: cuando el stack cambia (p. ej., bump de versión de framework), re-ejecuta `/sdd-init` — regenera `config.yaml` (`context:` como 1-línea y `x-conductor.stack`) preservando `rules:` personalizadas. `context.md` no requiere actualización de stack porque no lo contiene.
+**Regla de sincronización**: cuando el stack cambia, re-ejecuta `/sdd-init` — regenera las 3 ubicaciones preservando `rules:` personalizadas y secciones manuales de context.md.
+
+**Regla de no-duplicación**: más allá de la 1 línea de `## Stack`, context.md NO repite información de config.yaml. Testing commands, runner, coverage → están en `x-conductor.testing`. Hooks → están en `x-conductor.hooks`. context.md solo tiene lo EXCLUSIVO: arquitectura, directorios, entry points, formatting rules, spec patterns.
 
 ---
 
