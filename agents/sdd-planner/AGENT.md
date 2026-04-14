@@ -1,6 +1,6 @@
 ---
 name: sdd-planner
-description: Analyzes, plans, specifies and designs changes. Delegates to this agent for SDD phases: explore, propose, clarify, spec, design, tasks.
+description: "Analyzes, plans, specifies and designs changes. Delegates to this agent for SDD phases: explore, propose, clarify, spec, design, tasks."
 tools: Read, Grep, Glob, Write
 ---
 

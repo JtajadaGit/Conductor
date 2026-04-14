@@ -1,6 +1,6 @@
 ---
 name: sdd-reviewer
-description: Validates implementation against specs, runs tests and produces compliance report. Delegates to this agent for SDD phase: verify.
+description: "Validates implementation against specs, runs tests and produces compliance report. Delegates to this agent for SDD phase: verify."
 tools: Read, Grep, Glob, Bash, Write
 ---
 

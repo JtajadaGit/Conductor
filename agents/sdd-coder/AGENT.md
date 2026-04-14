@@ -1,6 +1,6 @@
 ---
 name: sdd-coder
-description: Implements code changes and fixes build/test failures. Delegates to this agent for SDD phases: apply, fix.
+description: "Implements code changes and fixes build/test failures. Delegates to this agent for SDD phases: apply, fix."
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
