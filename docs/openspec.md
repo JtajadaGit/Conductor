@@ -98,6 +98,18 @@ x-conductor:
 
 > **Nota**: `context:` (campo en config.yaml) es el estándar OpenSpec para inyección en prompts. `context.md` (archivo separado) es una extensión Conductor que expande esa info con arquitectura detallada, directorios y team standards.
 
+### Stack Information Sync
+
+Stack data appears in three locations with distinct purposes:
+
+| Location | Purpose | Updated by |
+|----------|---------|------------|
+| `config.yaml` → `context:` | Short prompt injection (all artifacts) | `/sdd-init` (auto) |
+| `config.yaml` → `x-conductor.stack` | Machine-readable for pipeline logic | `/sdd-init` (auto) |
+| `context.md` → `## Stack` | Human-readable repo context for agents | `/sdd-init` (auto), manual edit |
+
+**Sync rule**: when stack changes (e.g., framework version bump), re-run `/sdd-init` — it regenerates both `config.yaml` fields and the `context.md` `## Stack` section while preserving custom `rules:` and `## Team Standards`. Manual edits to `context.md` `## Stack` are valid but will be overwritten on next `/sdd-init` run.
+
 ---
 
 ## state.yaml (Conductor extension)

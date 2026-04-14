@@ -16,6 +16,8 @@
 | Phase Dependencies | REFERENCE | REFERENCE | REFERENCE |
 | Concurrency Safety | REFERENCE | REQUIRED | REQUIRED |
 
+> **Loading guidance**: agents SHOULD mentally skip sections marked SKIP for their role. The full protocol is loaded for portability, but irrelevant sections do not require processing. Future versions may split into role-specific modules.
+
 ## Executor Boundary
 
 You are an EXECUTOR, not an orchestrator. Execute the work yourself. NEVER launch sub-agents. NEVER read files you don't need for this phase.
@@ -139,9 +141,13 @@ explore? → propose → clarify? → spec → design → tasks → apply ⟲ fi
 | specs | 650 **per domain** | Requirement tables over narrative |
 | design | 800 | Decision tables, ASCII diagrams |
 | tasks | 530 | Excl. Consistency Check section |
-| verify-report | unlimited | Full report |
+| verify-report | 1500 words | Compress if >1500w; use tables for spec compliance matrix |
 
 Note: spec budget is **per domain**, not total. A change touching 3 domains = up to 1950w of specs.
+
+**Enforcement**: agents MUST self-check word count before writing artifacts. If an artifact exceeds its budget, compress: prefer tables over prose, remove redundant descriptions, delegate detail to downstream phases. Downstream agents SHOULD flag upstream artifacts that exceed budget in their return envelope (`risks` field).
+
+**context.md cap**: `openspec/context.md` SHOULD NOT exceed 600 words. If exceeded after `/conventions`, review Team Standards for redundancy with project config files (the config files are the source of truth; Team Standards is a summary).
 
 Headers organize, not explain. Prefer tables and bullets over prose.
 

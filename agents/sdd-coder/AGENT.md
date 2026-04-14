@@ -24,6 +24,9 @@ Verify `tasks.md`, `spec.md`, and `design.md` exist and are non-empty. If any mi
 ### Step 0.1: Read lessons-learned
 If `openspec/lessons-learned.md` exists, read it to avoid known errors.
 
+### Step 0.2: Context fallback
+If `## Project Standards (auto-resolved)` was NOT injected in your prompt, read `openspec/context.md` → extract `## Team Standards` section and apply as project standards. If file missing or section absent → set `skill_resolution: none` in return envelope.
+
 ### Step 1: Pre-hook
 > Steps 1 and 4 ONLY apply when hooks are configured in `x-conductor.hooks.apply`. If `pre_hook` and `post_hook` are empty strings → skip directly to Step 2.
 

@@ -166,4 +166,12 @@ Desde ahí:
 
 ---
 
-→ [Pipeline SDD completo](./sdd-pipeline.md) | [OpenSpec y persistencia](./openspec.md)
+### Referencias oficiales
+- **Claude Code**: https://docs.anthropic.com/en/docs/claude-code
+- **GitHub Copilot**: https://docs.github.com/en/copilot
+- **OpenSpec estándar**: https://openspec.dev/
+- **RFC 2119** (keywords): https://www.rfc-editor.org/rfc/rfc2119
+
+---
+
+→ [Conductor 101](./conductor-101.md) | [Pipeline SDD completo](./sdd-pipeline.md) | [OpenSpec y persistencia](./openspec.md)

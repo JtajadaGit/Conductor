@@ -46,6 +46,8 @@ On first SDD invocation per session, ask the user:
 
 Cache the choice for the session. Default to **Interactive** if user doesn't answer.
 
+> **Clarify in condensed mode**: when using fast-forward (`/sdd-ff`), clarify is internal to the planner — questions are resolved by the planner autonomously. Only if the planner sets `requires_human_input: true` will execution pause for user input. In full pipeline (decomposed), clarify is a separate phase that always pauses if questions exist.
+
 ## SDD Pipeline
 
 ```
@@ -64,7 +66,7 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 ### Skip rules
 - **Skip explore**: input >100w with scope + approach + constraints → skip. Input <30w or vague → execute.
-- **Skip clarify**: 0 questions → auto-proceed. In condensed mode, clarify is internal to the planner.
+- **Skip clarify**: 0 questions → auto-proceed. In condensed mode (`/sdd-ff`), clarify is internal to the planner and does not surface to user unless `requires_human_input: true`. Max 2 clarify rounds before the planner forces a decision.
 - **Spec-first**: spec ALWAYS before design. NO parallel spec||design.
 - **Verify fast-path**: no test/build infrastructure → static checks only.
 - **Archive gate**: verify PASS only. Never with CRITICAL issues.

@@ -238,6 +238,21 @@ Wave 2 (sequential): ─── [S] tasks + reconciliación tasks.md + state.yaml
 - Coders paralelos reciben `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]` — escriben SOLO código
 - El coder de Wave 2 reconcilia `tasks.md` (`[x]`) y `state.yaml` (`apply: done`)
 
+### Worktree Lifecycle
+
+| Paso | Responsable | Acción |
+|------|-------------|--------|
+| Creación | Orquestador | `isolation: "worktree"` en la delegación del coder → la plataforma crea worktree automáticamente |
+| Ejecución | sdd-coder | Implementa `TASK_SUBSET` en el worktree aislado; escribe solo ficheros de código |
+| Merge | Orquestador | Merge secuencial de branches de worktree a la rama principal |
+| Conflictos | Orquestador | Si merge conflict → PAUSA, escalar al usuario |
+| Cleanup | Plataforma | Worktrees se limpian automáticamente tras merge exitoso o si el agente no hizo cambios |
+| Error | Orquestador | Si coder falla → worktree se preserva para diagnóstico; usuario decide: reintentar o descartar |
+
+**Límites**: máximo recomendado de **4 coders paralelos** por wave. Más allá, el overhead de merge y el coste de tokens superan el beneficio de velocidad.
+
+**Pre-validación**: antes de lanzar Wave 1, el orquestador DEBE verificar que los `[P]` tasks tienen file sets disjuntos (cruzando con la tabla File Changes de `design.md`). Si hay solapamiento → degradar a ejecución secuencial.
+
 ### Otras oportunidades
 
 | Oportunidad | Cómo |

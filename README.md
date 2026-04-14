@@ -1,14 +1,16 @@
 # Conductor
 
-**Framework SDD compacto, agnóstico de stack, multi-platform (Claude Code · GitHub Copilot · Cursor · Gemini CLI)**
+**Framework SDD compacto, agnóstico de stack, multi-platform (Claude Code · GitHub Copilot)**
 
 ---
 
 ## ¿Qué es Conductor?
 
-Un orquestador que convierte agentes IA en equipos de ingeniería estructurados. Un **orquestador central** delega trabajo a **3 agentes especializados** con contexto fresco y convenciones del proyecto inyectadas automáticamente.
+Cuando pides a una IA que implemente un cambio complejo, suele generar código sin planificar, sin verificar y sin documentar. Conductor cambia eso: un **orquestador central** delega trabajo a **3 agentes especializados** (planificador, implementador, verificador) con contexto fresco y convenciones del proyecto inyectadas automáticamente.
 
-Conductor usa **Spec-Driven Development (SDD)**: las especificaciones dirigen el diseño, el diseño dirige la implementación. Compatible con [OpenSpec](https://openspec.dev/) — los artefactos base (`specs/`, `changes/`, `config.yaml`) siguen la convención estándar; Conductor extiende con phase gates, artifact locks y sub-agent context injection bajo el namespace `x-conductor`.
+Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación ANTES del código, para que el diseño sea testable y el resultado auditable: las especificaciones dirigen el diseño, el diseño dirige la implementación. Compatible con [OpenSpec](https://openspec.dev/) — ver también [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) y [GitHub Copilot docs](https://docs.github.com/en/copilot) — los artefactos base (`specs/`, `changes/`, `config.yaml`) siguen la convención estándar; Conductor extiende con phase gates, artifact locks y sub-agent context injection bajo el namespace `x-conductor`.
+
+> **¿Nuevo en Conductor?** Empieza por [Conductor 101](docs/conductor-101.md) — en 15 minutos entenderás el flujo completo.
 
 ---
 
@@ -208,6 +210,7 @@ ORQUESTADOR:
 
 ## Documentación
 
+- [Conductor 101](docs/conductor-101.md) — Tus primeros 15 minutos (empieza aquí)
 - [Quick Start](docs/quick-start.md) — Instalación y primer uso
 - [Pipeline SDD](docs/sdd-pipeline.md) — Fases, TDD, hooks
 - [OpenSpec](docs/openspec.md) — Persistencia, artefactos, recuperación

@@ -4,36 +4,23 @@
 
 ## 1. Consumo de Tokens
 
-### Costo por fase
+El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proyecto y estrategia de apply.
 
-| Fase | Requests | Model tier | Costo relativo |
-|------|----------|------------|----------------|
-| init | 1 | fast | bajo |
-| explore | 1 | standard | medio |
-| propose | 1 | high-capability | alto |
-| clarify | 0-1 | standard | medio (0 si auto-skip) |
-| spec | 1 | standard | medio |
-| design | 1 | high-capability | alto |
-| tasks | 1 | standard | medio |
-| apply (sequential) | 1 | standard | medio |
-| apply (parallel, por coder) | 1 per worktree | standard | medio × N coders |
-| apply (reconciliación) | 1 | standard | bajo |
-| verify | 1 | standard | medio |
-| archive | 1 | fast | bajo |
+### Factores de coste
+| Factor | Impacto |
+|--------|---------|
+| Complejidad del cambio | Más dominios → más specs → más tokens |
+| `strict_tdd: true` | Carga addons adicionales (estimado ~400 tokens/agente) |
+| Parallel apply (N coders) | N × prompt del sistema (estimado ~4.000 tokens/coder) |
+| Tamaño de `context.md` | Se inyecta en cada delegación |
+| verify-report extenso | Budget 1500w; comprimir si excede |
 
-Ciclo completo típico: **~11 premium requests** (feature mediana, apply sequential).
-Con parallel apply (3 coders): **~13 requests** (+2 por coders adicionales, pero ~60% más rápido en wall-clock).
+### Optimización
+- **Specs compactos**: usa tablas sobre prosa. Un spec de 600 palabras vs 2.000 reduce la carga acumulada en fases downstream (design, tasks, apply, verify).
+- **Parallel apply**: más rápido en wall-clock pero multiplica el coste del prompt del sistema por cada coder. Evalúa si el speedup justifica el coste extra.
+- **context.md**: mantener por debajo de 600 palabras (cap recomendado). `/conventions` genera un resumen; los config files son la fuente de verdad.
 
-### Presupuestos de artefactos (impactan tokens downstream)
-
-| Artefacto | Límite | Por qué importa |
-|-----------|--------|-----------------|
-| proposal.md | <400 pal | Leído por spec, design, tasks |
-| spec.md | <650 pal | Leído por design, tasks, apply, verify |
-| design.md | <800 pal | Leído por tasks, apply |
-| tasks.md | <530 pal | Leído por apply, verify |
-
-Un spec de 2.000 pal vs 600 pal ahorra ~9.500 tokens acumulados a lo largo del pipeline.
+> **Nota**: el consumo exacto depende de tu proveedor (Anthropic API → tokens, GitHub Copilot → premium requests). Consulta la documentación oficial de tu plataforma para costes actualizados.
 
 ### Estrategias de optimización
 
@@ -127,7 +114,7 @@ El modelo puede usar patrones de versiones antiguas. Soluciones:
 
 ## 4. Team Conventions (`/conventions`)
 
-En equipos multi-persona, `/conventions` actualiza la sección `## Team Standards` dentro de `openspec/context.md` — un contrato compartido que todas las IAs (Claude, Copilot, Cursor) en todas las máquinas del equipo leen.
+En equipos multi-persona, `/conventions` actualiza la sección `## Team Standards` dentro de `openspec/context.md` — un contrato compartido que todas las IAs (Claude, Copilot) en todas las máquinas del equipo leen.
 
 ### Qué escanea
 
@@ -230,5 +217,14 @@ En pipeline condensado (`PHASE: fast-forward`), el planner las genera secuencial
 El consistency check en tasks verifica documentos entre sí, no contra la realidad. Puede pasar cuando una dependencia no existe o una API cambió. Los `pre_hook`/`post_hook` en apply capturan los problemas reales que el consistency check no detecta.
 
 ---
+
+---
+
+## Referencias
+
+- [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code)
+- [GitHub Copilot docs](https://docs.github.com/en/copilot)
+- [OpenSpec](https://openspec.dev/)
+- [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
 
 → [Quick Start](./quick-start.md) | [Pipeline SDD](./sdd-pipeline.md) | [OpenSpec](./openspec.md)

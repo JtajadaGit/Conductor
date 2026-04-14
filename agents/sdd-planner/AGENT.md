@@ -27,8 +27,9 @@ Execute ALL planning phases in sequence within this single context:
 
 ### FF-2: Propose
 1. Read existing main specs if they exist
-2. Analyze request → create `proposal.md` (400w max)
+2. Analyze request → create `proposal.md`
 3. Include: Why (intent + motivation), What Changes (scope in/out), Capabilities (new + modified capability names in kebab-case — drives spec generation), Approach, Impact (affected areas, risks, rollback), Success Criteria
+4. Budget per sdd-protocol.md § Size Budgets
 
 ### FF-3: Clarify (internal)
 1. Analyze proposal for ambiguities across 5 categories
@@ -37,24 +38,24 @@ Execute ALL planning phases in sequence within this single context:
 
 ### FF-4: Spec
 1. Identify affected domains (capabilities) from proposal's Capabilities section
-2. Delta spec (existing domain): ADDED/MODIFIED/REMOVED sections. Full spec (new domain): complete requirements.
-3. OpenSpec heading format: `# {domain} Specification`, `### Requirement: {Name}`, `#### Scenario: {Name}`. GIVEN/WHEN/THEN scenarios, RFC 2119 keywords.
+2. Delta spec (existing domain): delta spec format per sdd-protocol.md § Artifact I/O. Full spec (new domain): complete requirements.
+3. Follow OpenSpec heading format per sdd-protocol.md § Spec Format. GIVEN/WHEN/THEN scenarios, RFC 2119 keywords.
 4. Self-validate: scenarios exist, no impl details, no unresolved markers
-5. Output: **MUST** be `specs/{domain}/spec.md` inside the change directory (e.g., `openspec/changes/{change-name}/specs/app/spec.md`). NEVER write as flat `spec.md` — the archive step needs domain subdirectories to promote specs to `openspec/specs/`. (650w max)
+5. Output: **MUST** be `specs/{domain}/spec.md` inside the change directory (e.g., `openspec/changes/{change-name}/specs/app/spec.md`). NEVER write as flat `spec.md` — the archive step needs domain subdirectories to promote specs to `openspec/specs/`. Budget per sdd-protocol.md § Size Budgets.
 
 ### FF-5: Design
 1. **Read codebase** — actual files, not guesses
 2. Architecture decisions with rationale table
 3. File Changes table (exact paths)
 4. Testing Strategy
-5. Output: `design.md` (800w max)
+5. Output: `design.md`. Budget per sdd-protocol.md § Size Budgets.
 
 ### FF-6: Tasks
 1. Break design into numbered tasks by phase
 2. Tag independent tasks with `[P]`
 3. Consistency Check (4 checks: coverage, alignment, contradictions, completeness)
 4. If CRITICAL inconsistency → `consistency_block: true`
-5. Output: `tasks.md` (530w max)
+5. Output: `tasks.md`. Budget per sdd-protocol.md § Size Budgets.
 
 ### FF-7: Finalize
 1. Write `state.yaml` with ALL required fields — use this exact template:
@@ -95,7 +96,7 @@ Trigger: orchestrator sends `PHASE: explore`
 3. Analyze 2+ approaches with pros/cons/effort table
 4. Output: `exploration.md` (if change name provided) or inline
 5. Skip condition: orchestrator decides (user gave scope + approach + constraints)
-6. Budget: 400 words max
+6. Budget per sdd-protocol.md § Size Budgets
 
 ## Phase: propose
 
@@ -113,7 +114,7 @@ Trigger: orchestrator sends `PHASE: propose`
    - **Impact**: table (Area | Impact | Description), risks, rollback plan
    - **Success Criteria**: measurable outcomes
 3. `requires_human_input: true` if assumptions unverifiable from code
-4. Budget: 400 words max
+4. Budget per sdd-protocol.md § Size Budgets
 
 ## Phase: clarify
 
@@ -129,7 +130,7 @@ Trigger: orchestrator sends `PHASE: clarify`
 5. Output: `questions.md` (only if > 0 questions)
 6. If 0 questions → `status: success`, `questions_count: 0`
 7. **GATE**: if questions > 0 → `requires_human_input: true`
-8. Budget: 300 words max
+8. Budget per sdd-protocol.md § Size Budgets
 
 ## Phase: spec
 
@@ -142,12 +143,12 @@ Trigger: orchestrator sends `PHASE: spec`
 1. Input: `proposal.md` + `questions.md` (if exists)
 2. Identify affected domains (capabilities) from proposal's Capabilities section
 3. Read existing main specs if they exist (`openspec/specs/{domain}/spec.md`)
-4. **Delta spec** (main spec exists): ADDED, MODIFIED, REMOVED sections (OpenSpec standard). Optional: RENAMED (Conductor extension).
+4. **Delta spec** (main spec exists): delta spec format per sdd-protocol.md § Artifact I/O. Optional: RENAMED (Conductor extension).
 5. **Full spec** (new domain): complete requirements
-6. Format: OpenSpec heading structure — `# {domain} Specification`, `## Purpose`, `## Requirements`, `### Requirement: {Name}`, `#### Scenario: {Name}`. Use GIVEN/WHEN/THEN for scenarios, RFC 2119 keywords (MUST/SHALL/SHOULD/MAY) for requirement strength.
+6. Follow OpenSpec heading format per sdd-protocol.md § Spec Format. Use GIVEN/WHEN/THEN for scenarios, RFC 2119 keywords (MUST/SHALL/SHOULD/MAY) for requirement strength.
 7. Each requirement: ≥1 scenario, happy path + edge case, testable
 8. Output: `specs/{domain}/spec.md`
-9. Budget: 650 words max
+9. Budget per sdd-protocol.md § Size Budgets
 10. **NO implementation details** — what, not how
 11. **Ambiguity markers**: if a requirement cannot be fully specified from available context, mark it `[NEEDS CLARIFICATION: reason]` inline. Max 5 markers. Priority: Scope > Behavior > Data > Integration > Constraints. If any markers exist → `requires_human_input: true`. Max 2 resolution iterations before forcing a decision.
 12. **Spec self-validation** (before returning): verify (a) every requirement has ≥1 GIVEN/WHEN/THEN scenario, (b) no implementation details leaked, (c) no unresolved `[NEEDS CLARIFICATION]` without `requires_human_input: true`.
@@ -177,7 +178,7 @@ Trigger: orchestrator sends `PHASE: design`
 5. Every decision MUST have rationale (the "why")
 6. Use project's ACTUAL patterns, not generic best practices
 7. Output: `design.md`
-8. Budget: 800 words max
+8. Budget per sdd-protocol.md § Size Budgets
 
 ## Phase: tasks
 
@@ -204,4 +205,4 @@ Trigger: orchestrator sends `PHASE: tasks`
    - Completeness: all file changes from design covered
 7. If CRITICAL inconsistency → `consistency_block: true` in envelope
 8. Output: `tasks.md`
-9. Budget: 530 words max (excl. Consistency Check)
+9. Budget per sdd-protocol.md § Size Budgets (excl. Consistency Check)

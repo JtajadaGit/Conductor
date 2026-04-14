@@ -31,9 +31,10 @@ Step 0: If NO test runner AND NO build command detected → fast path:
 
 ### Step 0: Setup
 1. Read `openspec/config.yaml` → extract `x-conductor.strict_tdd`, `x-conductor.hooks.verify`. If config malformed → `status: blocked` with parse error.
-2. Verify prerequisite: `apply` phase MUST be `done` in state.yaml. If `apply: pending` or `in_progress` → `status: blocked, risks: 'Apply not complete'`.
-3. Confirm output path: `openspec/changes/{change-name}/verify-report.md`
-4. Verify the change directory exists (Glob for `openspec/changes/{change-name}/`)
+2. **Context fallback**: if `## Project Standards (auto-resolved)` was NOT injected in your prompt, read `openspec/context.md` → extract `## Team Standards` section. If missing → set `skill_resolution: none` in return envelope.
+3. Verify prerequisite: `apply` phase MUST be `done` in state.yaml. If `apply: pending` or `in_progress` → `status: blocked, risks: 'Apply not complete'`.
+4. Confirm output path: `openspec/changes/{change-name}/verify-report.md`
+5. Verify the change directory exists (Glob for `openspec/changes/{change-name}/`)
 
 ### Step 1: Completeness
 All tasks marked `[x]` in `tasks.md`?
@@ -56,7 +57,7 @@ For each design decision:
 - If accepted deviation found (coder changed approach due to constraint) → SUGGESTION: "update design.md with deviation" and document it in report
 
 ### Step 4: TDD compliance
-1. Check `x-conductor.strict_tdd` from config.yaml (read in Step 0)
+1. Check `x-conductor.strict_tdd` (from Step 0 config read)
 2. If `strict_tdd: true` AND test runner available → MUST load and follow `agents/sdd-reviewer/strict-tdd-verify.md`
 3. If `strict_tdd: false` or not set → skip, note "strict_tdd not enabled"
 4. CRITICAL if this step is skipped when `strict_tdd: true` — it is MANDATORY
