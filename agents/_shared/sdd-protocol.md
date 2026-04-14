@@ -45,7 +45,7 @@ All SDD artifacts persist to `openspec/` on the filesystem. This is required for
 ```
 openspec/
 ├── config.yaml                    ← OpenSpec standard (schema, context, rules) + Conductor extensions (x-conductor)
-├── context.md                     ← (Conductor ext.) Repo context + team standards — expands config.yaml context:
+├── context.md                     ← (Conductor ext.) Contenido exclusivo: arquitectura, dirs, entry points, team standards (NO duplica stack ni testing commands de config.yaml)
 ├── principles.md                  ← (Conductor ext., optional) Human-authored, never AI-modified
 ├── lessons-learned.md             ← (Conductor ext., optional) Append-only
 ├── specs/{domain}/spec.md         ← Main specs (promoted by archive) — OpenSpec standard
@@ -289,4 +289,4 @@ x-conductor:
       coverage_threshold: 0
 ```
 
-> **OpenSpec vs Conductor**: `schema`, `context`, `rules` are OpenSpec standard fields. Everything under `x-conductor` is a Conductor extension. `context.md` (separate file) is also a Conductor extension — OpenSpec uses only the `context:` field for prompt injection.
+> **OpenSpec vs Conductor**: `schema`, `context`, `rules` are OpenSpec standard fields. Everything under `x-conductor` is a Conductor extension. `context.md` (separate file) is also a Conductor extension with contenido exclusivo (arquitectura, dirs, entry points, team standards) — NO duplica stack ni testing commands de config.yaml. OpenSpec uses only the `context:` field (1-line summary) for prompt injection.

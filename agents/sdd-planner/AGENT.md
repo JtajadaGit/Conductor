@@ -22,7 +22,7 @@ Execute ALL planning phases in sequence within this single context:
 
 ### FF-1: Setup
 1. Create `openspec/changes/{change-name}/` directory (relative path!)
-2. Read `openspec/context.md` for repo context
+2. `openspec/context.md` is injected by the orchestrator — do not re-read. If injection missing, use fallback per sdd-protocol.md § Skill Loading.
 3. Read `openspec/principles.md` and `openspec/lessons-learned.md` if they exist
 
 ### FF-2: Propose

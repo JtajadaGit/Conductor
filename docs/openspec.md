@@ -45,6 +45,50 @@ openspec/
 
 ---
 
+## Quién usa qué — Mapa de consumo
+
+Cada fichero OpenSpec tiene consumidores específicos. Esta tabla elimina ambigüedad sobre qué lee cada actor y para qué.
+
+### config.yaml
+
+| Campo | Quién lo lee | Cuándo | Para qué |
+|-------|-------------|--------|----------|
+| `context:` (1 línea) | **sdd-planner** | Cada fase de planificación | Se inyecta en prompts de artefactos — el planner sabe "Angular 20 standalone" al escribir specs |
+| `rules:` | **sdd-planner** | spec, tasks | Restricciones por artefacto (p. ej., "Use Given/When/Then") |
+| `x-conductor.strict_tdd` | **sdd-coder** (Step 2) | Inicio de apply | Decide si carga addon TDD (RED→GREEN→REFACTOR) |
+| `x-conductor.strict_tdd` | **sdd-reviewer** (Step 0) | Inicio de verify | Decide si carga addon de auditoría TDD |
+| `x-conductor.hooks.apply` | **sdd-coder** (Steps 1, 4) | Pre/post implementación | Qué comandos ejecutar (`ng build`) y cómo manejar fallos |
+| `x-conductor.hooks.verify` | **sdd-reviewer** (Steps 5, 6) | Verificación | Qué test/build commands ejecutar |
+| `x-conductor.testing` | **sdd-coder** (TDD) | Ciclo TDD | Qué test runner usar, qué framework |
+| `x-conductor.testing` | **sdd-reviewer** | Coverage check | Umbral de cobertura, comando de coverage |
+| `x-conductor.stack` | **`/sdd-init`**, **`/conventions`** | Re-init, scan | Metadata estructurada para auto-detección |
+
+### context.md
+
+| Sección | Quién lo lee | Cuándo | Para qué |
+|---------|-------------|--------|----------|
+| `## Architecture` | **Todos** (inyectado por orquestador) | Cada delegación | "No NgModules, usa app.config.ts" — evita que el coder invente |
+| `## Key Directories` | **Todos** (inyectado) | Cada delegación | Saber dónde buscar/crear ficheros |
+| `## Entry Points` | **Todos** (inyectado) | Cada delegación | Identificar ficheros críticos |
+| `## Known Fragile Areas` | **Todos** (inyectado) | Cada delegación | Alerta de zonas de riesgo |
+| `## Team Standards → Formatting` | **sdd-coder** | Apply | "2 spaces, single quotes, Prettier" — formatear bien |
+| `## Team Standards → Testing` | **sdd-coder** | Apply | "*.spec.ts alongside source" — poner tests donde toca |
+| `## Team Standards → Project Config` | **sdd-coder**, **sdd-reviewer** | Apply, verify | Qué config files existen y qué controlan |
+
+### Principio de no-duplicación
+
+```
+config.yaml context:       → resumen 1-línea para prompt injection (planner)
+config.yaml x-conductor:   → config ejecutable para coder/reviewer
+context.md:                → contenido EXCLUSIVO (arquitectura, dirs, entry points, formatting, spec patterns)
+                             NO repite stack (está en config.yaml)
+                             NO repite runner/coverage commands (están en x-conductor.testing)
+```
+
+> **Regla**: si un dato está en `config.yaml`, NO se repite en `context.md`. Si un dato es exclusivo de `context.md` (arquitectura, directorios, formatting rules), NO se pone en `config.yaml`.
+
+---
+
 ## config.yaml
 
 Generado por `/sdd-init`. Contiene campos OpenSpec estándar (`schema`, `context`, `rules`) y extensiones Conductor (`x-conductor`).
@@ -53,10 +97,7 @@ Generado por `/sdd-init`. Contiene campos OpenSpec estándar (`schema`, `context
 schema: spec-driven
 
 # --- OpenSpec standard ---
-context: |                                    # Inyectado en TODOS los prompts de artefactos
-  Tech stack: TypeScript 5.x, Express, Node 20
-  API style: RESTful
-  Architecture: Clean Architecture
+context: "Express, TypeScript strict, npm"    # 1-línea — inyectado en TODOS los prompts de artefactos
 rules:                                        # Restricciones por artefacto (solo inyectadas en el artefacto correspondiente)
   specs:
     - Use Given/When/Then format
@@ -96,19 +137,20 @@ x-conductor:
       coverage_threshold: 80
 ```
 
-> **Nota**: `context:` (campo en config.yaml) es el estándar OpenSpec para inyección en prompts. `context.md` (archivo separado) es una extensión Conductor que expande esa info con arquitectura detallada, directorios y team standards.
+> **Nota**: `context:` (campo en config.yaml) es un resumen 1-línea estándar OpenSpec inyectado en prompts. `context.md` (archivo separado) es una extensión Conductor con contenido exclusivo: arquitectura, directorios, entry points y team standards (NO duplica stack).
 
 ### Sincronización de Stack
 
-Los datos de stack aparecen en tres ubicaciones con propósitos distintos:
+Los datos de stack aparecen en dos ubicaciones con propósitos distintos:
 
 | Ubicación | Propósito | Actualizado por |
 |-----------|-----------|-----------------|
-| `config.yaml` → `context:` | Inyección corta en prompts (todos los artefactos) | `/sdd-init` (auto) |
-| `config.yaml` → `x-conductor.stack` | Legible por máquina para la lógica del pipeline | `/sdd-init` (auto) |
-| `context.md` → `## Stack` | Contexto del repo legible para agentes | `/sdd-init` (auto), edición manual |
+| `config.yaml` → `context:` | Resumen 1-línea inyectado en prompts (todos los artefactos) | `/sdd-init` (auto) |
+| `config.yaml` → `x-conductor.stack` | Fuente legible por máquina para la lógica del pipeline | `/sdd-init` (auto) |
 
-**Regla de sincronización**: cuando el stack cambia (p. ej., bump de versión de framework), re-ejecuta `/sdd-init` — regenera ambos campos de `config.yaml` y la sección `## Stack` de `context.md` preservando `rules:` personalizadas y `## Team Standards`. Las ediciones manuales a `## Stack` en `context.md` son válidas pero se sobrescribirán en la próxima ejecución de `/sdd-init`.
+`context.md` ya **NO** contiene `## Stack` — se eliminó para evitar duplicación. `context.md` se enfoca en contenido exclusivo: arquitectura, directorios clave, entry points, formatting/linting y spec patterns.
+
+**Regla de sincronización**: cuando el stack cambia (p. ej., bump de versión de framework), re-ejecuta `/sdd-init` — regenera `config.yaml` (`context:` como 1-línea y `x-conductor.stack`) preservando `rules:` personalizadas. `context.md` no requiere actualización de stack porque no lo contiene.
 
 ---
 
