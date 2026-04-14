@@ -98,17 +98,17 @@ x-conductor:
 
 > **Nota**: `context:` (campo en config.yaml) es el estándar OpenSpec para inyección en prompts. `context.md` (archivo separado) es una extensión Conductor que expande esa info con arquitectura detallada, directorios y team standards.
 
-### Stack Information Sync
+### Sincronización de Stack
 
-Stack data appears in three locations with distinct purposes:
+Los datos de stack aparecen en tres ubicaciones con propósitos distintos:
 
-| Location | Purpose | Updated by |
-|----------|---------|------------|
-| `config.yaml` → `context:` | Short prompt injection (all artifacts) | `/sdd-init` (auto) |
-| `config.yaml` → `x-conductor.stack` | Machine-readable for pipeline logic | `/sdd-init` (auto) |
-| `context.md` → `## Stack` | Human-readable repo context for agents | `/sdd-init` (auto), manual edit |
+| Ubicación | Propósito | Actualizado por |
+|-----------|-----------|-----------------|
+| `config.yaml` → `context:` | Inyección corta en prompts (todos los artefactos) | `/sdd-init` (auto) |
+| `config.yaml` → `x-conductor.stack` | Legible por máquina para la lógica del pipeline | `/sdd-init` (auto) |
+| `context.md` → `## Stack` | Contexto del repo legible para agentes | `/sdd-init` (auto), edición manual |
 
-**Sync rule**: when stack changes (e.g., framework version bump), re-run `/sdd-init` — it regenerates both `config.yaml` fields and the `context.md` `## Stack` section while preserving custom `rules:` and `## Team Standards`. Manual edits to `context.md` `## Stack` are valid but will be overwritten on next `/sdd-init` run.
+**Regla de sincronización**: cuando el stack cambia (p. ej., bump de versión de framework), re-ejecuta `/sdd-init` — regenera ambos campos de `config.yaml` y la sección `## Stack` de `context.md` preservando `rules:` personalizadas y `## Team Standards`. Las ediciones manuales a `## Stack` en `context.md` son válidas pero se sobrescribirán en la próxima ejecución de `/sdd-init`.
 
 ---
 

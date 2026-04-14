@@ -34,7 +34,7 @@ El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proy
 
 ## 2. Mejores Prácticas
 
-### Do
+### Recomendado
 
 - **Deja que el orquestador orqueste** — no le pidas que lea código directamente; delega a sub-agentes
 - **Specs antes de código** — `/sdd-ff` como mínimo para cualquier feature
@@ -43,7 +43,7 @@ El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proy
 - **openspec en proyectos serios** — habilita recuperación tras compactación
 - **Configura post_hook** — captura errores de build/type-check durante apply
 
-### Don't
+### Evitar
 
 - **Inline execution** — pedir al orquestador que edite archivos directamente infla su contexto
 - **Archive sin verify** — contamina la fuente de verdad (main specs)
