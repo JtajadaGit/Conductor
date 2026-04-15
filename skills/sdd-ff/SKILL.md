@@ -17,9 +17,10 @@ Same gate as sdd-new. Evaluate BEFORE launching:
 
 ### Step 1: Launch Condensed Pipeline
 
-1. Delegate to `sdd-planner` with `PHASE: fast-forward` and the change name/description
-2. The planner creates the directory, produces ALL artifacts (proposal, spec, design, tasks, state.yaml) in ONE call
-3. **Do NOT create directories yourself. Do NOT write state.yaml yourself.** The planner handles everything.
+1. **Evaluate spec-light**: if user request is >50 words with clear scope, approach, and acceptance criteria → add `SPEC_LIGHT: true` to delegation (skips proposal, saves tokens). Otherwise → standard fast-forward.
+2. Delegate to `sdd-planner` with `PHASE: fast-forward` (+ `SPEC_LIGHT: true` if applicable) and the change name/description
+3. The planner creates the directory, produces ALL artifacts in ONE call
+4. **Do NOT create directories yourself. Do NOT write state.yaml yourself.** The planner handles everything.
 
 ### Step 2: Handle Response
 

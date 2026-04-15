@@ -29,18 +29,31 @@ BEFORE creating any artifacts, evaluate the request against the Hard Stop Rule:
      created: {ISO-8601}
      updated: {ISO-8601}
      current_phase: done
-     complexity: trivial|simple
      phases:
+       explore: skipped
+       propose: skipped
+       clarify: skipped
+       spec: skipped
+       design: skipped
+       tasks: skipped
        apply: done
+       verify: skipped
+       archive: skipped
+     last_completed_task: ""
+     locks:
+       spec: false
+       design: false
      ```
    - This enables `/sdd-status` to show history of ALL changes, not just SDD ones.
 
 ### Step 1: Medium → Condensed Pipeline
 
-1. Delegate to `sdd-planner` with `PHASE: fast-forward` and the change description
-2. The planner creates everything in ONE call (dir, proposal, spec, design, tasks, state.yaml)
-3. Present summary. Pause: "Planning complete. ¿Continúo con apply?"
-4. On confirm → delegate to `sdd-coder`, then `sdd-reviewer`
+1. **Evaluate spec-light**: if user request is >50 words with clear scope, approach, and acceptance criteria → add `SPEC_LIGHT: true` (skips proposal). Otherwise → standard condensed.
+2. Delegate to `sdd-planner` with `PHASE: fast-forward` (+ `SPEC_LIGHT: true` if applicable) and the change description
+3. The planner creates everything in ONE call (dir, spec, design, tasks, state.yaml — and proposal if not spec-light)
+4. **Run Post-Delegation Validation** (check artifacts exist per orchestrator rules)
+5. Present summary. Pause: "Planning complete. ¿Continúo con apply?"
+6. On confirm → evaluate parallelism (mandatory), then delegate to `sdd-coder`, then `sdd-reviewer`
 
 ### Step 1 (alt): Large → Full Pipeline
 

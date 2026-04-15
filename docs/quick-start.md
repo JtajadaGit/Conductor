@@ -113,16 +113,17 @@ El primer comando en cualquier proyecto nuevo:
 ¿Qué hace?
 1. Detecta stack tecnológico (Node.js, Python, Go, Rust, .NET...)
 2. Detecta framework de testing y configura `strict_tdd`
-3. Crea estructura `openspec/` (si confirmas persistencia)
-4. Genera sección `## Team Standards` en `openspec/context.md` con convenciones del equipo (si hay custom skills)
+3. Crea estructura `openspec/` con `config.yaml` y `context.md`
+4. Recuerda ejecutar `/conventions` para poblar `## Team Standards`
 
 Resultado esperado:
 ```
 ✅ SDD inicializado
    Stack: Node.js + TypeScript + Express
    Testing: Jest (detectado), strict_tdd: true
+   Execution mode: interactive (cambiar en config.yaml)
    Persistencia: openspec (habilitado)
-   Conventions: generado
+   → Ejecuta /conventions para completar Team Standards
 ```
 
 ---

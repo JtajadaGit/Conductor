@@ -24,11 +24,12 @@ El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proy
 
 ### Estrategias de optimización
 
-1. **`/sdd-ff`** para batching de planificación — mismas fases, menor overhead conversacional
-2. **Omitir explore** si ya tienes scope + approach + constraints claros (ahorra 1 request)
-3. **No re-ejecutar verify** sin haber cambiado código
-4. **Delegación directa** para tareas ≤2 archivos (1 request vs 10+)
-5. **Modo Auto** para sesiones donde ya tienes claro el cambio — evita roundtrips innecesarios
+1. **Spec-light** (automático): si tu request es >50 palabras con scope claro → omite proposal y ahorra ~400 tokens
+2. **`/sdd-ff`** para batching de planificación — mismas fases, menor overhead conversacional
+3. **Omitir explore** si ya tienes scope + approach + constraints claros (ahorra 1 request)
+4. **No re-ejecutar verify** sin haber cambiado código
+5. **Delegación directa** para tareas ≤2 archivos (1 request vs 10+)
+6. **Modo Auto** (`execution_mode: auto` en config.yaml) — 0 pausas, 0 roundtrips extra
 
 ---
 
@@ -54,18 +55,28 @@ El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proy
 ### Flujos comunes
 
 ```
-# Feature nueva (rápido)
-/sdd-ff mi-feature → /sdd-continue (apply) → /sdd-continue (verify) → /sdd-archive
+# Feature nueva — modo auto (config.yaml: execution_mode: auto)
+/sdd-ff mi-feature → corre todo back-to-back → /sdd-archive
+
+# Feature nueva — modo interactive (config.yaml: execution_mode: interactive)
+/sdd-ff mi-feature → pausa → apply → pausa → verify → /sdd-archive
 
 # Feature con exploración
-/sdd-new mi-feature → /sdd-ff mi-feature → /sdd-continue (apply) → /sdd-continue (verify) → /sdd-archive
-
-# Cambio crítico (paso a paso, modo Interactive)
-/sdd-new mi-feature → /sdd-continue (spec) → revisar → /sdd-continue (design) → revisar → ...
+/sdd-new mi-feature → /sdd-ff mi-feature → apply → verify → /sdd-archive
 
 # Bugfix trivial (sin SDD)
 "Corrige el null check en utils.ts línea 42" → delegación directa (1 request)
 ```
+
+### Configuración del Execution Mode
+
+Edita `openspec/config.yaml`:
+```yaml
+x-conductor:
+  execution_mode: auto        # auto | interactive
+```
+- **`auto`**: 0 pausas. Solo para en errores. Ideal cuando tienes claro el cambio.
+- **`interactive`**: pausa antes de apply y antes de verify. Ideal para revisar artefactos.
 
 ---
 
@@ -133,9 +144,12 @@ Actualiza `openspec/context.md` con las siguientes secciones:
 
 ```markdown
 ## Team Standards
-## Skills Available
-## Compact Rules
-## Project Config Files
+### Formatting & Linting
+### Testing
+### Principles
+### Custom Skills
+### Compact Rules
+### Project Config Files
 ```
 
 - **Commit-ready**: `context.md` se versiona y se revisa como cualquier otro artefacto del equipo

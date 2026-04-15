@@ -27,16 +27,19 @@ If `openspec/lessons-learned.md` exists, read it to avoid known errors.
 ### Step 0.2: Context fallback
 If `## Project Standards (auto-resolved)` was NOT injected in your prompt, read `openspec/context.md` → extract `## Team Standards` section and apply as project standards. If file missing or section absent → set `skill_resolution: none` in return envelope.
 
+### Step 0.3: Read config
+Read `openspec/config.yaml` → extract `x-conductor.strict_tdd`, `x-conductor.hooks.apply` (pre_hook, post_hook, post_hook_on_fail, post_hook_max_retries, checkpoint_every). If config missing or malformed → assume no hooks and `strict_tdd: false`.
+
 ### Step 1: Pre-hook
-> Steps 1 and 4 ONLY apply when hooks are configured in `x-conductor.hooks.apply`. If `pre_hook` and `post_hook` are empty strings → skip directly to Step 2.
+> Steps 1 and 4 ONLY apply when hooks are configured (from Step 0.3). If `pre_hook` and `post_hook` are empty strings → skip directly to Step 2.
 
 If no hooks configured (empty `pre_hook`) → skip to Step 2.
 
-If `pre_hook` configured in `x-conductor.hooks.apply` → execute BEFORE implementation.
+If `pre_hook` configured → execute BEFORE implementation.
 - Fails → `status: blocked`, stop immediately.
 
 ### Step 2: Resolve TDD mode
-- If `x-conductor.strict_tdd: true` in config.yaml AND test runner exists → load `strict-tdd.md` addon
+- If `x-conductor.strict_tdd: true` (from Step 0.3) AND test runner exists → load `strict-tdd.md` addon
 - Otherwise → Standard Mode (Step 3)
 
 ### Step 3: Implement tasks (Standard Mode)
@@ -54,7 +57,7 @@ For each task:
 ### Step 4: Post-hook
 If no hooks configured (empty `post_hook`) → skip to Step 5.
 
-If `post_hook` configured in `x-conductor.hooks.apply` → execute after each batch (or every `checkpoint_every` tasks):
+If `post_hook` configured (from Step 0.3) → execute after each batch (or every `checkpoint_every` tasks):
 - exit 0 → continue
 - exit ≠ 0 + `retry` → read error, fix, re-execute (max `post_hook_max_retries`)
 - exit ≠ 0 + `stop` → `status: partial`
@@ -62,7 +65,17 @@ If `post_hook` configured in `x-conductor.hooks.apply` → execute after each ba
 
 ### Step 5: Post-apply finalization (MANDATORY — do NOT skip)
 1. **Update state.yaml**: Read `openspec/changes/{change-name}/state.yaml`, set `apply: done`, `current_phase: verify`, `updated: {ISO-8601 now}`. Write back.
-2. **Document deviations**: If you changed ANY approach from what design.md specified (different API, different pattern, different library) → append `## Deviations` section to design.md:
+2. **Spec amendments**: If during implementation you discovered a missing field, edge case, or minor spec gap → append `## Amendments` to the relevant `specs/{domain}/spec.md`:
+   ```markdown
+   ## Amendments
+   ### AMD-001: {title}
+   - **Discovered during**: Task {id}
+   - **Reason**: {why}
+   - **Change**: {what is added/modified}
+   - **Impact**: none | minor | major
+   ```
+   If impact = `major` → set `status: partial`, return to orchestrator. Max 3 minor amendments. See `agents/_shared/orchestrator-reference.md` § Spec Amendments for full protocol.
+3. **Document deviations**: If you changed ANY approach from what design.md specified (different API, different pattern, different library) → append `## Deviations` section to design.md:
    ```markdown
    ## Deviations
    | Design said | Actual | Reason |

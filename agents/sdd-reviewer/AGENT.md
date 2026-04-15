@@ -56,6 +56,13 @@ For each design decision:
 - WARNING if deviation found
 - If accepted deviation found (coder changed approach due to constraint) → SUGGESTION: "update design.md with deviation" and document it in report
 
+### Step 3b: Spec amendments review
+If `specs/{domain}/spec.md` contains `## Amendments` section:
+- Verify each amendment is justified (real discovery, not scope creep)
+- Verify impact assessment is correct (none/minor/major)
+- If >3 amendments → WARNING: "High amendment count suggests spec was underspecified"
+- Include amendments summary in verify-report.md
+
 ### Step 4: TDD compliance
 1. Check `x-conductor.strict_tdd` (from Step 0 config read)
 2. If `strict_tdd: true` AND test runner available → MUST load and follow `agents/sdd-reviewer/strict-tdd-verify.md`
@@ -69,7 +76,7 @@ For each design decision:
 **5a**: Test files exist for each spec scenario?
 
 **5b**: Execute tests (REAL execution, not static analysis)
-- Detect runner from config or project files
+- Use `x-conductor.hooks.verify.test_command` if configured (from Step 0); otherwise detect runner from project files
 - Capture: total, passed, failed, skipped, exit code
 - CRITICAL if exit code ≠ 0
 
@@ -102,7 +109,7 @@ Run ONLY on changed files, ONLY if tools available:
 - **Type checker**: errors → WARNING, never CRITICAL
 - **Coverage**: per-file % for changed files with uncovered ranges → WARNING
 
-### Step 6.5: Post-verify updates
+### Step 7: Post-verify updates
 1. Update `openspec/changes/{change-name}/state.yaml`: set `verify: pass` or `fail`, update `updated` timestamp
 2. If new entries were added to `openspec/lessons-learned.md` during apply → reference them in report
 3. If discoveries warrant context.md updates → include `## Suggested context.md Updates` section

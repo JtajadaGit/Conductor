@@ -11,12 +11,12 @@
 | Return Envelope | ALL | ALL | ALL |
 | Size Budgets | REQUIRED | SKIP | SKIP |
 | RFC 2119 Keywords | REQUIRED | SKIP | SKIP |
-| Lessons Learned | READ only | READ + WRITE | SKIP |
+| Lessons Learned | READ only | READ + WRITE | REFERENCE |
 | State.yaml Update | WRITE initial | WRITE apply phase | WRITE verify phase |
 | Phase Dependencies | REFERENCE | REFERENCE | REFERENCE |
 | Concurrency Safety | REFERENCE | REQUIRED | REQUIRED |
 
-> **Loading guidance**: agents SHOULD mentally skip sections marked SKIP for their role. The full protocol is loaded for portability, but irrelevant sections do not require processing. Future versions may split into role-specific modules.
+> **Loading guidance**: agents SHOULD mentally skip sections marked SKIP for their role. The full protocol is loaded for portability, but irrelevant sections do not require processing.
 
 ## Executor Boundary
 
@@ -252,9 +252,7 @@ ALL fields above are REQUIRED. Agents creating state.yaml MUST include every fie
 schema: spec-driven
 
 # --- OpenSpec standard fields ---
-context: |                    # Short context injected into ALL artifact prompts
-  Tech stack: ...
-  API style: ...
+context: "Framework, Language strict, package_manager"  # 1-line summary injected into ALL artifact prompts
 rules:                        # Per-artifact constraints (injected only for matching artifact)
   proposal: []
   specs: []

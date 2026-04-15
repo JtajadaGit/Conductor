@@ -55,6 +55,7 @@ Cada fichero OpenSpec tiene consumidores específicos. Esta tabla elimina ambig�
 |-------|-------------|--------|----------|
 | `context:` (1 línea) | **sdd-planner** | Cada fase de planificación | Se inyecta en prompts de artefactos — el planner sabe "Angular 20 standalone" al escribir specs |
 | `rules:` | **sdd-planner** | spec, tasks | Restricciones por artefacto (p. ej., "Use Given/When/Then") |
+| `x-conductor.execution_mode` | **Orquestador** | Inicio de cada pipeline | `auto` (0 pausas) o `interactive` (pausa antes de apply y verify) |
 | `x-conductor.strict_tdd` | **sdd-coder** (Step 2) | Inicio de apply | Decide si carga addon TDD (RED→GREEN→REFACTOR) |
 | `x-conductor.strict_tdd` | **sdd-reviewer** (Step 0) | Inicio de verify | Decide si carga addon de auditoría TDD |
 | `x-conductor.hooks.apply` | **sdd-coder** (Steps 1, 4) | Pre/post implementación | Qué comandos ejecutar (`ng build`) y cómo manejar fallos |
@@ -115,17 +116,13 @@ x-conductor:
     framework: "express"
     package_manager: "npm"
   monorepo: false
+  execution_mode: interactive  # auto | interactive
   strict_tdd: true
   testing:
-    test_runner: { command: "npx vitest run", framework: vitest }
-    layers:
-      unit: { available: true }
-      integration: { available: true, tool: "@testing-library/react" }
-      e2e: { available: false }
+    test_runner: { command: "npx vitest run", framework: "vitest" }
+    layers: { unit: true, integration: true, e2e: false }
     coverage: { available: true, command: "npx vitest run --coverage" }
-    quality:
-      linter: { available: true, command: "npx eslint ." }
-      type_checker: { available: true, command: "npx tsc --noEmit" }
+    quality: { linter: "eslint", type_checker: "tsc", formatter: "prettier" }
   hooks:
     apply:
       pre_hook: ""

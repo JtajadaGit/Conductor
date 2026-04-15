@@ -28,9 +28,12 @@ El **orquestador** (tú + Conductor) coordina cuándo actúa cada agente.
 | **DAG** | Grafo de dependencias entre fases — cada fase necesita que la anterior termine |
 | **Worktree** | Copia aislada del repo (Git) para que varios coders trabajen en paralelo sin conflictos |
 | **Fast-forward** | Modo condensado (`/sdd-ff`) — toda la planificación en una sola llamada |
+| **Spec-light** | Variante de fast-forward que omite proposal cuando el scope ya está claro (>50 palabras) |
 | **Delta spec** | Spec parcial con secciones ADDED/MODIFIED/REMOVED — para cambios sobre specs existentes |
 | **Artifact** | Fichero generado por el pipeline (proposal.md, spec.md, design.md, tasks.md) |
 | **Phase gate** | Punto de control entre fases — bloquea si hay inconsistencias o preguntas sin resolver |
+| **Execution mode** | `auto` (0 pausas) o `interactive` (pausa antes de apply/verify). Se configura en `config.yaml` |
+| **Spec amendment** | Ajuste ligero a la spec descubierto durante apply — no requiere re-planear |
 
 ## Los 5 comandos esenciales
 
@@ -47,14 +50,18 @@ El **orquestador** (tú + Conductor) coordina cuándo actúa cada agente.
 ```
 TÚ: /sdd-ff validacion-email
 
+ORQUESTADOR:
+  → Lee config.yaml → execution_mode: auto
+  → Spec-light: request claro → omite proposal
+
 PLANNER (1 llamada, ~2 min):
-  → explore:  Encuentra patrones de validación existentes
-  → propose:  "Validación con regex + verificación servidor"
   → spec:     Crea spec.md con escenarios GIVEN/WHEN/THEN
   → design:   Crea design.md con ficheros a modificar
-  → tasks:    Crea tasks.md con 4 subtareas [P] paralelas
+  → tasks:    Crea tasks.md con 3 [P] source + 3 [S] tests
 
-TÚ: /sdd-continue
+ORQUESTADOR:
+  → Post-delegation validation: artefactos OK ✓
+  → Modo auto → continúa sin pausa
 
 CODER (~3 min):
   → Lee spec + tasks + design
@@ -62,12 +69,13 @@ CODER (~3 min):
   → Escribe tests para cada escenario
   → Marca tareas [x] completadas
 
-TÚ: /sdd-continue
-
 REVIEWER (~1 min):
   → Verifica: spec ↔ código alineado
   → Ejecuta: tests + build
   → Resultado: "PASS"
+
+ORQUESTADOR:
+  → "Cambio verificado. ¿Archivar con /sdd-archive?"
 
 TÚ: /sdd-archive
   → Promueve delta specs a specs/ principal

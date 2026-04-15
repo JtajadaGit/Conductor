@@ -113,9 +113,11 @@ For phases with required dependencies, sub-agent reads directly from filesystem 
 When apply phase starts, evaluate [P] tasks for parallel execution:
 
 ### Decision
-1. Read `tasks.md` — count `[P]` tasks and identify file targets from `design.md` File Changes table.
-2. If <4 `[P]` tasks OR file sets overlap → **single coder** (standard mode). Stop here.
-3. If ≥4 `[P]` tasks with disjoint file sets → **parallel apply**.
+1. Read `tasks.md` and `design.md` File Changes table.
+2. Group tasks by **feature domain** (files in same directory/module = same domain). Each group includes source `[P]` AND test `[S]` tasks for that domain.
+3. **Trigger**: ≥2 groups with ≥2 tasks each and 0 shared files → **parallel apply** (one coder per group).
+4. Integration tasks (routing, app config, shared files) → always in Wave 2 (sequential coder).
+5. If only 1 group or shared files between groups → **single coder** (standard mode).
 
 ### Dispatch (parallel mode)
 1. **Partition** `[P]` tasks into groups by file ownership (each file belongs to exactly one group).
@@ -150,4 +152,59 @@ The orchestrator does NOT update state.yaml between phases. Each agent is respon
 | sdd-reviewer | Sets `verify: pass` or `fail` |
 
 **Critical**: state.yaml updates by agents are NOT optional. They are phase gates for `/sdd-continue` and DAG recovery after compaction. In parallel mode, only the reconciliation coder (Wave 2) writes to state.yaml and tasks.md.
+
+## Post-Delegation Artifact Validation
+
+After EVERY agent delegation, the orchestrator MUST validate before proceeding:
+
+### Expected artifacts per agent
+
+| Agent / Phase | Expected artifacts |
+|---------------|-------------------|
+| sdd-planner (fast-forward) | `proposal.md`, `specs/{domain}/spec.md`, `design.md`, `tasks.md`, `state.yaml` |
+| sdd-planner (explore) | `exploration.md` |
+| sdd-planner (propose) | `proposal.md` |
+| sdd-planner (clarify) | `questions.md` (only if questions > 0) |
+| sdd-planner (spec) | `specs/{domain}/spec.md` |
+| sdd-planner (design) | `design.md` |
+| sdd-planner (tasks) | `tasks.md` |
+| sdd-coder (apply) | code files changed + `tasks.md` with `[x]` marks |
+| sdd-coder (fix) | code fix applied |
+| sdd-reviewer (verify) | `verify-report.md` |
+
+### Validation steps
+
+1. **Check artifact existence**: Glob for expected files in `openspec/changes/{change-name}/`
+2. **Check state.yaml integrity**: Required fields: `change`, `created`, `updated`, `current_phase`, `phases` (all 9 phases), `last_completed_task`, `locks` (spec, design). Phase values: `pending`|`in_progress`|`done`|`skipped`|`blocked`|`pass`|`fail`.
+3. **Check phase consistency**: `current_phase` should match the first phase with status `pending` whose dependencies are met.
+
+### On validation failure
+
+- **Artifacts missing**: Re-launch the same agent with identical inputs. **NEVER write SDD artifacts inline.** Max 2 re-launches.
+- **state.yaml missing/malformed**: Reconstruct from existing artifacts on disk. Set phases with artifacts to `done`, others to their logical state.
+- **After 2 failed re-launches**: `status: blocked`, escalate to user with diagnostic.
+
+## Spec Amendments During Apply
+
+When a coder discovers during apply that the spec needs a minor adjustment (missing field, edge case not covered):
+
+### Lightweight amendment protocol
+
+1. Coder adds `## Amendments` section to the bottom of the relevant `specs/{domain}/spec.md`:
+   ```markdown
+   ## Amendments
+   ### AMD-001: {title}
+   - **Discovered during**: Task {id}
+   - **Reason**: {why the spec needs adjustment}
+   - **Change**: {what is added/modified}
+   - **Impact**: none | minor (no re-plan needed) | major (requires re-plan)
+   ```
+2. If impact = `none` or `minor` → coder continues. Amendment is logged in verify-report.
+3. If impact = `major` → coder sets `status: partial`, returns to orchestrator. Orchestrator unlocks spec, presents amendment to user.
+
+### Rules
+- Amendments ONLY for discoveries during implementation — NOT for changing requirements.
+- Max 3 minor amendments per apply phase. If more → stop, re-plan.
+- All amendments are reviewed during verify — reviewer checks they're justified.
+- Amendments are preserved in archive for traceability.
 

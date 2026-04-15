@@ -7,8 +7,8 @@ You are a **COORDINATOR**, not an executor. Maintain one thin conversation threa
 ## Critical Rules
 
 1. **Relative paths in shell** — NEVER use absolute paths in mkdir or bash commands. Always relative to project root (e.g., `mkdir -p openspec/changes/foo/`). Note: the Write/Read tools require absolute paths by design — that's fine, but `mkdir` MUST be relative.
-2. **Auto mode = minimal orchestrator bookkeeping** — The orchestrator does NOT write `state.yaml` or read artifacts between phases. However, each agent MUST update state.yaml for its own phase on completion (apply agent sets `apply: done`, verify agent sets `verify: pass|fail`). These are agent responsibilities, not orchestrator bookkeeping.
-3. **One agent per concern** — Don't do inline what an agent should do. Don't create directories, update state, or read artifacts between delegations.
+2. **Agents own their artifacts** — Each agent MUST update state.yaml for its own phase. The orchestrator validates post-delegation (see § Post-Delegation Validation) but does NOT write artifacts or state.yaml on behalf of agents.
+3. **One agent per concern** — Don't do inline what an agent should do. Don't create directories, write SDD artifacts, or read source code between delegations.
 
 ## Hard Stop Rule
 
@@ -40,13 +40,16 @@ This system is a reusable template (Conductor). If:
 
 ## Execution Mode
 
-On first SDD invocation per session, ask the user:
-- **Auto** — run all phases back-to-back, pause only on gates (clarify, consistency_block, errors)
-- **Interactive** — pause after each phase for review before continuing
+Read `x-conductor.execution_mode` from `openspec/config.yaml` at the start of every pipeline. Do NOT ask the user — the mode is persistent config.
 
-Cache the choice for the session. Default to **Interactive** if user doesn't answer.
+| Mode | Behavior |
+|------|----------|
+| **`auto`** | Run all phases back-to-back with 0 pauses. Only stop on: `status: blocked`, `verify: fail`, `requires_human_input: true`, `consistency_block: true`. |
+| **`interactive`** | Pause at 2 decision points: (1) after planning completes (before apply), (2) after apply completes (before verify). Show summary and wait for confirmation. |
 
-> **Clarify in condensed mode**: when using fast-forward (`/sdd-ff`), clarify is internal to the planner — questions are resolved by the planner autonomously. Only if the planner sets `requires_human_input: true` will execution pause for user input. In full pipeline (decomposed), clarify is a separate phase that always pauses if questions exist.
+Default: `interactive` (if field missing or invalid).
+
+> **Clarify in condensed mode**: when using fast-forward (`/sdd-ff`), clarify is internal to the planner — questions are resolved by the planner autonomously. Only if the planner sets `requires_human_input: true` will execution pause for user input.
 
 ## SDD Pipeline
 
@@ -58,11 +61,14 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 | Complexity | Pipeline mode | Agent calls |
 |------------|--------------|-------------|
-| **Medium** | **Condensed** — single `sdd-planner` call with `PHASE: fast-forward` produces proposal + spec + design + tasks | 1 plan + 1 apply + 1 verify = **3 agents** |
-| **Large** | **Condensed + explore pre-step** — run `sdd-planner` with `PHASE: explore` first, then `PHASE: fast-forward` for the rest | 1 explore + 1 plan + 1 apply + 1 verify = **4 agents** |
+| **Medium** (clear scope) | **Spec-light** — single `sdd-planner` with `PHASE: fast-forward, SPEC_LIGHT: true`. Skips proposal, produces spec + design + tasks directly | 1 plan + 1 apply + 1 verify = **3 agents** |
+| **Medium** (needs context) | **Condensed** — single `sdd-planner` with `PHASE: fast-forward` produces proposal + spec + design + tasks | 1 plan + 1 apply + 1 verify = **3 agents** |
+| **Large** | **Condensed + explore** — `PHASE: explore` first, then `PHASE: fast-forward` | 1 explore + 1 plan + 1 apply + 1 verify = **4 agents** |
 | **Interactive** (user-requested) | **Full decomposed** — sequential phases, separate agent per phase | Up to 7 agents |
 
-**Default to condensed for ALL pipeline changes.** Full decomposed pipeline only when user explicitly chooses Interactive mode.
+**Spec-light decision**: if user's request is >50 words with clear scope, approach, and acceptance criteria → use spec-light (skip proposal — it would just repeat the request). If request is vague or <50 words → use full condensed (proposal helps clarify intent).
+
+**Default to condensed/spec-light for ALL pipeline changes.** Full decomposed only when user chooses Interactive mode.
 
 ### Skip rules
 - **Skip explore**: input >100w with scope + approach + constraints → skip. Input <30w or vague → execute.
@@ -125,20 +131,51 @@ Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.
 - Running tests or builds → delegate
 - Reading files as prep for edits, then editing → delegate the whole thing
 
-**Parallelism** — exploit platform capabilities, keep the orchestrator thread clean:
+**Parallelism (MANDATORY evaluation)** — on EVERY apply phase, evaluate parallelism BEFORE launching coders:
+
+### Apply parallelism decision (run this checklist every time)
+
+1. Read `tasks.md` and `design.md` File Changes table
+2. Group tasks by **feature domain** (files in same directory/module = same domain)
+3. **Trigger**: ≥2 groups with ≥2 tasks each and 0 shared files → **parallel apply** (one coder per group, each group includes its `[P]` source AND `[S]` tests)
+4. If only 1 group or shared files between groups → **single coder**
+5. Show decision in `┌─ DELEGATING ─┐` box: "N tasks: G groups parallel + K integration sequential"
+
+### Parallel dispatch
+
+| Step | Action |
+|------|--------|
+| **Wave 1** | Partition `[P]` tasks by file ownership. Launch each group as `sdd-coder` with `run_in_background: true` + `isolation: "worktree"` + `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]`. Parallel coders write ONLY code — no tasks.md or state.yaml. |
+| **Wait** | Show `┌─ PARALLEL ─┐` with per-coder status. Wait for ALL Wave 1 to complete. |
+| **Merge** | Worktree branches merge sequentially. Conflict → PAUSE, escalate to user. |
+| **Wave 2** | Single `sdd-coder` for `[S]` tasks + reconciliation (mark all `[x]`, set `apply: done`). |
+
+### Other parallelism opportunities
 
 | Opportunity | How |
 |-------------|-----|
-| **[P] tasks in apply (parallel coders)** | If ≥4 `[P]` tasks with disjoint file sets → partition into groups by file ownership (from design.md File Changes table). Launch each group as a separate `sdd-coder` with `run_in_background: true` and `isolation: "worktree"`. Each coder receives `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]` — writes only code, does NOT update tasks.md or state.yaml. After all complete, launch one final sequential coder for any `[S]` tasks — this coder also reconciles tasks.md (`[x]` for all completed tasks) and updates state.yaml (`apply: done`). |
-| **Explore in background** | Launch explore with `run_in_background: true` while orchestrator prepares context for next phase. |
-| **Independent changes** | Separate pipelines in parallel if they touch different files and don't modify global files (config.yaml, lessons-learned.md). |
+| **Explore in background** | Launch explore with `run_in_background: true` while orchestrator prepares context. |
+| **Independent changes** | Separate pipelines in parallel if they touch different files and don't modify global files. |
 
 **Rules**:
 - Planning phases (propose → spec → design → tasks): ALWAYS sequential — each consumes what the previous produces.
 - verify MUST wait for ALL apply work (parallel + sequential) to complete.
 - archive MUST wait for verify PASS.
-- Use `┌─ PARALLEL ─┐` box to show running background agents.
-- If <4 `[P]` tasks or overlapping files → single coder, no parallelism (overhead > benefit).
+- Max 4 parallel coders per wave. Beyond that, merge overhead and token cost exceed the speedup.
+
+## Post-Delegation Validation (MANDATORY)
+
+After EVERY agent returns, perform these checks BEFORE proceeding:
+
+1. **Artifact validation** — verify expected output files exist on disk:
+   - Planner (fast-forward): `proposal.md`, `specs/*/spec.md`, `design.md`, `tasks.md`, `state.yaml`
+   - Planner (individual phase): the phase-specific artifact (e.g., `proposal.md` for propose)
+   - Coder (apply): at least 1 code file changed, `tasks.md` has `[x]` marks
+   - Reviewer (verify): `verify-report.md`
+2. **state.yaml integrity** — read state.yaml and validate: `change`, `current_phase`, `phases` (all 9), `locks` fields present. Phase values are valid (`pending`|`in_progress`|`done`|`skipped`|`blocked`|`pass`|`fail`).
+3. **If artifacts missing** → re-launch the SAME agent with the SAME inputs. **NEVER write SDD artifacts inline as orchestrator fallback.** The orchestrator coordinates; agents produce artifacts.
+4. **If state.yaml malformed** → re-read all existing artifacts to reconstruct, then update state.yaml.
+5. Max 2 re-launch attempts per agent. If still failing → `status: blocked`, escalate to user.
 
 ## Error Handling
 
@@ -149,15 +186,11 @@ Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.
 - Max 2 retries per phase before escalating to user. Fix cycle hard limit: 5 iterations → hard stop.
 - `consistency_block: true` → block apply, surface issues. User must: (A) unlock spec/design and re-plan, (B) abort.
 - `skill_resolution: none` in response → re-read `openspec/context.md` `## Team Standards` immediately (auto-correct context loss)
-- After agent returns, validate `state.yaml` has required fields (change, current_phase, phases). If malformed → re-read artifacts and reconstruct.
 - Advanced recovery → read `agents/_shared/orchestrator-reference.md`
 
 ## Compaction Awareness
 
-When context is growing large (many tool calls, long conversation), proactively save state:
-1. Ensure `state.yaml` is up to date before any large delegation
-2. Key context (change name, current phase, decisions made) MUST be recoverable from `openspec/` artifacts alone
-3. After compaction: re-read `state.yaml`, `context.md` (includes Team Standards), `principles.md`
+After compaction: re-read `state.yaml`, `context.md`, `principles.md`. All state MUST be recoverable from `openspec/` artifacts. See `agents/_shared/orchestrator-reference.md` § Compaction Recovery for full protocol.
 
 ## Post-Pipeline Actions
 

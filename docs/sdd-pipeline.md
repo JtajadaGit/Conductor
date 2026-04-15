@@ -52,8 +52,12 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 | Complejidad | Modo | Agent calls | Descripción |
 |-------------|------|-------------|-------------|
-| **Medium** | **Condensado** | 3 | `sdd-planner` (fast-forward) → `sdd-coder` → `sdd-reviewer` |
+| **Medium** (scope claro) | **Spec-light** | 3 | `sdd-planner` (fast-forward + SPEC_LIGHT) → `sdd-coder` → `sdd-reviewer`. Omite proposal. |
+| **Medium** (necesita contexto) | **Condensado** | 3 | `sdd-planner` (fast-forward) → `sdd-coder` → `sdd-reviewer` |
 | **Large** | **Completo** | Hasta 7 | Fases individuales secuenciales |
+
+### Spec-light (para medium con scope claro)
+Cuando el request del usuario tiene >50 palabras con scope, approach y criterios claros → el planner recibe `SPEC_LIGHT: true` y omite la proposal (iría a repetir el request). Produce directamente spec + design + tasks. Ahorra ~400 palabras de artefactos y tokens de planificación.
 
 ### Condensado (default para medium)
 UNA sola llamada a `sdd-planner` con `PHASE: fast-forward` produce todos los artefactos de planificación (proposal + spec + design + tasks + state.yaml). El orquestador **no** crea directorios, no escribe state.yaml, no lee artefactos entre fases.
@@ -95,12 +99,14 @@ El orquestador **nunca** auto-invoca sdd-new o sdd-ff.
 
 ## Execution Mode
 
-Al iniciar una sesión SDD, el orquestador pregunta:
+Configurado en `openspec/config.yaml` → `x-conductor.execution_mode`. El orquestador lo lee al inicio de cada pipeline — no pregunta al usuario.
 
-- **Auto** — ejecuta fases back-to-back, pausando solo en gates (clarify, consistency_block, errores)
-- **Interactive** — pausa tras cada fase para review
+| Modo | Comportamiento |
+|------|---------------|
+| **`auto`** | 0 pausas. Corre todo back-to-back. Solo para en errores (`blocked`, `verify: fail`, `requires_human_input`). |
+| **`interactive`** | Pausa en 2 puntos de decisión: (1) tras planning (antes de apply), (2) tras apply (antes de verify). |
 
-Default: Interactive.
+Default: `interactive`. Para cambiar: editar `execution_mode: auto` en config.yaml.
 
 ---
 
@@ -140,7 +146,7 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 
 | Comando | Qué hace | Coste |
 |---------|----------|-------|
-| `/sdd-init` | Bootstrap: detecta stack, crea openspec, genera conventions del equipo | 1 req |
+| `/sdd-init` | Bootstrap: detecta stack, crea openspec, genera context files | 1 req |
 | `/sdd-new <name>` | Evalúa input → [explore?] → propose → clarify | 2-3 req |
 | `/sdd-ff <name>` | Pipeline condensado (1 planner call) o completo según complejidad | 1-3 req |
 | `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |
@@ -222,7 +228,16 @@ x-conductor:
 
 ### Wave-based Apply (parallel coders)
 
-Cuando `tasks.md` tiene ≥4 tareas `[P]` con archivos target disjuntos, el orquestador ejecuta apply en waves:
+El orquestador evalúa paralelismo en CADA apply:
+1. Agrupa tareas por **dominio funcional** (ficheros en mismo directorio/módulo = mismo dominio)
+2. **Trigger**: ≥2 grupos con ≥2 tareas cada uno y 0 archivos compartidos → parallel apply
+3. Tareas de integración (routing, app config) → siempre en Wave 2 (sequential)
+
+Reglas de marcado `[P]`/`[S]`:
+- `[P]`: ficheros source con targets disjuntos y sin dependencia de imports de otra tarea
+- `[S]`: ficheros test (SIEMPRE), integración (routing, app config), ficheros que importan output de otra tarea
+
+Cuando se activa paralelismo, el orquestador ejecuta apply en waves:
 
 ```
 Wave 1 (parallel):   [P] grupo A ──┐    [P] grupo B ──┐    [P] grupo C ──┐
@@ -291,12 +306,46 @@ change: {name}
 created: {ISO-8601}
 updated: {ISO-8601}
 current_phase: done
-complexity: trivial|simple
 phases:
+  explore: skipped
+  propose: skipped
+  clarify: skipped
+  spec: skipped
+  design: skipped
+  tasks: skipped
   apply: done
+  verify: skipped
+  archive: skipped
+last_completed_task: ""
+locks:
+  spec: false
+  design: false
 ```
 
 Esto permite que `/sdd-status` muestre historial de **todos** los cambios, no solo los que pasaron por SDD.
+
+---
+
+## Post-Delegation Validation
+
+Tras CADA delegación de agente, el orquestador valida:
+
+1. **Artefactos esperados** existen en disco (spec, design, tasks, etc.)
+2. **state.yaml** tiene campos obligatorios y valores válidos
+3. Si faltan artefactos → re-lanza el agente (nunca los escribe inline)
+4. Max 2 re-lanzamientos → `status: blocked`, escalar al usuario
+
+---
+
+## Spec Amendments
+
+Mecanismo ligero para ajustes de spec descubiertos durante apply:
+
+1. El coder añade `## Amendments` a `specs/{domain}/spec.md` con formato AMD-001, AMD-002...
+2. Impacto `none`/`minor` → coder continúa. Impacto `major` → coder para, orquestador escala.
+3. Max 3 amendments minor por apply. Más → indica spec mal hecha, re-planear.
+4. El reviewer valida que los amendments estén justificados.
+5. Los amendments se preservan en archive para trazabilidad.
 
 ---
 

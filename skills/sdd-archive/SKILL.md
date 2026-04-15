@@ -15,7 +15,7 @@ If change already in `openspec/changes/archive/` → `status: blocked`, "Already
 ### 2. Sync Delta Specs
 Scan for specs in TWO locations (in order):
 1. `openspec/changes/{change-name}/specs/{domain}/spec.md` — correct structure
-2. `openspec/changes/{change-name}/spec.md` — legacy flat format (infer domain from spec content `**Domain:**` header)
+2. `openspec/changes/{change-name}/spec.md` — flat format fallback (infer domain from spec content `**Domain:**` header)
 
 For each delta spec found:
 - **Main spec exists** (`openspec/specs/{domain}/spec.md`): apply delta in order: REMOVED → MODIFIED → ADDED (OpenSpec standard). If RENAMED section present (Conductor extension), apply it first. Preserve all requirements NOT in delta.

@@ -68,6 +68,7 @@ x-conductor:
     framework: ""       # e.g., "angular", "express", "django"
     package_manager: "" # e.g., "npm", "pnpm", "yarn"
   monorepo: false       # true if workspace/monorepo detected
+  execution_mode: interactive  # auto | interactive — user changes this manually
   strict_tdd: {true/false}
   testing:
     detected: {ISO date}
