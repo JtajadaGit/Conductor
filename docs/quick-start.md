@@ -29,14 +29,14 @@ git clone https://github.com/tu-org/Conductor.git
 
 ```bash
 # Linux/Mac
-cp Conductor/instructions/CLAUDE.md tu-proyecto/.claude/CLAUDE.md
+cp Conductor/instructions/CLAUDE.md tu-proyecto/CLAUDE.md
 cp -r Conductor/agents/ tu-proyecto/.claude/agents/
 cp -r Conductor/skills/ tu-proyecto/.claude/skills/
 ```
 
 ```powershell
 # Windows PowerShell
-Copy-Item Conductor\instructions\CLAUDE.md tu-proyecto\.claude\CLAUDE.md
+Copy-Item Conductor\instructions\CLAUDE.md tu-proyecto\CLAUDE.md
 Copy-Item -Recurse Conductor\agents\ tu-proyecto\.claude\agents\
 Copy-Item -Recurse Conductor\skills\ tu-proyecto\.claude\skills\
 ```
@@ -65,8 +65,8 @@ Combina los dos bloques anteriores. `openspec/` es compartido — cualquier plat
 
 ```
 tu-proyecto/
+├── CLAUDE.md                        ← Orquestador Claude Code (raíz del proyecto)
 ├── .claude/                         ← Claude Code
-│   ├── CLAUDE.md                   ← Orquestador
 │   ├── agents/
 │   │   ├── _shared/
 │   │   ├── sdd-planner/AGENT.md
@@ -93,7 +93,7 @@ tu-proyecto/
 
 | Característica | Claude Code | Copilot VS Code | Copilot CLI |
 |---------------|-------------|-----------------|-------------|
-| Orquestador | `.claude/CLAUDE.md` | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
+| Orquestador | `CLAUDE.md` (raíz) | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
 | Agentes | `.claude/agents/` | `.github/agents/` | `.github/agents/` |
 | Skills | `.claude/skills/` | `.github/skills/` | `.github/skills/` |
 | Modelos | high-capability / standard / fast | high-capability / standard / fast | high-capability / standard / fast |
@@ -102,19 +102,15 @@ tu-proyecto/
 
 ---
 
-## Primer uso: `/sdd-init`
+## Primer uso: paso a paso
 
-El primer comando en cualquier proyecto nuevo:
+### Paso 1: `/sdd-init`
 
 ```
 /sdd-init
 ```
 
-¿Qué hace?
-1. Detecta stack tecnológico (Node.js, Python, Go, Rust, .NET...)
-2. Detecta framework de testing y configura `strict_tdd`
-3. Crea estructura `openspec/` con `config.yaml` y `context.md`
-4. Recuerda ejecutar `/conventions` para poblar `## Team Standards`
+Detecta stack, testing, crea `openspec/` con `config.yaml` y `context.md`.
 
 Resultado esperado:
 ```
@@ -126,25 +122,33 @@ Resultado esperado:
    → Ejecuta /conventions para completar Team Standards
 ```
 
----
-
-## Primer cambio: `/sdd-new` o `/sdd-ff`
+### Paso 2: `/conventions`
 
 ```
-/sdd-new autenticacion-jwt
+/conventions
 ```
-→ Evalúa input → explore (si necesario) → propose → clarify gate
+
+Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y puebla la sección `## Team Standards` de `openspec/context.md`.
+
+### Paso 3 (opcional): Configurar execution mode
+
+Edita `openspec/config.yaml`:
+```yaml
+x-conductor:
+  execution_mode: auto    # auto (0 pausas) | interactive (pausa antes de apply/verify)
+```
+
+### Paso 4: Primer cambio
 
 ```
-/sdd-ff autenticacion-jwt
+/sdd-ff mi-feature       # Cambio medio — pipeline condensado
+/sdd-new mi-feature      # Cambio grande o vago — pipeline completo
 ```
-→ propose → clarify → spec → design → tasks (plan completo)
 
 Desde ahí:
 ```
 /sdd-continue    # avanzar a la siguiente fase pendiente (apply, verify, etc.)
 /sdd-archive     # cerrar y promover specs a main
-/conventions     # generar/actualizar team standards en context.md
 ```
 
 ---
@@ -161,7 +165,7 @@ Desde ahí:
 | Síntoma | Causa | Solución |
 |---------|-------|----------|
 | `/sdd-init` no reconocido | Skills no copiados al path correcto | Verificar `.claude/skills/` o `.github/skills/` |
-| Orquestador ejecuta código directamente | Instrucciones no cargadas | Verificar `.claude/CLAUDE.md` o `copilot-instructions.md` |
+| Orquestador ejecuta código directamente | Instrucciones no cargadas | Verificar `CLAUDE.md` en raíz o `.github/copilot-instructions.md` |
 | No se crean artefactos | `/sdd-init` no ejecutado | Ejecutar `/sdd-init` |
 | Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/conventions` |
 

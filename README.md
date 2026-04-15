@@ -55,7 +55,7 @@ Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación
 
 | Capa | Archivos | Función |
 |------|----------|---------|
-| **Instructions** | `instructions/CLAUDE.md` o `copilot-instructions.md` | Orquestador SDD (uno por plataforma) |
+| **Instructions** | `CLAUDE.md` (raíz) o `.github/copilot-instructions.md` | Orquestador SDD (uno por plataforma) |
 | **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
 | **Skills** | `skills/sdd-*/` + `conventions/` | Flujos invocables on-demand (0 tokens hasta uso) |
 
@@ -151,7 +151,7 @@ Conductor/
 
 ### Claude Code
 ```bash
-cp Conductor/instructions/CLAUDE.md            tu-proyecto/.claude/CLAUDE.md
+cp Conductor/instructions/CLAUDE.md            tu-proyecto/CLAUDE.md
 cp -r Conductor/agents/                        tu-proyecto/.claude/agents/
 cp -r Conductor/skills/                        tu-proyecto/.claude/skills/
 ```
@@ -168,7 +168,10 @@ Combina los dos bloques. `openspec/` es compartido — cualquier plataforma lee 
 
 ### Primer uso
 ```
-/sdd-init    ← detecta stack, genera openspec/ (context.md + config.yaml)
+1. /sdd-init         ← detecta stack, genera openspec/ (config.yaml + context.md)
+2. /conventions      ← auto-puebla ## Team Standards en context.md
+3. (opcional) editar openspec/config.yaml → execution_mode: auto
+4. /sdd-ff <nombre>  ← pipeline condensado (o /sdd-new para cambios grandes)
 ```
 
 ---
