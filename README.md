@@ -55,7 +55,7 @@ Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación
 
 | Capa | Archivos | Función |
 |------|----------|---------|
-| **Skills** | `skills/sdd-*/` + `conventions/` | Entry point del orquestador. Flujos invocables on-demand (0 tokens hasta uso) |
+| **Skills** | `skills/sdd-*/` + `instructions/` | Entry point del orquestador. Flujos invocables on-demand (0 tokens hasta uso) |
 | **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
 | **Shared** | `agents/_shared/`, `skills/_shared/` | Protocolos compartidos (cargados on-demand por agentes y skills) |
 
@@ -81,13 +81,13 @@ Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación
 | **Agent State Updates** | Cada agente actualiza state.yaml al completar su fase (no depende del orquestador) |
 | **Compaction Awareness** | Estado en artefactos para recovery sin pérdida tras compactación |
 | **Trivial Tracking** | Incluso cambios triviales/simples crean `state.yaml` mínimo para historial completo |
-| **Team Conventions** | `/conventions` actualiza `## Team Standards` en `context.md` — contrato entre personas e IAs del equipo |
+| **Team Conventions** | `/instructions` genera instruction files nativos de plataforma — contrato entre personas e IAs del equipo |
 
 ### Contexto persistente (sin re-explorar en cada sesión)
 
 | Artefacto | Generado por | Lo lee |
 |-----------|-------------|--------|
-| `openspec/context.md` | sdd-init + conventions | Orquestador al iniciar sesión. Incluye repo context + team standards |
+| `.github/instructions/` + `.claude/rules/` | `/instructions` | Auto-cargados por la plataforma. Stack, arquitectura, testing, formatting |
 | `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
 
 ---
@@ -104,13 +104,13 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 | Comando | Descripción | Coste |
 |---------|-------------|-------|
-| `/sdd-init` | Detecta stack, crea openspec, genera context files | 1 req |
+| `/sdd-init` | Detecta stack, crea `openspec/config.yaml` | 1 req |
 | `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify | 2-3 req |
 | `/sdd-ff <name>` | Fast-forward: condensado (1 planner) o completo según complejidad | 1-3 req |
 | `/sdd-continue` | Continuar siguiente fase pendiente | 1 req |
 | `/sdd-status` | Mostrar progreso del cambio activo | 0 req |
 | `/sdd-archive` | Archivar cambio completado | 1 req |
-| `/conventions` | Generar/actualizar `## Team Standards` en `context.md` desde config files | 1 req |
+| `/instructions` | Genera instruction files por stack: framework, testing, formatting | 1 req |
 
 ---
 
@@ -144,7 +144,7 @@ Conductor/
 │           ├── sdd-continue/SKILL.md
 │           ├── sdd-status/SKILL.md
 │           ├── sdd-archive/SKILL.md
-│           └── conventions/SKILL.md
+│           └── instructions/SKILL.md
 └── docs/
 ```
 
@@ -168,8 +168,8 @@ El plugin registra automáticamente los skills (`/sdd-init`, `/sdd-ff`, etc.) y 
 ### Primer uso
 
 ```
-1. /sdd-init    ← detecta stack, genera openspec/ (config.yaml + context.md)
-2. /conventions ← auto-puebla ## Team Standards en context.md
+1. /sdd-init    ← detecta stack, genera openspec/config.yaml (pipeline config)
+2. /instructions ← genera instruction files por stack (framework, testing, formatting)
 3. (opcional) editar openspec/config.yaml → execution_mode: auto
 4. /sdd-ff <nombre>  ← pipeline condensado (o /sdd-new para cambios grandes)
 ```

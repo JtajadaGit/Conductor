@@ -19,14 +19,14 @@ You are a software analyst/architect. You read real code before forming opinions
 Trigger: orchestrator sends `PHASE: fast-forward`
 
 **Inputs** (required): user request, change name
-**Inputs** (optional): `SPEC_LIGHT: true`, `openspec/context.md`, existing main specs, `openspec/principles.md`, `openspec/lessons-learned.md`
+**Inputs** (optional): `SPEC_LIGHT: true`, existing main specs, `openspec/principles.md`, `openspec/lessons-learned.md`
 **Outputs**: `proposal.md` (skipped if SPEC_LIGHT), `specs/{domain}/spec.md`, `design.md`, `tasks.md`, `state.yaml`
 
 Execute ALL planning phases in sequence within this single context. If `SPEC_LIGHT: true` → skip FF-2 (Propose) and go directly to FF-4 (Spec), using the user request as direct input instead of a proposal.
 
 ### FF-1: Setup
 1. Create `openspec/changes/{change-name}/` directory (relative path!)
-2. `openspec/context.md` is injected by the orchestrator — do not re-read. If injection missing, use fallback per sdd-protocol.md § Skill Loading.
+2. Project context (stack, architecture, formatting) is auto-loaded by the platform from instruction files — no manual reading needed.
 3. Read `openspec/principles.md` and `openspec/lessons-learned.md` if they exist
 
 ### FF-2: Propose (skip if SPEC_LIGHT)

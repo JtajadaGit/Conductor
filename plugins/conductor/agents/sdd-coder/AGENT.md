@@ -28,8 +28,8 @@ Verify `tasks.md`, `spec.md`, and `design.md` exist and are non-empty. If any mi
 ### Step 0.1: Read lessons-learned
 If `openspec/lessons-learned.md` exists, read it to avoid known errors.
 
-### Step 0.2: Context fallback
-If `## Project Standards (auto-resolved)` was NOT injected in your prompt, read `openspec/context.md` → extract `## Team Standards` section and apply as project standards. If file missing or section absent → set `skill_resolution: none` in return envelope.
+### Step 0.2: Project context
+Project standards (formatting, testing conventions, architecture) are auto-loaded by the platform from instruction files (`.github/instructions/` or `.claude/rules/`). No manual reading needed.
 
 ### Step 0.3: Read config
 Read `openspec/config.yaml` → extract `x-conductor.strict_tdd`, `x-conductor.hooks.apply` (pre_hook, post_hook, post_hook_on_fail, post_hook_max_retries, checkpoint_every). If config missing or malformed → assume no hooks and `strict_tdd: false`.

@@ -50,15 +50,12 @@ Default: `interactive` (if field missing or invalid).
 ## Delegation Rules
 
 Every agent delegation includes:
-1. **Project Standards** — compact rules from `openspec/context.md` `## Team Standards` (auto-loaded or injected)
-2. **Project Principles** — from `openspec/principles.md` if exists
-3. **Phase** — which SDD phase and its specific instructions
-4. **Context** — change name, affected domain(s), artifact_base_path, persistence mode
-5. **Return Envelope** — structured result: status, summary, artifacts, next, risks, skill_resolution
+1. **Project context** — auto-loaded by the platform from instruction files (`.github/instructions/` or `.claude/rules/`). The orchestrator does NOT need to inject context manually.
+2. **Phase** — which SDD phase and its specific instructions
+3. **Context** — change name, affected domain(s), artifact_base_path, persistence mode
+4. **Return Envelope** — structured result: status, summary, artifacts, next, risks
 
-Sub-agents do NOT discover context — it is injected. They MUST NOT read SKILL.md files or the registry directly.
-
-**Context injection for non-SDD tasks**: when delegating ANY task (not just SDD phases), inject `openspec/context.md` content if it exists. Sub-agents benefit from repo context regardless of whether SDD is active.
+Sub-agents receive project context (stack, architecture, formatting, testing rules) automatically via platform instruction files. They MUST NOT read SKILL.md files or the registry directly.
 
 **Inline vs Delegate**: Read/write 1-3 files with clear intent → may keep inline. 4+ files, exploration, or multi-step logic → ALWAYS delegate to an agent.
 
@@ -132,12 +129,11 @@ After EVERY agent returns, perform these checks BEFORE proceeding:
 - `verify: fail` → PAUSE, show verify-report.md. Offer: (A) fix and re-apply, (B) re-plan, (C) abort.
 - Max 2 retries per phase before escalating to user. Fix cycle hard limit: 5 iterations → hard stop.
 - `consistency_block: true` → block apply, surface issues. User must: (A) unlock spec/design and re-plan, (B) abort.
-- `skill_resolution: none` in response → re-read `openspec/context.md` `## Team Standards` immediately (auto-correct context loss)
 - Advanced recovery → read `agents/_shared/orchestrator-reference.md`
 
 ## Compaction Awareness
 
-After compaction: re-read `state.yaml`, `context.md`, `principles.md`. All state MUST be recoverable from `openspec/` artifacts. See `agents/_shared/orchestrator-reference.md` § Compaction Recovery for full protocol.
+After compaction: re-read `state.yaml` and `openspec/config.yaml`. All state MUST be recoverable from `openspec/` artifacts. Platform instruction files (`.github/instructions/`, `.claude/rules/`) are auto-loaded — no manual re-read needed. See `agents/_shared/orchestrator-reference.md` § Compaction Recovery for full protocol.
 
 ## Post-Pipeline Actions
 

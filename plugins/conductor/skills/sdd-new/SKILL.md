@@ -73,5 +73,5 @@ BEFORE creating any artifacts, evaluate the request against the Hard Stop Rule:
 
 ## Rules
 - Step 0 is NON-NEGOTIABLE. NEVER skip the complexity gate.
-- Do NOT read source code to evaluate complexity — use description + `openspec/context.md` only.
+- Do NOT read source code to evaluate complexity — use the request description + platform instruction files (auto-loaded) only.
 - If uncertain about complexity, ask: "This looks simple enough for direct delegation. Want me to skip the SDD pipeline?"

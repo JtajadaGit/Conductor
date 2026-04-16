@@ -28,13 +28,11 @@ You are an EXECUTOR, not an orchestrator. Execute the work yourself. NEVER launc
 
 **All artifacts** (proposal.md, spec.md, design.md, tasks.md, state.yaml, verify-report.md) MUST be written inside `openspec/changes/{change-name}/`. NEVER write SDD artifacts to project root.
 
-## Skill Loading
+## Project Context
 
-1. Check if `## Project Standards (auto-resolved)` was injected in your prompt → use it. Do NOT read SKILL.md files.
-2. Fallback: read `openspec/context.md` → find `## Team Standards` section → apply compact rules matching file patterns and action type.
-3. Fallback: proceed without project standards. MANDATORY: set `skill_resolution: none` in return envelope.
+Project context (stack, architecture, formatting, testing rules) is loaded **automatically** by the platform from instruction files (`.github/instructions/` for Copilot, `.claude/rules/` for Claude Code). Agents do NOT need to read context files manually — the platform injects relevant instructions based on `applyTo` patterns.
 
-Token budget: ~50-150 tokens per skill block. Max 5 blocks per delegation — prioritize code context matches.
+If platform instruction files are missing (e.g., `/sdd-init` not yet run), proceed without project context. Read `openspec/config.yaml` directly for pipeline-specific config (hooks, strict_tdd, testing commands).
 
 ## Persistence
 
@@ -45,7 +43,7 @@ All SDD artifacts persist to `openspec/` on the filesystem. This is required for
 ```
 openspec/
 ├── config.yaml                    ← OpenSpec standard (schema, context, rules) + Conductor extensions (x-conductor)
-├── context.md                     ← (Conductor ext.) Stack 1-línea + arquitectura, dirs, entry points, team standards (NO repite testing commands ni hooks de config.yaml)
+├── (context.md removed — replaced by platform instruction files in .github/instructions/ and .claude/rules/)
 ├── principles.md                  ← (Conductor ext., optional) Human-authored, never AI-modified
 ├── lessons-learned.md             ← (Conductor ext., optional) Append-only
 ├── specs/{domain}/spec.md         ← Main specs (promoted by archive) — OpenSpec standard
@@ -83,7 +81,7 @@ Every phase MUST return:
 - `next_recommended`: next SDD phase or "none"
 - `risks`: discovered risks or "None"
 - `requires_human_input`: `true` → orchestrator PAUSES
-- `skill_resolution`: REQUIRED. Values: `injected` | `fallback-context` | `none`. If `none` → orchestrator re-reads context.md on next phase.
+- `skill_resolution`: OPTIONAL. Values: `auto` (platform instruction files loaded) | `none` (no instruction files found). Informational only — platform handles context loading automatically.
 
 ## Phase Dependencies (DAG)
 
@@ -147,7 +145,7 @@ Note: spec budget is **per domain**, not total. A change touching 3 domains = up
 
 **Enforcement**: agents MUST self-check word count before writing artifacts. If an artifact exceeds its budget, compress: prefer tables over prose, remove redundant descriptions, delegate detail to downstream phases. Downstream agents SHOULD flag upstream artifacts that exceed budget in their return envelope (`risks` field).
 
-**context.md cap**: `openspec/context.md` SHOULD NOT exceed 600 words. If exceeded after `/conventions`, review Team Standards for redundancy with project config files (the config files are the source of truth; Team Standards is a summary).
+**Instruction files cap**: each instruction file SHOULD NOT exceed 200 words. Keep them concise — the platform loads ALL matching files for every interaction. Config files are the source of truth; instruction files are summaries.
 
 Headers organize, not explain. Prefer tables and bullets over prose.
 
@@ -199,12 +197,12 @@ Format (MUST follow this structure):
 
 ## Context Updates
 
-After a successful verify phase, the sdd-reviewer SHOULD include a `## Suggested context.md Updates` section in verify-report.md when:
+After a successful verify phase, the sdd-reviewer SHOULD include a `## Suggested Instruction Updates` section in verify-report.md when:
 - New "Known Fragile Areas" were discovered during apply/verify
 - Ecosystem constraints affect future changes
 - Architecture changed significantly
 
-The orchestrator MAY apply these suggestions to `openspec/context.md` after archive.
+The orchestrator MAY apply these suggestions to the relevant platform instruction files after archive.
 
 ## state.yaml Schema
 

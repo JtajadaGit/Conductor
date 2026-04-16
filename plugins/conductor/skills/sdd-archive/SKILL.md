@@ -24,8 +24,8 @@ For each delta spec found:
 - If merge would be destructive (removing large sections) → WARN and ask confirmation.
 - If flat `spec.md` found (case 2): WARN "Spec written as flat file — promoted to specs/{domain}/. Future changes should use specs/{domain}/spec.md structure."
 
-### 3. Update context.md (if verify-report suggested updates)
-If `verify-report.md` contains a `## Suggested context.md Updates` section, apply those updates to `openspec/context.md`.
+### 3. Update instruction files (if verify-report suggested updates)
+If `verify-report.md` contains a `## Suggested Instruction Updates` section, apply those updates to the relevant platform instruction files (`.github/instructions/` and `.claude/rules/`).
 
 ### 4. Update state.yaml
 Before moving, update `openspec/changes/{change-name}/state.yaml`:

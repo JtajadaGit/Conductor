@@ -13,8 +13,8 @@
 | `consistency_block: true` | BLOCK APPLY | Present 4-check failures. User MUST choose: (A) unlock and modify spec/design, re-run tasks, (B) abort. |
 | Fix cycle exhausted (5 iterations) | HARD STOP | Report all attempted fixes. User MUST decide — do NOT auto-retry apply. |
 | Timeout/crash (`in_progress` phase) | RETRY (MAX 2) → ESCALATE | Ask user: (A) retry phase, (B) abort. Max 2 retries before escalating. |
-| Compaction detected | AUTO-RECOVER | Re-read `state.yaml`, `openspec/context.md`, `openspec/principles.md`. Re-cache. |
-| `skill_resolution: none` | AUTO-RECOVER | Re-read `openspec/context.md` → `## Team Standards` section. Re-cache for next phase. |
+| Compaction detected | AUTO-RECOVER | Re-read `state.yaml`, `openspec/config.yaml`. Platform instruction files are auto-loaded. |
+| `skill_resolution: none` | INFO ONLY | Platform instruction files not found. Suggest running `/sdd-init` + `/instructions`. |
 | Artifact budget violated | WARN → ACCEPT | Accept but warn that downstream phases consume more tokens. |
 
 **Key principle**: Never silently swallow errors. Every error MUST be reported with enough context for the user to decide.
@@ -31,9 +31,10 @@ If user requests changes after locks:
 ## Compaction Recovery
 
 1. Re-read `state.yaml` to reconstruct DAG state
-2. Re-read `openspec/context.md` to restore repo context + team standards cache
-3. Re-read `openspec/principles.md` if exists
-4. Resume from `current_phase` in state.yaml
+2. Re-read `openspec/config.yaml` for pipeline config
+3. Platform instruction files are auto-loaded — no manual re-read needed
+4. Re-read `openspec/principles.md` if exists
+5. Resume from `current_phase` in state.yaml
 
 ## Phase Dependency Graph
 
@@ -72,18 +73,14 @@ See `sdd-protocol.md` § Phase Dependencies for the full prerequisite table. Bef
 ## Sub-Agent Launch Pattern
 
 **Once per session**:
-1. Read `openspec/context.md`, cache repo context AND team standards (## Team Standards section)
+1. Read `openspec/config.yaml` for pipeline config
 2. Read `openspec/principles.md` if it exists, cache as compact principles (max 5 lines)
-3. If no context.md or no Team Standards section: warn and proceed without project-specific standards
+3. Platform instruction files (`.github/instructions/`, `.claude/rules/`) are auto-loaded — no manual injection needed
 
 **Per delegation**:
-1. Match skills by code context (file patterns) AND task context (actions)
-2. Inject repo context from `openspec/context.md` (architecture sections)
-3. Inject principles as `## Project Principles (auto-resolved)` FIRST
-4. Inject matching compact rules as `## Project Standards (auto-resolved)`
-5. Always include: change_name, affected domain(s), artifact_base_path
-
-**Key**: inject compact rules TEXT, not paths. Sub-agents do NOT read SKILL.md files or the registry.
+1. Always include: change_name, affected domain(s), artifact_base_path
+2. Project context (stack, architecture, formatting, testing) is auto-loaded by the platform via instruction files
+3. Sub-agents do NOT read SKILL.md files or the registry
 
 ## Sub-Agent Context Protocol
 
@@ -91,7 +88,7 @@ Sub-agents get a fresh context with NO memory.
 
 | Phase | Reads | Writes |
 |-------|-------|--------|
-| **fast-forward** | user request, context.md, main specs, principles, lessons-learned | dir + proposal.md + spec.md + design.md + tasks.md + state.yaml |
+| **fast-forward** | user request, main specs, principles, lessons-learned | dir + proposal.md + spec.md + design.md + tasks.md + state.yaml |
 | explore | user request | `exploration.md` |
 | propose | exploration (opt), main specs (opt) | `proposal.md` |
 | clarify | proposal (req) | `questions.md` |

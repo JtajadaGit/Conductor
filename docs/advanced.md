@@ -12,13 +12,13 @@ El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proy
 | Complejidad del cambio | Más dominios → más specs → más tokens |
 | `strict_tdd: true` | Carga addons adicionales (estimado ~400 tokens/agente) |
 | Parallel apply (N coders) | N × prompt del sistema (estimado ~4.000 tokens/coder) |
-| Tamaño de `context.md` | Se inyecta en cada delegación |
+| Instruction files | Auto-cargados por la plataforma según `applyTo` |
 | verify-report extenso | Budget 1500w; comprimir si excede |
 
 ### Optimización
 - **Specs compactos**: usa tablas sobre prosa. Un spec de 600 palabras vs 2.000 reduce la carga acumulada en fases downstream (design, tasks, apply, verify).
 - **Parallel apply**: más rápido en wall-clock pero multiplica el coste del prompt del sistema por cada coder. Evalúa si el speedup justifica el coste extra.
-- **context.md**: mantener por debajo de 600 palabras (cap recomendado). `/conventions` genera un resumen; los config files son la fuente de verdad.
+- **Instruction files**: mantener cada archivo por debajo de 200 palabras. La plataforma carga TODOS los que matchean `applyTo`, así que ficheros grandes multiplican tokens.
 
 > **Nota**: el consumo exacto depende de tu proveedor (Anthropic API → tokens, GitHub Copilot → premium requests). Consulta la documentación oficial de tu plataforma para costes actualizados.
 
@@ -103,7 +103,7 @@ x-conductor:
 
 ### Sub-agentes ignoran convenciones tras compactación
 
-El orquestador se auto-recupera cuando detecta `skill_resolution: none|fallback-*` en la respuesta del sub-agente — relee la sección `## Team Standards` de `openspec/context.md` automáticamente. Si no ocurre: di "update skills" o "reload conventions".
+Las convenciones se cargan automáticamente desde instruction files de plataforma (`.github/instructions/`, `.claude/rules/`). Si faltan: ejecuta `/sdd-init` + `/instructions` para regenerarlos.
 
 ### `state.yaml` tiene estado inconsistente
 
@@ -123,9 +123,9 @@ El modelo puede usar patrones de versiones antiguas. Soluciones:
 
 ---
 
-## 4. Team Conventions (`/conventions`)
+## 4. Team Conventions (`/instructions`)
 
-En equipos multi-persona, `/conventions` actualiza la sección `## Team Standards` dentro de `openspec/context.md` — un contrato compartido que todas las IAs (Claude, Copilot) en todas las máquinas del equipo leen.
+En equipos multi-persona, `/instructions` genera instruction files nativos de plataforma (`.github/instructions/` + `.claude/rules/`) — un contrato compartido que todas las IAs (Claude, Copilot) en todas las máquinas del equipo cargan automáticamente.
 
 ### Qué escanea
 
@@ -140,19 +140,17 @@ En equipos multi-persona, `/conventions` actualiza la sección `## Team Standard
 
 ### Resultado
 
-Actualiza `openspec/context.md` con las siguientes secciones:
+Genera/actualiza estos instruction files (dual-write a ambas plataformas):
 
-```markdown
-## Team Standards
-### Formatting & Linting
-### Testing
-### Principles
-### Custom Skills
-### Compact Rules
-### Project Config Files
-```
+| Archivo | applyTo | Contenido |
+|---------|---------|-----------|
+| `testing` | Test patterns dinámicos | Convenciones de testing |
+| `formatting` | Source patterns dinámicos | Formato, linting, strictness |
+| `principles` | `**` | Principios del equipo (si existen) |
+| `custom-skills` | `**` | Custom skills del proyecto |
+| `project-config` | `**` | Config files detectados |
 
-- **Commit-ready**: `context.md` se versiona y se revisa como cualquier otro artefacto del equipo
+- **Commit-ready**: instruction files se versionan y revisan como cualquier otro artefacto del equipo
 - Al re-ejecutar, **merge** nuevos hallazgos con adiciones manuales existentes
 
 ---
@@ -175,7 +173,7 @@ x-conductor:
 ```
 
 ```markdown
-<!-- openspec/context.md — describir stacks por paquete -->
+<!-- .github/instructions/stack.instructions.md (o .claude/rules/stack.md) — describir stacks por paquete -->
 ## Stack
 - **packages/frontend**: React 19, TypeScript, Vite
 - **packages/backend**: Go 1.22, Chi router

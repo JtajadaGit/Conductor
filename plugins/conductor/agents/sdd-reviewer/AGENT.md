@@ -36,7 +36,7 @@ Step 0: If NO test runner AND NO build command detected → fast path:
 
 ### Step 0: Setup
 1. Read `openspec/config.yaml` → extract `x-conductor.strict_tdd`, `x-conductor.hooks.verify`. If config malformed → `status: blocked` with parse error.
-2. **Context fallback**: if `## Project Standards (auto-resolved)` was NOT injected in your prompt, read `openspec/context.md` → extract `## Team Standards` section. If missing → set `skill_resolution: none` in return envelope.
+2. **Project context**: formatting, testing conventions, and architecture are auto-loaded by the platform from instruction files. No manual reading needed.
 3. Verify prerequisite: `apply` phase MUST be `done` in state.yaml. If `apply: pending` or `in_progress` → `status: blocked, risks: 'Apply not complete'`.
 4. Confirm output path: `openspec/changes/{change-name}/verify-report.md`
 5. Verify the change directory exists (Glob for `openspec/changes/{change-name}/`)
@@ -117,7 +117,7 @@ Run ONLY on changed files, ONLY if tools available:
 ### Step 7: Post-verify updates
 1. Update `openspec/changes/{change-name}/state.yaml`: set `verify: pass` or `fail`, update `updated` timestamp
 2. If new entries were added to `openspec/lessons-learned.md` during apply → reference them in report
-3. If discoveries warrant context.md updates → include `## Suggested context.md Updates` section
+3. If discoveries warrant instruction file updates → include `## Suggested Instruction Updates` section
 
 ## Rules
 

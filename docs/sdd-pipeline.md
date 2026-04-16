@@ -69,7 +69,7 @@ Fases individuales con agent calls separados. Permite gates (clarify, explore) y
 
 | Fase | Agente | Model tier | Lee | Produce | Budget |
 |------|--------|------------|-----|---------|--------|
-| **fast-forward** | sdd-planner | high-capability | context.md + codebase | todos los artefactos planning | — |
+| **fast-forward** | sdd-planner | high-capability | instruction files (auto) + codebase | todos los artefactos planning | — |
 | explore | sdd-planner | standard | código fuente | `exploration.md` | <400 pal |
 | propose | sdd-planner | high-capability | exploration (opcional) | `proposal.md` | <400 pal |
 | clarify | sdd-planner | standard | proposal (req.) | `questions.md` (si >0) | <300 pal |
@@ -132,7 +132,7 @@ Default: `interactive`. Para cambiar: editar `execution_mode: auto` en config.ya
 
 ### Qué se inyecta en cada delegación
 
-1. **Project Standards** — compact rules de `/conventions`
+1. **Project Standards** — compact rules de `/instructions`
 2. **Project Principles** — de `openspec/principles.md` (si existe)
 3. **Phase** — instrucciones específicas de la fase
 4. **Context** — nombre del cambio, paths de artefactos, modo de persistencia
@@ -152,7 +152,7 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 | `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |
 | `/sdd-status` | Muestra progreso (lee state.yaml) | 0 req |
 | `/sdd-archive` | Sync delta specs → main specs, mover a archive/ | 1 req |
-| `/conventions` | Genera/actualiza `## Team Standards` en `openspec/context.md` | 1 req |
+| `/instructions` | Genera instruction files de testing, formatting y config | 1 req |
 
 ---
 
@@ -293,7 +293,7 @@ Wave 2 (sequential): ─── [S] tasks + reconciliación tasks.md + state.yaml
 Cuando el contexto crece largo, el orquestador guarda estado proactivamente:
 1. `state.yaml` actualizado antes de delegaciones grandes
 2. Decisiones clave (nombre del cambio, fase actual) recuperables desde artefactos en `openspec/`
-3. Tras compactación: relee `state.yaml`, `context.md` (incluye team standards), `principles.md`
+3. Tras compactación: relee `state.yaml` y `config.yaml`. Instruction files se auto-cargan por la plataforma.
 
 ---
 
@@ -357,7 +357,7 @@ Mecanismo ligero para ajustes de spec descubiertos durante apply:
 | `status: blocked` | STOP, reportar blocker, sugerir path |
 | `status: partial` | Preguntar: continuar o reintentar |
 | `consistency_block: true` | Bloquear apply, mostrar issues |
-| `skill_resolution: none\|fallback-*` | Auto-releer `## Team Standards` en `openspec/context.md` |
+| `skill_resolution: none` | Instruction files no encontrados — ejecutar `/sdd-init` + `/instructions` |
 | Max 2 retries | Escalar al usuario |
 
 ---

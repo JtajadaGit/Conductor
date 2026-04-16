@@ -65,7 +65,7 @@ El plugin expone:
 /sdd-init
 ```
 
-Detecta stack, testing, crea `openspec/` con `config.yaml` y `context.md`.
+Detecta stack, testing, crea `openspec/config.yaml` (pipeline config).
 
 Resultado esperado:
 ```
@@ -74,16 +74,16 @@ Resultado esperado:
    Testing: Jest (detectado), strict_tdd: true
    Execution mode: interactive (cambiar en config.yaml)
    Persistencia: openspec (habilitado)
-   → Ejecuta /conventions para completar Team Standards
+   → Ejecuta /instructions para generar instruction files de testing y formatting
 ```
 
-### Paso 2: `/conventions`
+### Paso 2: `/instructions`
 
 ```
-/conventions
+/instructions
 ```
 
-Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y puebla la sección `## Team Standards` de `openspec/context.md`.
+Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y genera instruction files (`testing`, `formatting`, `project-config`) en ambas plataformas.
 
 ### Paso 3 (opcional): Configurar execution mode
 
@@ -122,7 +122,7 @@ Desde ahí:
 | `/sdd-init` no reconocido | Plugin no instalado | `/plugin add <ruta>` y `/reload-plugins` |
 | Orquestador ejecuta código directamente | Skills no cargados | `/reload-plugins` para recargar |
 | No se crean artefactos | `/sdd-init` no ejecutado | Ejecutar `/sdd-init` |
-| Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/conventions` |
+| Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/instructions` |
 
 ---
 
