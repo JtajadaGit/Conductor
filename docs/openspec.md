@@ -69,12 +69,12 @@ El contexto del proyecto se genera como instruction files nativos en ambas plata
 
 | Archivo | applyTo (ejemplo Angular) | Generado por | Contenido |
 |---------|---------|---|---|
-| `{framework}.instructions.md` | `**/*.component.ts,**/*.service.ts,...` | `/sdd-init` | Stack, arquitectura, directorios, entry points |
+| `{framework}.instructions.md` | `**/*.component.ts,**/*.service.ts,...` | `/instructions` | Stack, arquitectura, directorios, entry points, convenciones |
 | `testing.instructions.md` | `**/*.spec.ts` | `/instructions` | Convenciones de testing, patrones de archivos |
 | `formatting.instructions.md` | `**/*.ts,**/*.html` | `/instructions` | Formato, linting, TypeScript strict |
 | `principles.instructions.md` | `**/*.ts,**/*.py,...` (source) | `/instructions` | Principios del equipo (si existen) |
 
-> Cada stack genera patrones distintos. Nunca `applyTo: "**"`. Ver `/sdd-init` y `/instructions` para la tabla completa de stacks.
+> Todos generados por `/instructions`. Cada stack genera patrones distintos. Nunca `applyTo: "**"`.
 
 Ubicaciones:
 - **GitHub Copilot**: `.github/instructions/{topic}.instructions.md`
@@ -148,11 +148,11 @@ Los datos de stack aparecen en dos formatos con propósitos distintos:
 
 | Ubicación | Formato | Propósito | Actualizado por |
 |-----------|---------|-----------|-----------------|
-| `config.yaml` → `context:` | 1 línea | Inyección en prompts de artefactos (planner) | `/sdd-init` (auto) |
-| `config.yaml` → `x-conductor.stack` | YAML estructurado | Lógica del pipeline, auto-detección | `/sdd-init` (auto) |
-| `stack.instructions.md` / `stack.md` | Markdown con `applyTo: "**"` | Contexto auto-cargado por la plataforma (arquitectura, dirs, entry points) | `/sdd-init` (auto) |
+| `config.yaml` → `context:` | 1 línea | Inyección en prompts de artefactos (planner) | `/sdd-init` |
+| `config.yaml` → `x-conductor.stack` | YAML estructurado | Lógica del pipeline, auto-detección | `/sdd-init` |
+| `{framework}.instructions.md` | Markdown con `applyTo` específico por stack | Contexto auto-cargado por la plataforma | `/instructions` |
 
-**Regla de sincronización**: cuando el stack cambia, re-ejecuta `/sdd-init` — regenera config.yaml y instruction files preservando `rules:` personalizadas y secciones manuales.
+**Regla de sincronización**: cuando el stack cambia, re-ejecuta `/sdd-init` (actualiza config.yaml) + `/instructions` (regenera instruction files).
 
 ---
 

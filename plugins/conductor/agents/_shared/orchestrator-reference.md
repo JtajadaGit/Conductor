@@ -1,7 +1,7 @@
 # Orchestrator Reference — On-Demand Protocol
 
 > Load this file only when you need detailed error recovery, lock management, or sub-agent protocol.
-> The essentials are in CLAUDE.md / copilot-instructions.md.
+> The essentials are in `skills/_shared/orchestration-protocol.md`.
 
 ## Error Recovery Protocol
 

@@ -114,39 +114,36 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 ---
 
-## Estructura del Plugin
+## Estructura de un proyecto con Conductor
+
+Tras `/sdd-init` + `/instructions` + un cambio SDD:
 
 ```
-Conductor/
-├── .claude-plugin/
-│   └── marketplace.json             ← Registro de plugins disponibles
-├── plugins/
-│   └── conductor/
-│       ├── .claude-plugin/
-│       │   └── plugin.json          ← Manifest del plugin (Claude Code)
-│       ├── agents/
-│       │   ├── _shared/
-│       │   │   ├── sdd-protocol.md          ← Protocolo SDD para agentes (on-demand)
-│       │   │   └── orchestrator-reference.md ← Referencia orquestador (on-demand)
-│       │   ├── sdd-planner/AGENT.md
-│       │   ├── sdd-coder/
-│       │   │   ├── AGENT.md
-│       │   │   └── strict-tdd.md
-│       │   └── sdd-reviewer/
-│       │       ├── AGENT.md
-│       │       └── strict-tdd-verify.md
-│       └── skills/
-│           ├── _shared/
-│           │   └── orchestration-protocol.md ← Protocolo de orquestación (on-demand)
-│           ├── sdd-init/SKILL.md
-│           ├── sdd-new/SKILL.md
-│           ├── sdd-ff/SKILL.md
-│           ├── sdd-continue/SKILL.md
-│           ├── sdd-status/SKILL.md
-│           ├── sdd-archive/SKILL.md
-│           └── instructions/SKILL.md
-└── docs/
+tu-proyecto/
+├── .github/
+│   └── instructions/                    ← Instruction files para GitHub Copilot
+│       ├── angular.instructions.md      ←   applyTo: "**/*.component.ts,**/*.service.ts,..."
+│       ├── testing.instructions.md      ←   applyTo: "**/*.spec.ts"
+│       └── formatting.instructions.md   ←   applyTo: "**/*.ts,**/*.html"
+├── .claude/
+│   └── rules/                           ← Instruction files para Claude Code
+│       ├── angular.md                   ←   (mismo contenido, formato Claude)
+│       ├── testing.md
+│       └── formatting.md
+├── openspec/                            ← Pipeline SDD (generado por /sdd-init)
+│   ├── config.yaml                      ←   Config ejecutable (hooks, TDD, test commands)
+│   ├── specs/                           ←   Especificaciones principales
+│   └── changes/
+│       ├── mi-feature/                  ←   Cambio activo (generado por /sdd-new o /sdd-ff)
+│       │   ├── state.yaml
+│       │   ├── specs/{domain}/spec.md
+│       │   ├── design.md
+│       │   └── tasks.md
+│       └── archive/                     ←   Cambios completados
+└── src/                                 ←   Tu código (Conductor no lo toca directamente)
 ```
+
+> Los instruction files se generan por stack detectado (Angular, React, Django, Spring, etc.) con `applyTo` específico. La plataforma los carga automáticamente cuando el agente toca archivos relevantes.
 
 ---
 
