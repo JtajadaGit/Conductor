@@ -147,25 +147,71 @@ tu-proyecto/
 
 ---
 
-## Instalación
+## Plataformas
 
-### Claude Code
+### Claude Code (CLI)
 
 ```bash
-# Desde tu proyecto, instalar el plugin
+# Instalación — desde Claude Code en tu proyecto
 /plugin add <ruta-a-Conductor>
+/reload-plugins
 ```
 
-El plugin registra automáticamente los skills (`/sdd-init`, `/sdd-ff`, etc.) y los agentes. No sobrescribe `CLAUDE.md` ni ningún archivo del proyecto.
+| Aspecto | Cómo funciona |
+|---------|--------------|
+| **Instalación** | `/plugin add` — registro nativo, sin copiar archivos |
+| **Skills** | Auto-descubiertos: `/sdd-init`, `/sdd-ff`, `/instructions`, etc. |
+| **Agents** | Auto-descubiertos desde el plugin. Se delegan con `Agent` tool |
+| **Instruction files** | `.claude/rules/{name}.md` con frontmatter `applyTo` — auto-cargados por la plataforma |
+| **Parallel apply** | `Agent` tool con `isolation: "worktree"` + `run_in_background: true` |
+| **Model routing** | `model: "opus"` / `model: "sonnet"` / `model: "haiku"` en cada delegación |
+| **No sobrescribe** | `CLAUDE.md` del proyecto queda intacto |
 
-### GitHub Copilot (VS Code / CLI)
+### GitHub Copilot (VS Code)
 
-> Pendiente: integración Copilot via plugin. Por ahora, copiar manualmente `agents/` y `skills/` a `.github/`.
+```bash
+# Instalación — copiar al proyecto
+cp -r Conductor/plugins/conductor/agents/  tu-proyecto/.github/agents/
+cp -r Conductor/plugins/conductor/skills/  tu-proyecto/.github/skills/
+```
 
-### Primer uso
+| Aspecto | Cómo funciona |
+|---------|--------------|
+| **Instalación** | Copiar `agents/` y `skills/` a `.github/` |
+| **Skills** | Custom instructions en Copilot Chat: `/sdd-init`, `/sdd-ff`, etc. |
+| **Agents** | `.github/agents/{name}/AGENT.md` — invocados desde Copilot Chat |
+| **Instruction files** | `.github/instructions/{name}.instructions.md` con `applyTo` — auto-cargados por Copilot |
+| **Parallel apply** | No soportado nativamente — coders se ejecutan en secuencia |
+| **Model routing** | Depende del modelo configurado en Copilot settings |
+| **No sobrescribe** | `.github/copilot-instructions.md` del proyecto queda intacto |
+
+### GitHub Copilot (CLI)
+
+```bash
+# Misma instalación que VS Code
+cp -r Conductor/plugins/conductor/agents/  tu-proyecto/.github/agents/
+cp -r Conductor/plugins/conductor/skills/  tu-proyecto/.github/skills/
+```
+
+| Aspecto | Cómo funciona |
+|---------|--------------|
+| **Instalación** | Copiar `agents/` y `skills/` a `.github/` |
+| **Skills** | `/sdd-init`, `/sdd-ff`, etc. en modo agentic |
+| **Agents** | `.github/agents/{name}/AGENT.md` — delegación completa |
+| **Instruction files** | `.github/instructions/{name}.instructions.md` con `applyTo` |
+| **Parallel apply** | Soportado via agentic mode con sub-processes |
+| **Model routing** | Configurable por invocación |
+
+### Qué comparten las 3 plataformas
+
+- **`openspec/`** — mismos artefactos SDD (config.yaml, specs, changes, state.yaml). Cualquier plataforma lee y escribe los mismos archivos.
+- **Instruction files** — `/instructions` genera AMBOS formatos simultáneamente (`.claude/rules/` + `.github/instructions/`). Equipos mixtos trabajan con los mismos estándares.
+- **Skills y agents** — misma lógica, mismos archivos `.md`. La plataforma determina cómo se cargan y ejecutan.
+
+### Primer uso (cualquier plataforma)
 
 ```
-1. /sdd-init    ← detecta stack, genera openspec/config.yaml (pipeline config)
+1. /sdd-init     ← detecta stack, genera openspec/config.yaml (pipeline config)
 2. /instructions ← genera instruction files por stack (framework, testing, formatting)
 3. (opcional) editar openspec/config.yaml → execution_mode: auto
 4. /sdd-ff <nombre>  ← pipeline condensado (o /sdd-new para cambios grandes)

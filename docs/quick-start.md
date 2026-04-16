@@ -16,44 +16,45 @@ Conductor funcionando en tu proyecto en menos de 5 minutos.
 
 ## Instalación
 
-### Claude Code
+### Claude Code (CLI)
 
 ```bash
-# Desde Claude Code en tu proyecto
 /plugin add <ruta-a-Conductor>
+/reload-plugins
 ```
 
-Conductor se registra como plugin. No copia archivos ni sobrescribe `CLAUDE.md`. Los skills y agentes se cargan directamente desde el plugin.
+Verifica: `/plugin` debe mostrar "conductor" instalado. Skills y agentes se cargan directamente desde el plugin — no se copian archivos al proyecto.
 
-Verifica la instalación:
+### GitHub Copilot (VS Code / CLI)
+
 ```bash
-/plugin           # Debe mostrar "conductor" instalado
-/reload-plugins   # Recarga si acabas de instalar
+# Desde la raíz de tu proyecto
+cp -r Conductor/plugins/conductor/agents/  .github/agents/
+cp -r Conductor/plugins/conductor/skills/  .github/skills/
 ```
 
-### GitHub Copilot
-
-> Pendiente: integración nativa via plugin. Por ahora, copiar manualmente `plugins/conductor/agents/` y `plugins/conductor/skills/` a `.github/`.
+Los agents y skills se copian a `.github/` — Copilot los descubre automáticamente.
 
 ### Qué se registra
 
-El plugin expone:
-- **7 skills** como `/sdd-init`, `/sdd-ff`, etc.
-- **3 agentes** (`sdd-planner`, `sdd-coder`, `sdd-reviewer`) + shared protocols
-- **0 archivos modificados** en tu proyecto (hasta que ejecutes `/sdd-init`)
+| Componente | Claude Code | Copilot |
+|---|---|---|
+| **Skills** | `/sdd-init`, `/sdd-ff`, `/instructions`, etc. | Mismos, desde `.github/skills/` |
+| **Agents** | `sdd-planner`, `sdd-coder`, `sdd-reviewer` | Mismos, desde `.github/agents/` |
+| **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` |
+| **Pipeline artifacts** | `openspec/` (compartido) | `openspec/` (compartido) |
 
----
+### Comparativa de capacidades
 
-## Diferencias por plataforma
-
-| Característica | Claude Code | Copilot VS Code | Copilot CLI |
-|---------------|-------------|-----------------|-------------|
-| Instalación | `/plugin add` (nativo) | Manual (copiar a `.github/`) | Manual (copiar a `.github/`) |
-| Orquestador | Skills del plugin (no sobrescribe `CLAUDE.md`) | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
-| Agentes | Plugin agents (auto-descubiertos) | `.github/agents/` | `.github/agents/` |
-| Skills | `/sdd-*` | `/sdd-*` | `/sdd-*` |
-| Modelos | high-capability / standard / fast | high-capability / standard / fast | high-capability / standard / fast |
-| Tool use | ✅ Completo | ✅ Completo | ✅ Completo (agentic) |
+| Feature | Claude Code | Copilot VS Code | Copilot CLI |
+|---------|-------------|-----------------|-------------|
+| Instalación | `/plugin add` (nativo) | Copiar a `.github/` | Copiar a `.github/` |
+| Sub-agents | `Agent` tool (completo) | Copilot Chat agents | Agentic mode |
+| Parallel apply (worktrees) | ✅ `isolation: "worktree"` | ❌ Secuencial | ✅ Sub-processes |
+| Model routing por fase | ✅ opus/sonnet/haiku | Modelo único | Configurable |
+| Instruction files auto-load | ✅ `.claude/rules/` | ✅ `.github/instructions/` | ✅ `.github/instructions/` |
+| `openspec/` compartido | ✅ | ✅ | ✅ |
+| No sobrescribe instrucciones | ✅ (`CLAUDE.md` intacto) | ✅ (`copilot-instructions.md` intacto) | ✅ |
 
 ---
 
