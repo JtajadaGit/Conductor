@@ -106,8 +106,7 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 |---------|-------------|
 | `/sdd-init` | Detecta stack, crea `openspec/config.yaml` |
 | `/instructions` | Genera instruction files por stack: framework, testing, formatting |
-| `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify |
-| `/sdd-ff <name>` | Fast-forward: condensado (1 planner) o completo según complejidad |
+| `/sdd-new <name>` | Nuevo cambio: evalúa complejidad → elige pipeline automáticamente |
 | `/sdd-continue` | Continuar siguiente fase pendiente |
 | `/sdd-status` | Mostrar progreso del cambio activo |
 | `/sdd-archive` | Archivar cambio completado |
@@ -134,7 +133,7 @@ tu-proyecto/
 │   ├── config.yaml                      ←   Config ejecutable (hooks, TDD, test commands)
 │   ├── specs/                           ←   Especificaciones principales
 │   └── changes/
-│       ├── mi-feature/                  ←   Cambio activo (generado por /sdd-new o /sdd-ff)
+│       ├── mi-feature/                  ←   Cambio activo (generado por /sdd-new)
 │       │   ├── state.yaml
 │       │   ├── specs/{domain}/spec.md
 │       │   ├── design.md
@@ -182,7 +181,7 @@ tu-proyecto/
 1. /sdd-init     ← detecta stack, genera openspec/config.yaml (pipeline config)
 2. /instructions ← genera instruction files por stack (framework, testing, formatting)
 3. (opcional) editar openspec/config.yaml → execution_mode: auto
-4. /sdd-ff <nombre>  ← pipeline condensado (o /sdd-new para cambios grandes)
+4. /sdd-new <nombre>  ← evalúa complejidad, elige pipeline automáticamente
 ```
 
 ---
@@ -201,7 +200,7 @@ ORQUESTADOR:
 
 ### Cambio medium (pipeline condensado — 3 agents)
 ```
-USUARIO: /sdd-ff contact-page "Añadir página de contacto con formulario reactivo,
+USUARIO: /sdd-new contact-page "Añadir página de contacto con formulario reactivo,
          validaciones, toast de éxito y ruta /contact"
 ORQUESTADOR:
   1. Complexity Gate → multi-file, necesita diseño → MEDIUM ✓

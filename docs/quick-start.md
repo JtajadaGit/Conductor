@@ -21,7 +21,7 @@ Conductor funciona como plugin en las 3 plataformas. Ver [README § Plataformas]
 | Componente | Claude Code | Copilot CLI | Copilot VS Code |
 |---|---|---|---|
 | **Plugin system** | `/plugin add` | `/plugin install` | Copiar a `.github/` |
-| **Skills** | `/sdd-init`, `/sdd-ff`, etc. | `/sdd-init`, `/sdd-ff`, etc. | Mismos, desde `.github/skills/` |
+| **Skills** | `/sdd-init`, `/sdd-new`, etc. | `/sdd-init`, `/sdd-new`, etc. | Mismos, desde `.github/skills/` |
 | **Agents** | Plugin agents (`Agent` tool) | `.github/agents/` + sub-agents | `.github/agents/` via Chat |
 | **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` | `.github/instructions/*.instructions.md` |
 | **Parallel apply** | ✅ worktrees | ✅ `/fleet` + worktrees | Delega a Copilot CLI |
@@ -68,8 +68,7 @@ x-conductor:
 ### Paso 4: Primer cambio
 
 ```
-/sdd-ff mi-feature       # Cambio medio — pipeline condensado
-/sdd-new mi-feature      # Cambio grande o vago — pipeline completo
+/sdd-new mi-feature      # Evalúa complejidad → elige pipeline automáticamente
 ```
 
 Desde ahí:

@@ -11,9 +11,9 @@
 
 ### Estrategias de optimización
 
-1. **Spec-light** (automático): si tu request es >50 palabras con scope claro → omite proposal y ahorra ~400 tokens
-2. **`/sdd-ff`** para batching de planificación — mismas fases, menor overhead conversacional
-3. **Omitir explore** si ya tienes scope + approach + constraints claros (ahorra 1 request)
+1. **Spec-light** (automático): si tu request es >50 palabras con scope claro → omite proposal
+2. **Condensed pipeline** (automático para medium): `/sdd-new` usa 1 sola llamada al planner
+3. **Omitir explore** si ya tienes scope + approach + constraints claros
 4. **No re-ejecutar verify** sin haber cambiado código
 5. **Delegación directa** para tareas ≤2 archivos (1 request vs 10+)
 6. **Modo Auto** (`execution_mode: auto` en config.yaml) — 0 pausas, 0 roundtrips extra
@@ -25,7 +25,7 @@
 ### Recomendado
 
 - **Deja que el orquestador orqueste** — no le pidas que lea código directamente; delega a sub-agentes
-- **Specs antes de código** — `/sdd-ff` como mínimo para cualquier feature
+- **Specs antes de código** — `/sdd-new` como mínimo para cualquier feature
 - **Batches pequeños en apply** — 2-3 tareas para features complejos; fácil de rehacer si falla
 - **Verify antes de archive** — siempre. Sin excepciones.
 - **openspec en proyectos serios** — habilita recuperación tras compactación
@@ -43,16 +43,13 @@
 
 ```
 # Feature nueva — modo auto (config.yaml: execution_mode: auto)
-/sdd-ff mi-feature → corre todo back-to-back → /sdd-archive
+/sdd-new mi-feature → evalúa complejidad → pipeline automático → /sdd-archive
 
-# Feature nueva — modo interactive (config.yaml: execution_mode: interactive)
-/sdd-ff mi-feature → pausa → apply → pausa → verify → /sdd-archive
-
-# Feature con exploración
-/sdd-new mi-feature → /sdd-ff mi-feature → apply → verify → /sdd-archive
+# Feature nueva — modo interactive
+/sdd-new mi-feature → pausa tras planning → apply → pausa → verify → /sdd-archive
 
 # Bugfix trivial (sin SDD)
-"Corrige el null check en utils.ts línea 42" → delegación directa (1 request)
+"Corrige el null check en utils.ts línea 42" → delegación directa al coder
 ```
 
 ### Configuración del Execution Mode

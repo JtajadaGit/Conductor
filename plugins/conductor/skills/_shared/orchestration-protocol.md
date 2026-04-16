@@ -1,6 +1,6 @@
 # Orchestration Protocol — Unified Reference for Pipeline Skills
 
-> Loaded by sdd-ff, sdd-new, sdd-continue. Single source of truth for orchestrator behavior.
+> Loaded by sdd-new, sdd-continue. Single source of truth for orchestrator behavior.
 > For agent-internal behavior, see `agents/_shared/sdd-protocol.md`.
 
 ## Coordinator Role
@@ -95,9 +95,9 @@ MAY fix directly when ALL conditions met:
 - Iterative error→fix→rebuild loop
 - Debug post-apply ONLY — never for features, architecture, or business logic
 
-## sdd-ff Rules
+## Pipeline Modes (decided by sdd-new Complexity Gate)
 
-### Condensed Pipeline (default for medium)
+### Condensed Pipeline (medium changes)
 - Single `sdd-planner` call with `PHASE: fast-forward`
 - Planner creates directory, produces all artifacts, writes state.yaml
 - **Orchestrator does NOT create directories or write state.yaml** — the sdd-planner handles everything

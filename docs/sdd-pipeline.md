@@ -90,10 +90,10 @@ El orquestador evalúa complejidad ANTES de actuar:
 |-------------|-------|--------|
 | **Trivial** | ≤5 líneas, 1-2 archivos, intent claro | Delega directo. Sin SDD. |
 | **Simple** | Scope claro, un solo concern | Delega directo. Sin SDD. |
-| **Medio** | Multi-archivo, necesita diseño, testable | **Sugiere** `/sdd-ff`. No auto-ejecuta. |
-| **Grande** | Vago, multi-dominio, necesita exploración | **Sugiere** `/sdd-new`. No auto-ejecuta. |
+| **Medio** | Multi-archivo, necesita diseño, testable | Pipeline condensado (1 planner call). |
+| **Grande** | Vago, multi-dominio, necesita exploración | Pipeline completo (explore primero). |
 
-El orquestador **nunca** auto-invoca sdd-new o sdd-ff.
+`/sdd-new` decide automáticamente qué pipeline usar según la complejidad evaluada.
 
 ---
 
@@ -148,8 +148,7 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 |---------|----------|
 | `/sdd-init` | Bootstrap: detecta stack, crea `openspec/config.yaml` |
 | `/instructions` | Genera instruction files por stack: framework, testing, formatting |
-| `/sdd-new <name>` | Evalúa input → [explore?] → propose → clarify |
-| `/sdd-ff <name>` | Pipeline condensado (1 planner call) o completo según complejidad |
+| `/sdd-new <name>` | Evalúa complejidad → elige pipeline automáticamente |
 | `/sdd-continue` | Siguiente fase pendiente en el DAG |
 | `/sdd-status` | Muestra progreso (lee state.yaml) |
 | `/sdd-archive` | Sync delta specs → main specs, mover a archive/ |

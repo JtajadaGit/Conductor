@@ -27,7 +27,7 @@ El **orquestador** (tú + Conductor) coordina cuándo actúa cada agente.
 | **OpenSpec** | Estándar abierto para organizar specs en `openspec/` ([openspec.dev](https://openspec.dev/)) |
 | **DAG** | Grafo de dependencias entre fases — cada fase necesita que la anterior termine |
 | **Worktree** | Copia aislada del repo (Git) para que varios coders trabajen en paralelo sin conflictos |
-| **Fast-forward** | Modo condensado (`/sdd-ff`) — toda la planificación en una sola llamada |
+| **Condensed pipeline** | Modo automático para cambios medium — toda la planificación en una sola llamada |
 | **Spec-light** | Variante de fast-forward que omite proposal cuando el scope ya está claro (>50 palabras) |
 | **Delta spec** | Spec parcial con secciones ADDED/MODIFIED/REMOVED — para cambios sobre specs existentes |
 | **Artifact** | Fichero generado por el pipeline (proposal.md, spec.md, design.md, tasks.md) |
@@ -39,8 +39,8 @@ El **orquestador** (tú + Conductor) coordina cuándo actúa cada agente.
 
 ```
 /sdd-init              # Setup inicial — detecta stack, crea openspec/
-/sdd-new <nombre>      # Cambio grande o vago — pipeline completo
-/sdd-ff <nombre>       # Cambio medio — planificación rápida (fast-forward)
+/instructions          # Genera instruction files por stack detectado
+/sdd-new <nombre>      # Nuevo cambio — evalúa complejidad, elige pipeline
 /sdd-continue          # Continuar con la siguiente fase
 /sdd-archive           # Archivar cambio verificado — promueve specs
 ```
@@ -48,7 +48,7 @@ El **orquestador** (tú + Conductor) coordina cuándo actúa cada agente.
 ## Ejemplo completo: "Añadir validación de email al formulario de registro"
 
 ```
-TÚ: /sdd-ff validacion-email
+TÚ: /sdd-new validacion-email
 
 ORQUESTADOR:
   → Lee config.yaml → execution_mode: auto
@@ -86,13 +86,14 @@ TÚ: /sdd-archive
 ## ¿Cuándo usar Conductor?
 
 ```
-¿El cambio es vago o complejo (>3 ficheros)?
-├─ SÍ → /sdd-new (pipeline completo con explore)
-├─ NO, pero toca varios ficheros → /sdd-ff (planificación rápida)
-└─ NO, ≤2 ficheros y claro → Delegación directa (sin SDD)
+/sdd-new <descripción>
+  → Complexity Gate (automático)
+    → TRIVIAL/SIMPLE → delegación directa al coder (sin pipeline)
+    → MEDIUM → condensed pipeline (1 planner call)
+    → LARGE → full pipeline (explore primero)
 ```
 
-Conductor tiene un **Hard Stop Rule**: evalúa la complejidad de tu petición y te sugiere el modo adecuado. No fuerza SDD en tareas triviales.
+Conductor tiene un **Hard Stop Rule**: evalúa la complejidad automáticamente y elige el pipeline adecuado. No fuerza SDD en tareas triviales.
 
 ## Siguiente paso
 
