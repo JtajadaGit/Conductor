@@ -78,7 +78,7 @@ If `post_hook` configured (from Step 0.3) → execute after each batch (or every
    - **Change**: {what is added/modified}
    - **Impact**: none | minor | major
    ```
-   If impact = `major` → set `status: partial`, return to orchestrator. Max 3 minor amendments. See `agents/_shared/orchestrator-reference.md` § Spec Amendments for full protocol.
+   If impact = `major` → set `status: partial`, return to orchestrator. Max 3 minor amendments.
 3. **Document deviations**: If you changed ANY approach from what design.md specified (different API, different pattern, different library) → append `## Deviations` section to design.md:
    ```markdown
    ## Deviations

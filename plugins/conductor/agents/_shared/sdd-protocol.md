@@ -102,31 +102,15 @@ explore? → propose → clarify? → spec → design → tasks → apply ⟲ fi
 
 **Enforcement**: Before starting ANY phase, verify prerequisites from this table. If any prerequisite is `pending` or `in_progress` → return `status: blocked, risks: 'Prerequisite {phase} not complete'`.
 
-## Concurrency Safety
+## Concurrency Safety (for agents in parallel mode)
 
-**Protected files** — serialized access only:
-- `openspec/changes/{change-name}/state.yaml` — only ONE agent writes at a time
-- `openspec/changes/{change-name}/tasks.md` — only the reconciliation sdd-coder marks [x]
-- `openspec/config.yaml` — global, NOT modifiable during apply
-- `openspec/lessons-learned.md` — serialize appends (one agent at a time)
+If you receive `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]`:
+- Write ONLY code files for your assigned tasks. Do NOT update tasks.md or state.yaml.
+- The reconciliation coder (Wave 2) handles tasks.md marks and state.yaml.
 
-**Parallel [P] tasks** — safe with worktree isolation:
-- `[P]` markers indicate tasks with NO data dependency between them.
-- When ≥4 `[P]` tasks exist with disjoint file sets → orchestrator MAY dispatch parallel coders, each in its own worktree.
-- **Parallel coders** receive `PARALLEL_MODE: true` + `TASK_SUBSET: [ids]`. They write ONLY code files. They do NOT update tasks.md or state.yaml.
-- After all parallel coders complete, the orchestrator launches ONE sequential sdd-coder for `[S]` tasks. This sdd-coder also reconciles tasks.md (marks all completed tasks `[x]`) and updates state.yaml (`apply: done`).
-- If <4 `[P]` tasks or files overlap → single sdd-coder handles everything (standard mode).
-
-**Phase sequencing**: apply → verify → archive MUST be strictly sequential. NEVER overlap phases that write to state.yaml.
-
-## Error Recovery
-
-| Condition | Recovery path |
-|-----------|---------------|
-| `apply: partial` | Read `last_completed_task` from state.yaml. Re-launch sdd-coder — it skips tasks marked `[x]`, resumes from first unchecked. Orchestrator MUST pause and ask user: (A) retry remaining, (B) abort. Do NOT auto-retry. |
-| `verify: fail` | Display verify-report.md to user. Options: (A) fix code and re-run apply (reset `apply: pending`), (B) review spec/design and re-plan, (C) abort. |
-| Fix cycle exhausted | After `post_hook_max_retries` exceeded → `status: partial`. After 5 fix iterations → hard stop. Orchestrator MUST pause. Do NOT auto-retry apply. |
-| `in_progress` phase (agent crash) | Orchestrator asks user: (A) retry (re-launch agent for same phase), (B) abort. If retry, agent reads state.yaml and resumes. |
+If you are the reconciliation coder (no `PARALLEL_MODE`):
+- Mark ALL completed tasks `[x]` in tasks.md (including parallel coders' work).
+- Update state.yaml: `apply: done`, `current_phase: verify`.
 
 ## Size Budgets
 
