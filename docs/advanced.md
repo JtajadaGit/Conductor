@@ -2,25 +2,12 @@
 
 ---
 
-## 1. Consumo de Tokens
+## 1. Optimización de Tokens
 
-El coste por pipeline SDD depende de la complejidad del cambio, tamaño del proyecto y estrategia de apply.
-
-### Factores de coste
-| Factor | Impacto |
-|--------|---------|
-| Complejidad del cambio | Más dominios → más specs → más tokens |
-| `strict_tdd: true` | Carga addons adicionales (estimado ~400 tokens/agente) |
-| Parallel apply (N coders) | N × prompt del sistema (estimado ~4.000 tokens/coder) |
-| Instruction files | Auto-cargados por la plataforma según `applyTo` |
-| verify-report extenso | Budget 1500w; comprimir si excede |
-
-### Optimización
+### Buenas prácticas
 - **Specs compactos**: usa tablas sobre prosa. Un spec de 600 palabras vs 2.000 reduce la carga acumulada en fases downstream (design, tasks, apply, verify).
-- **Parallel apply**: más rápido en wall-clock pero multiplica el coste del prompt del sistema por cada coder. Evalúa si el speedup justifica el coste extra.
 - **Instruction files**: mantener cada archivo por debajo de 200 palabras. La plataforma carga TODOS los que matchean `applyTo`, así que ficheros grandes multiplican tokens.
-
-> **Nota**: el consumo exacto depende de tu proveedor (Anthropic API → tokens, GitHub Copilot → premium requests). Consulta la documentación oficial de tu plataforma para costes actualizados.
+- **Delegación directa** para tareas ≤2 archivos — evita el overhead del pipeline completo.
 
 ### Estrategias de optimización
 

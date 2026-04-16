@@ -102,15 +102,15 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 ## Comandos
 
-| Comando | Descripción | Coste |
-|---------|-------------|-------|
-| `/sdd-init` | Detecta stack, crea `openspec/config.yaml` | 1 req |
-| `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify | 2-3 req |
-| `/sdd-ff <name>` | Fast-forward: condensado (1 planner) o completo según complejidad | 1-3 req |
-| `/sdd-continue` | Continuar siguiente fase pendiente | 1 req |
-| `/sdd-status` | Mostrar progreso del cambio activo | 0 req |
-| `/sdd-archive` | Archivar cambio completado | 1 req |
-| `/instructions` | Genera instruction files por stack: framework, testing, formatting | 1 req |
+| Comando | Descripción |
+|---------|-------------|
+| `/sdd-init` | Detecta stack, crea `openspec/config.yaml` |
+| `/instructions` | Genera instruction files por stack: framework, testing, formatting |
+| `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify |
+| `/sdd-ff <name>` | Fast-forward: condensado (1 planner) o completo según complejidad |
+| `/sdd-continue` | Continuar siguiente fase pendiente |
+| `/sdd-status` | Mostrar progreso del cambio activo |
+| `/sdd-archive` | Archivar cambio completado |
 
 ---
 

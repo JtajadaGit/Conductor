@@ -115,7 +115,7 @@ Default: `interactive`. Para cambiar: editar `execution_mode: auto` en config.ya
 | Fase | Condición para skip |
 |------|---------------------|
 | **explore** | Input >100 palabras con scope + approach + constraints claros → skip |
-| **clarify** | 0 preguntas detectadas → auto-skip sin coste extra |
+| **clarify** | 0 preguntas detectadas → auto-skip |
 | **verify fast-path** | Sin test runner ni build command → solo checks estáticos |
 | **archive** | Solo si verify = PASS (nunca con CRITICAL issues) |
 
@@ -144,15 +144,15 @@ Sub-agentes **no descubren** contexto — se les inyecta. No leen SKILL.md ni el
 
 ## Comandos
 
-| Comando | Qué hace | Coste |
-|---------|----------|-------|
-| `/sdd-init` | Bootstrap: detecta stack, crea openspec, genera context files | 1 req |
-| `/sdd-new <name>` | Evalúa input → [explore?] → propose → clarify | 2-3 req |
-| `/sdd-ff <name>` | Pipeline condensado (1 planner call) o completo según complejidad | 1-3 req |
-| `/sdd-continue` | Siguiente fase pendiente en el DAG | 1 req |
-| `/sdd-status` | Muestra progreso (lee state.yaml) | 0 req |
-| `/sdd-archive` | Sync delta specs → main specs, mover a archive/ | 1 req |
-| `/instructions` | Genera instruction files de testing, formatting y config | 1 req |
+| Comando | Qué hace |
+|---------|----------|
+| `/sdd-init` | Bootstrap: detecta stack, crea `openspec/config.yaml` |
+| `/instructions` | Genera instruction files por stack: framework, testing, formatting |
+| `/sdd-new <name>` | Evalúa input → [explore?] → propose → clarify |
+| `/sdd-ff <name>` | Pipeline condensado (1 planner call) o completo según complejidad |
+| `/sdd-continue` | Siguiente fase pendiente en el DAG |
+| `/sdd-status` | Muestra progreso (lee state.yaml) |
+| `/sdd-archive` | Sync delta specs → main specs, mover a archive/ |
 
 ---
 
@@ -264,7 +264,7 @@ Wave 2 (sequential): ─── [S] tasks + reconciliación tasks.md + state.yaml
 | Cleanup | Plataforma | Worktrees se limpian automáticamente tras merge exitoso o si el agente no hizo cambios |
 | Error | Orquestador | Si coder falla → worktree se preserva para diagnóstico; usuario decide: reintentar o descartar |
 
-**Límites**: máximo recomendado de **4 coders paralelos** por wave. Más allá, el overhead de merge y el coste de tokens superan el beneficio de velocidad.
+**Límites**: máximo recomendado de **4 coders paralelos** por wave. Más allá, el overhead de merge supera el beneficio de velocidad.
 
 **Pre-validación**: antes de lanzar Wave 1, el orquestador DEBE verificar que los `[P]` tasks tienen file sets disjuntos (cruzando con la tabla File Changes de `design.md`). Si hay solapamiento → degradar a ejecución secuencial.
 
