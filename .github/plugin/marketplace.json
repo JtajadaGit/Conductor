@@ -1,0 +1,16 @@
+{
+  "name": "hiberus-ia-smart-commerce",
+  "owner": {
+    "name": "Hiberus IA Smart Commerce"
+  },
+  "metadata": {
+    "description": "Marketplace privado de plugins de Hiberus IA Smart Commerce"
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "source": "./plugins/conductor",
+      "description": "SDD orchestration framework — spec-driven development con 3 agentes especializados"
+    }
+  ]
+}

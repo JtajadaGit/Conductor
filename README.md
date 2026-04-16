@@ -34,7 +34,7 @@ Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación
                  ┌─────────────────────────────────┐
                  │        ORQUESTADOR               │
                  │  Coordina · NO ejecuta           │
-                 │  instructions/ (per platform)    │
+                 │  skills/ (on-demand entry point) │
                  └───────────────┬─────────────────┘
               ┌──────────────────┼──────────────────┐
               ▼                  ▼                   ▼
@@ -55,9 +55,11 @@ Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación
 
 | Capa | Archivos | Función |
 |------|----------|---------|
-| **Instructions** | `CLAUDE.md` (raíz) o `.github/copilot-instructions.md` | Orquestador SDD (uno por plataforma) |
+| **Skills** | `skills/sdd-*/` + `conventions/` | Entry point del orquestador. Flujos invocables on-demand (0 tokens hasta uso) |
 | **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
-| **Skills** | `skills/sdd-*/` + `conventions/` | Flujos invocables on-demand (0 tokens hasta uso) |
+| **Shared** | `agents/_shared/`, `skills/_shared/` | Protocolos compartidos (cargados on-demand por agentes y skills) |
+
+> **Plugin architecture**: Conductor no sobrescribe instrucciones del proyecto (`CLAUDE.md`, `.github/copilot-instructions.md`). Los skills son el entry point — cada `/sdd-*` define su propia lógica de orquestación.
 
 ### Características principales
 
@@ -112,64 +114,62 @@ init? → [explore?] → propose → clarify? → spec → design → tasks → 
 
 ---
 
-## Estructura del Repositorio
+## Estructura del Plugin
 
 ```
 Conductor/
-├── instructions/
-│   ├── CLAUDE.md                    ← Orquestador para Claude Code
-│   └── copilot-instructions.md      ← Orquestador para GitHub Copilot (VS Code / CLI)
-├── agents/
-│   ├── _shared/
-│   │   ├── sdd-protocol.md          ← Protocolo SDD para agentes (on-demand)
-│   │   └── orchestrator-reference.md ← Referencia orquestador (on-demand)
-│   ├── sdd-planner/AGENT.md
-│   ├── sdd-coder/
-│   │   ├── AGENT.md
-│   │   └── strict-tdd.md
-│   └── sdd-reviewer/
-│       ├── AGENT.md
-│       └── strict-tdd-verify.md
-├── skills/
-│   ├── sdd-init/SKILL.md
-│   ├── sdd-new/SKILL.md
-│   ├── sdd-ff/SKILL.md
-│   ├── sdd-continue/SKILL.md
-│   ├── sdd-status/SKILL.md
-│   ├── sdd-archive/SKILL.md
-│   └── conventions/SKILL.md
+├── .claude-plugin/
+│   └── marketplace.json             ← Registro de plugins disponibles
+├── plugins/
+│   └── conductor/
+│       ├── .claude-plugin/
+│       │   └── plugin.json          ← Manifest del plugin (Claude Code)
+│       ├── agents/
+│       │   ├── _shared/
+│       │   │   ├── sdd-protocol.md          ← Protocolo SDD para agentes (on-demand)
+│       │   │   └── orchestrator-reference.md ← Referencia orquestador (on-demand)
+│       │   ├── sdd-planner/AGENT.md
+│       │   ├── sdd-coder/
+│       │   │   ├── AGENT.md
+│       │   │   └── strict-tdd.md
+│       │   └── sdd-reviewer/
+│       │       ├── AGENT.md
+│       │       └── strict-tdd-verify.md
+│       └── skills/
+│           ├── _shared/
+│           │   └── orchestration-protocol.md ← Protocolo de orquestación (on-demand)
+│           ├── sdd-init/SKILL.md
+│           ├── sdd-new/SKILL.md
+│           ├── sdd-ff/SKILL.md
+│           ├── sdd-continue/SKILL.md
+│           ├── sdd-status/SKILL.md
+│           ├── sdd-archive/SKILL.md
+│           └── conventions/SKILL.md
 └── docs/
-    ├── quick-start.md
-    ├── sdd-pipeline.md
-    ├── openspec.md
-    └── advanced.md
 ```
 
 ---
 
-## Deploy por Plataforma
+## Instalación
 
 ### Claude Code
+
 ```bash
-cp Conductor/instructions/CLAUDE.md            tu-proyecto/CLAUDE.md
-cp -r Conductor/agents/                        tu-proyecto/.claude/agents/
-cp -r Conductor/skills/                        tu-proyecto/.claude/skills/
+# Desde tu proyecto, instalar el plugin
+/plugin add <ruta-a-Conductor>
 ```
+
+El plugin registra automáticamente los skills (`/sdd-init`, `/sdd-ff`, etc.) y los agentes. No sobrescribe `CLAUDE.md` ni ningún archivo del proyecto.
 
 ### GitHub Copilot (VS Code / CLI)
-```bash
-cp Conductor/instructions/copilot-instructions.md     tu-proyecto/.github/copilot-instructions.md
-cp -r Conductor/agents/                               tu-proyecto/.github/agents/
-cp -r Conductor/skills/                               tu-proyecto/.github/skills/
-```
 
-### Dual (ambas plataformas)
-Combina los dos bloques. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos.
+> Pendiente: integración Copilot via plugin. Por ahora, copiar manualmente `agents/` y `skills/` a `.github/`.
 
 ### Primer uso
+
 ```
-1. /sdd-init         ← detecta stack, genera openspec/ (config.yaml + context.md)
-2. /conventions      ← auto-puebla ## Team Standards en context.md
+1. /sdd-init    ← detecta stack, genera openspec/ (config.yaml + context.md)
+2. /conventions ← auto-puebla ## Team Standards en context.md
 3. (opcional) editar openspec/config.yaml → execution_mode: auto
 4. /sdd-ff <nombre>  ← pipeline condensado (o /sdd-new para cambios grandes)
 ```

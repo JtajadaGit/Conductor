@@ -16,76 +16,31 @@ Conductor funcionando en tu proyecto en menos de 5 minutos.
 
 ## Instalación
 
-### Paso 1: Obtener Conductor
+### Claude Code
 
 ```bash
-git clone https://github.com/tu-org/Conductor.git
-# o descargar el ZIP desde GitHub
+# Desde Claude Code en tu proyecto
+/plugin add <ruta-a-Conductor>
 ```
 
-### Paso 2: Copiar a tu proyecto
+Conductor se registra como plugin. No copia archivos ni sobrescribe `CLAUDE.md`. Los skills y agentes se cargan directamente desde el plugin.
 
-#### Claude Code
-
+Verifica la instalación:
 ```bash
-# Linux/Mac
-cp Conductor/instructions/CLAUDE.md tu-proyecto/CLAUDE.md
-cp -r Conductor/agents/ tu-proyecto/.claude/agents/
-cp -r Conductor/skills/ tu-proyecto/.claude/skills/
+/plugin           # Debe mostrar "conductor" instalado
+/reload-plugins   # Recarga si acabas de instalar
 ```
 
-```powershell
-# Windows PowerShell
-Copy-Item Conductor\instructions\CLAUDE.md tu-proyecto\CLAUDE.md
-Copy-Item -Recurse Conductor\agents\ tu-proyecto\.claude\agents\
-Copy-Item -Recurse Conductor\skills\ tu-proyecto\.claude\skills\
-```
+### GitHub Copilot
 
-#### GitHub Copilot (VS Code / CLI)
+> Pendiente: integración nativa via plugin. Por ahora, copiar manualmente `plugins/conductor/agents/` y `plugins/conductor/skills/` a `.github/`.
 
-```bash
-# Linux/Mac
-cp Conductor/instructions/copilot-instructions.md tu-proyecto/.github/copilot-instructions.md
-cp -r Conductor/agents/ tu-proyecto/.github/agents/
-cp -r Conductor/skills/ tu-proyecto/.github/skills/
-```
+### Qué se registra
 
-```powershell
-# Windows PowerShell
-Copy-Item Conductor\instructions\copilot-instructions.md tu-proyecto\.github\copilot-instructions.md
-Copy-Item -Recurse Conductor\agents\ tu-proyecto\.github\agents\
-Copy-Item -Recurse Conductor\skills\ tu-proyecto\.github\skills\
-```
-
-#### Ambas plataformas (dual)
-
-Combina los dos bloques anteriores. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos.
-
-### Paso 3: Estructura resultante
-
-```
-tu-proyecto/
-├── CLAUDE.md                        ← Orquestador Claude Code (raíz del proyecto)
-├── .claude/                         ← Claude Code
-│   ├── agents/
-│   │   ├── _shared/
-│   │   ├── sdd-planner/AGENT.md
-│   │   ├── sdd-coder/AGENT.md
-│   │   └── sdd-reviewer/AGENT.md
-│   └── skills/
-│       ├── sdd-init/
-│       ├── sdd-new/
-│       ├── sdd-ff/
-│       ├── sdd-continue/
-│       ├── sdd-status/
-│       ├── sdd-archive/
-│       └── conventions/
-├── .github/                         ← GitHub Copilot (si dual)
-│   ├── copilot-instructions.md
-│   ├── agents/
-│   └── skills/
-└── openspec/                        ← Artefactos SDD (creados por /sdd-init)
-```
+El plugin expone:
+- **7 skills** como `/sdd-init`, `/sdd-ff`, etc.
+- **3 agentes** (`sdd-planner`, `sdd-coder`, `sdd-reviewer`) + shared protocols
+- **0 archivos modificados** en tu proyecto (hasta que ejecutes `/sdd-init`)
 
 ---
 
@@ -93,12 +48,12 @@ tu-proyecto/
 
 | Característica | Claude Code | Copilot VS Code | Copilot CLI |
 |---------------|-------------|-----------------|-------------|
-| Orquestador | `CLAUDE.md` (raíz) | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
-| Agentes | `.claude/agents/` | `.github/agents/` | `.github/agents/` |
-| Skills | `.claude/skills/` | `.github/skills/` | `.github/skills/` |
+| Instalación | `/plugin add` (nativo) | Manual (copiar a `.github/`) | Manual (copiar a `.github/`) |
+| Orquestador | Skills del plugin (no sobrescribe `CLAUDE.md`) | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
+| Agentes | Plugin agents (auto-descubiertos) | `.github/agents/` | `.github/agents/` |
+| Skills | `/sdd-*` | `/sdd-*` | `/sdd-*` |
 | Modelos | high-capability / standard / fast | high-capability / standard / fast | high-capability / standard / fast |
 | Tool use | ✅ Completo | ✅ Completo | ✅ Completo (agentic) |
-| Slash commands | ✅ `/sdd-init` | ✅ `/sdd-init` | ✅ `/sdd-init` |
 
 ---
 
@@ -164,8 +119,8 @@ Desde ahí:
 
 | Síntoma | Causa | Solución |
 |---------|-------|----------|
-| `/sdd-init` no reconocido | Skills no copiados al path correcto | Verificar `.claude/skills/` o `.github/skills/` |
-| Orquestador ejecuta código directamente | Instrucciones no cargadas | Verificar `CLAUDE.md` en raíz o `.github/copilot-instructions.md` |
+| `/sdd-init` no reconocido | Plugin no instalado | `/plugin add <ruta>` y `/reload-plugins` |
+| Orquestador ejecuta código directamente | Skills no cargados | `/reload-plugins` para recargar |
 | No se crean artefactos | `/sdd-init` no ejecutado | Ejecutar `/sdd-init` |
 | Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/conventions` |
 
