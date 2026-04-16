@@ -55,7 +55,7 @@ Resultado esperado:
 /instructions
 ```
 
-Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y genera instruction files (`testing`, `formatting`, `project-config`) en ambas plataformas.
+Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y genera instruction files (`testing`, `formatting`) para la plataforma detectada.
 
 ### Paso 3 (opcional): Configurar execution mode
 

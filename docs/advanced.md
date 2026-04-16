@@ -124,7 +124,7 @@ En equipos multi-persona, `/instructions` genera instruction files nativos de pl
 
 ### Resultado
 
-Genera/actualiza estos instruction files (dual-write a ambas plataformas):
+Genera/actualiza estos instruction files (para la plataforma detectada):
 
 | Archivo | applyTo | Contenido |
 |---------|---------|-----------|

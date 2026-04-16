@@ -42,11 +42,17 @@ Extract only rules that affect code generation (indentation, naming, strictness,
 ### 3. Scan Existing Instruction Files
 Read any existing instruction files in `.github/instructions/` and `.claude/rules/`. Identify which were auto-generated (contain `_Auto-updated by /instructions_`) vs manually created. Preserve manual files — only update auto-generated ones.
 
-### 4. Generate instruction files by concern
+### 4. Detect target platform
 
-Write EACH file to BOTH platform locations simultaneously:
-- `.github/instructions/{name}.instructions.md`
-- `.claude/rules/{name}.md`
+Check which platform directories exist in the project:
+- `.claude/` exists → write to `.claude/rules/{name}.md`
+- `.github/` exists → write to `.github/instructions/{name}.instructions.md`
+- Both exist → write to both (dual-platform project)
+- Neither exists → create for the platform currently running this skill
+
+### 5. Generate instruction files by concern
+
+Write each file to the detected platform location(s).
 
 **CRITICAL RULES**:
 - NEVER use `applyTo: "**"` — every file MUST target specific file types
@@ -54,7 +60,7 @@ Write EACH file to BOTH platform locations simultaneously:
 - Each file ≤ 200 words — concise, actionable, no filler
 - If re-running, MERGE — preserve manual additions, update auto-generated content
 
-#### 4a. Testing instructions (ONLY if test runner detected)
+#### 5a. Testing instructions (ONLY if test runner detected)
 
 | Stack | applyTo |
 |-------|---------|
@@ -84,7 +90,7 @@ _Auto-updated by /instructions on {date}._
 > Runner commands and coverage config: see `openspec/config.yaml` → `x-conductor.testing`
 ```
 
-#### 4b. Formatting instructions (ONLY if formatting config detected)
+#### 5b. Formatting instructions (ONLY if formatting config detected)
 
 | Stack | applyTo |
 |-------|---------|
@@ -109,7 +115,7 @@ _Auto-updated by /instructions on {date}._
 {linter rules if applicable}
 ```
 
-#### 4c. Framework-specific instructions (ONLY if framework detected)
+#### 5c. Framework-specific instructions (ONLY if framework detected)
 
 Generate ONE file per framework detected. Name it after the framework.
 
@@ -162,7 +168,7 @@ _Auto-updated by /instructions on {date}._
 
 > `/sdd-init` does NOT create instruction files. This skill is the ONLY source of instruction files.
 
-#### 4d. Styling instructions (ONLY if CSS/SCSS/styling config detected)
+#### 5d. Styling instructions (ONLY if CSS/SCSS/styling config detected)
 
 | Stack | applyTo |
 |-------|---------|
@@ -172,7 +178,7 @@ _Auto-updated by /instructions on {date}._
 
 Content: extracted styling conventions (class naming, methodology, preprocessor config).
 
-#### 4e. Principles instructions (ONLY if `openspec/principles.md` exists)
+#### 5e. Principles instructions (ONLY if `openspec/principles.md` exists)
 
 ```markdown
 ---
@@ -186,8 +192,8 @@ _Sourced from openspec/principles.md. Edit the source, then re-run /instructions
 
 > Use the detected source pattern (e.g., `**/*.ts,**/*.tsx`), NOT `"**"`. Principles apply when writing code, not when reading docs.
 
-### 5. Return Summary
-Report: which instruction files were generated/updated, each with its `applyTo` pattern, which config sources were scanned.
+### 6. Return Summary
+Report: which platform(s) detected, which instruction files were generated/updated, each with its `applyTo` pattern, which config sources were scanned.
 
 ## Boundary with openspec/config.yaml
 
@@ -205,7 +211,7 @@ Report: which instruction files were generated/updated, each with its `applyTo` 
 - NEVER use `applyTo: "**"` — every file MUST target specific file patterns
 - Each file ≤ 200 words — the platform loads ALL matching files per interaction
 - ONLY generate files for technologies actually detected — no placeholders
-- ALWAYS dual-write: `.github/instructions/` AND `.claude/rules/`
+- Write ONLY to detected platform(s) — `.claude/rules/` if Claude, `.github/instructions/` if Copilot, both if dual
 - When re-running, MERGE — preserve manual additions, only update auto-generated sections
 - Do NOT scan user-level directories — only project-level config
 - Instruction files are TEAM artifacts — commit them, review them

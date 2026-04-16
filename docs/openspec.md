@@ -65,7 +65,7 @@ Cada fichero OpenSpec tiene consumidores espec√≠ficos. Esta tabla elimina ambig√
 
 ### Platform instruction files (reemplaza context.md)
 
-El contexto del proyecto se genera como instruction files nativos en ambas plataformas:
+El contexto del proyecto se genera como instruction files nativos para la plataforma detectada:
 
 | Archivo | applyTo (ejemplo Angular) | Generado por | Contenido |
 |---------|---------|---|---|

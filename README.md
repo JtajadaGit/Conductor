@@ -172,7 +172,7 @@ tu-proyecto/
 ### Qué comparten las 3 plataformas
 
 - **`openspec/`** — mismos artefactos SDD (config.yaml, specs, changes, state.yaml). Cualquier plataforma lee y escribe los mismos archivos.
-- **Instruction files** — `/instructions` genera AMBOS formatos simultáneamente (`.claude/rules/` + `.github/instructions/`). Equipos mixtos trabajan con los mismos estándares.
+- **Instruction files** — `/instructions` detecta la plataforma y genera el formato correcto (`.claude/rules/` o `.github/instructions/`). En proyectos dual-platform, genera ambos.
 - **Skills y agents** — misma lógica, mismos archivos `.md`. La plataforma determina cómo se cargan y ejecutan.
 
 ### Primer uso (cualquier plataforma)
