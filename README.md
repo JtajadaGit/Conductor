@@ -149,58 +149,26 @@ tu-proyecto/
 
 ## Plataformas
 
-### Claude Code (CLI)
+### Comparativa
 
-```bash
-# Instalación — desde Claude Code en tu proyecto
-/plugin add <ruta-a-Conductor>
-/reload-plugins
-```
+|  | Claude Code | Copilot CLI | Copilot VS Code |
+|--|-------------|-------------|-----------------|
+| **Plugin system** | `/plugin add` | `/plugin install` | No nativo (copiar a `.github/`) |
+| **Skills** | `.claude/commands/` o plugin | `.github/skills/` | `.github/skills/` |
+| **Agents** | `.claude/agents/` o plugin | `.github/agents/` (`.agent.md`) | `.github/agents/` (`.agent.md`) |
+| **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` | `.github/instructions/*.instructions.md` |
+| **Parallel apply** | `Agent` tool + `isolation: "worktree"` | `/fleet` + worktrees | Delega a Copilot CLI |
+| **Model routing** | `model:` por delegación (opus/sonnet/haiku) | `--model` flag o BYOK | Modelo de Copilot settings |
+| **Sub-agent delegation** | `Agent` tool | Sub-agents automáticos + `/delegate` | Copilot Chat agents |
+| **No sobrescribe** | `CLAUDE.md` intacto | `copilot-instructions.md` intacto | `copilot-instructions.md` intacto |
 
-| Aspecto | Cómo funciona |
-|---------|--------------|
-| **Instalación** | `/plugin add` — registro nativo, sin copiar archivos |
-| **Skills** | Auto-descubiertos: `/sdd-init`, `/sdd-ff`, `/instructions`, etc. |
-| **Agents** | Auto-descubiertos desde el plugin. Se delegan con `Agent` tool |
-| **Instruction files** | `.claude/rules/{name}.md` con frontmatter `applyTo` — auto-cargados por la plataforma |
-| **Parallel apply** | `Agent` tool con `isolation: "worktree"` + `run_in_background: true` |
-| **Model routing** | `model: "opus"` / `model: "sonnet"` / `model: "haiku"` en cada delegación |
-| **No sobrescribe** | `CLAUDE.md` del proyecto queda intacto |
+### Cómo funciona en cada plataforma
 
-### GitHub Copilot (VS Code)
+**Claude Code**: El orquestador usa `Agent` tool para delegar a sub-agentes (`sdd-planner`, `sdd-coder`, `sdd-reviewer`). Cada agente se lanza en un contexto aislado. Parallel apply usa `isolation: "worktree"` + `run_in_background: true`.
 
-```bash
-# Instalación — copiar al proyecto
-cp -r Conductor/plugins/conductor/agents/  tu-proyecto/.github/agents/
-cp -r Conductor/plugins/conductor/skills/  tu-proyecto/.github/skills/
-```
+**Copilot CLI**: El orquestador delega a sub-agentes via el sistema nativo de agentes. Parallel apply usa `/fleet` para lanzar coders simultáneos en worktrees independientes. Soporta BYOK para usar cualquier modelo compatible.
 
-| Aspecto | Cómo funciona |
-|---------|--------------|
-| **Instalación** | Copiar `agents/` y `skills/` a `.github/` |
-| **Skills** | Custom instructions en Copilot Chat: `/sdd-init`, `/sdd-ff`, etc. |
-| **Agents** | `.github/agents/{name}/AGENT.md` — invocados desde Copilot Chat |
-| **Instruction files** | `.github/instructions/{name}.instructions.md` con `applyTo` — auto-cargados por Copilot |
-| **Parallel apply** | No soportado nativamente — coders se ejecutan en secuencia |
-| **Model routing** | Depende del modelo configurado en Copilot settings |
-| **No sobrescribe** | `.github/copilot-instructions.md` del proyecto queda intacto |
-
-### GitHub Copilot (CLI)
-
-```bash
-# Misma instalación que VS Code
-cp -r Conductor/plugins/conductor/agents/  tu-proyecto/.github/agents/
-cp -r Conductor/plugins/conductor/skills/  tu-proyecto/.github/skills/
-```
-
-| Aspecto | Cómo funciona |
-|---------|--------------|
-| **Instalación** | Copiar `agents/` y `skills/` a `.github/` |
-| **Skills** | `/sdd-init`, `/sdd-ff`, etc. en modo agentic |
-| **Agents** | `.github/agents/{name}/AGENT.md` — delegación completa |
-| **Instruction files** | `.github/instructions/{name}.instructions.md` con `applyTo` |
-| **Parallel apply** | Soportado via agentic mode con sub-processes |
-| **Model routing** | Configurable por invocación |
+**Copilot VS Code**: El orquestador delega via Copilot Chat agents. Para pipelines complejos con paralelismo, puede hand-off a Copilot CLI. Las instruction files se cargan automáticamente al editar archivos que matchean `applyTo`.
 
 ### Qué comparten las 3 plataformas
 

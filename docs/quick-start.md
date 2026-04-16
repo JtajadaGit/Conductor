@@ -14,47 +14,18 @@ Conductor funcionando en tu proyecto en menos de 5 minutos.
 
 ---
 
-## Instalación
+## Plataformas soportadas
 
-### Claude Code (CLI)
+Conductor funciona como plugin en las 3 plataformas. Ver [README § Plataformas](../README.md#plataformas) para la comparativa completa.
 
-```bash
-/plugin add <ruta-a-Conductor>
-/reload-plugins
-```
-
-Verifica: `/plugin` debe mostrar "conductor" instalado. Skills y agentes se cargan directamente desde el plugin — no se copian archivos al proyecto.
-
-### GitHub Copilot (VS Code / CLI)
-
-```bash
-# Desde la raíz de tu proyecto
-cp -r Conductor/plugins/conductor/agents/  .github/agents/
-cp -r Conductor/plugins/conductor/skills/  .github/skills/
-```
-
-Los agents y skills se copian a `.github/` — Copilot los descubre automáticamente.
-
-### Qué se registra
-
-| Componente | Claude Code | Copilot |
-|---|---|---|
-| **Skills** | `/sdd-init`, `/sdd-ff`, `/instructions`, etc. | Mismos, desde `.github/skills/` |
-| **Agents** | `sdd-planner`, `sdd-coder`, `sdd-reviewer` | Mismos, desde `.github/agents/` |
-| **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` |
-| **Pipeline artifacts** | `openspec/` (compartido) | `openspec/` (compartido) |
-
-### Comparativa de capacidades
-
-| Feature | Claude Code | Copilot VS Code | Copilot CLI |
-|---------|-------------|-----------------|-------------|
-| Instalación | `/plugin add` (nativo) | Copiar a `.github/` | Copiar a `.github/` |
-| Sub-agents | `Agent` tool (completo) | Copilot Chat agents | Agentic mode |
-| Parallel apply (worktrees) | ✅ `isolation: "worktree"` | ❌ Secuencial | ✅ Sub-processes |
-| Model routing por fase | ✅ opus/sonnet/haiku | Modelo único | Configurable |
-| Instruction files auto-load | ✅ `.claude/rules/` | ✅ `.github/instructions/` | ✅ `.github/instructions/` |
-| `openspec/` compartido | ✅ | ✅ | ✅ |
-| No sobrescribe instrucciones | ✅ (`CLAUDE.md` intacto) | ✅ (`copilot-instructions.md` intacto) | ✅ |
+| Componente | Claude Code | Copilot CLI | Copilot VS Code |
+|---|---|---|---|
+| **Plugin system** | `/plugin add` | `/plugin install` | Copiar a `.github/` |
+| **Skills** | `/sdd-init`, `/sdd-ff`, etc. | `/sdd-init`, `/sdd-ff`, etc. | Mismos, desde `.github/skills/` |
+| **Agents** | Plugin agents (`Agent` tool) | `.github/agents/` + sub-agents | `.github/agents/` via Chat |
+| **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` | `.github/instructions/*.instructions.md` |
+| **Parallel apply** | ✅ worktrees | ✅ `/fleet` + worktrees | Delega a Copilot CLI |
+| **Model routing** | Per delegación | `--model` flag / BYOK | Copilot settings |
 
 ---
 
