@@ -1,9 +1,0 @@
-{
-  "name": "conductor",
-  "description": "SDD orchestration framework — spec-driven development con 3 agentes especializados",
-  "version": "1.0.0",
-  "author": { "name": "Hiberus IA Smart Commerce" },
-  "keywords": ["sdd", "orchestration", "spec-driven"],
-  "agents": "./agents/",
-  "skills": "./skills/"
-}
