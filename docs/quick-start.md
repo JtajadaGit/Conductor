@@ -1,65 +1,64 @@
-# Quick Start — Conductor
-
-Conductor funcionando en tu proyecto en menos de 5 minutos.
-
----
+# Quick Start -- Instalación y primer uso
 
 ## Requisitos
 
 | Requisito | Descripción |
-|-----------|-------------|
-| **Plataforma IA** | Claude Code (Anthropic) **o** GitHub Copilot (VS Code / CLI) |
+|---|---|
+| **Plataforma IA** | GitHub Copilot CLI (principal) o Claude Code |
 | **Git** | Repositorio git inicializado |
-| **Proyecto existente** | Conductor se integra en proyectos existentes |
+| **Proyecto existente** | Conductor se integra en proyectos con código existente |
 
----
+## Instalación
+
+Copia las carpetas `agents/` y `skills/` al directorio de tu plataforma:
+
+| Plataforma | Agents | Skills |
+|---|---|---|
+| **Copilot CLI** | `.github/agents/` | `.github/skills/` |
+| **Claude Code** | `.claude/agents/` | `.claude/skills/` |
 
 ## Plataformas soportadas
 
-Conductor funciona como plugin en las 3 plataformas. Ver [README § Plataformas](../README.md#plataformas) para la comparativa completa.
+| Componente | Copilot CLI | Claude Code |
+|---|---|---|
+| **Skills** | `/sdd-init`, `/sdd-new`, etc. | Idénticos |
+| **Agents** | `.github/agents/` + sub-agents | `.claude/agents/` + tool `Agent` |
+| **Instruction files** | `.github/instructions/*.instructions.md` | `.claude/rules/*.md` |
+| **Apply paralelo** | `/fleet` (context-window isolation) | `Agent` tool + `isolation: "worktree"` |
+| **Model routing** | `model` frontmatter, `/model`, BYOK | `model` frontmatter, `/model`, env vars |
 
-| Componente | Claude Code | Copilot CLI | Copilot VS Code |
-|---|---|---|---|
-| **Plugin system** | `/plugin add` | `/plugin install` | Copiar a `.github/` |
-| **Skills** | `/sdd-init`, `/sdd-new`, etc. | `/sdd-init`, `/sdd-new`, etc. | Mismos, desde `.github/skills/` |
-| **Agents** | Plugin agents (`Agent` tool) | `.github/agents/` + sub-agents | `.github/agents/` via Chat |
-| **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` | `.github/instructions/*.instructions.md` |
-| **Parallel apply** | ✅ worktrees | ✅ `/fleet` + worktrees | Delega a Copilot CLI |
-| **Model routing** | Per delegación | `--model` flag / BYOK | Copilot settings |
+`/sdd-instructions` detecta la plataforma automáticamente y genera los instruction files en la ubicación correcta.
 
----
+## Primer uso: 4 pasos
 
-## Primer uso: paso a paso
-
-### Paso 1: `/sdd-init`
+### Paso 1: Inicializar SDD
 
 ```
 /sdd-init
 ```
 
-Detecta stack, testing, crea `openspec/config.yaml` (pipeline config).
-
-Resultado esperado:
-```
-✅ SDD inicializado
-   Stack: Node.js + TypeScript + Express
-   Testing: Jest (detectado), strict_tdd: true
-   Execution mode: interactive (cambiar en config.yaml)
-   Persistencia: openspec (habilitado)
-   → Ejecuta /instructions para generar instruction files de testing y formatting
-```
-
-### Paso 2: `/instructions`
+Detecta stack tecnológico, testing framework, crea `openspec/config.yaml`. Resultado esperado:
 
 ```
-/instructions
+SDD inicializado
+  Stack: Node.js + TypeScript + Express
+  Testing: Jest (detectado), strict_tdd: true
+  Execution mode: interactive
+  Persistencia: openspec (habilitado)
 ```
 
-Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y genera instruction files (`testing`, `formatting`) para la plataforma detectada.
+### Paso 2: Generar instruction files
 
-### Paso 3 (opcional): Configurar execution mode
+```
+/sdd-instructions
+```
+
+Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. Genera instruction files de testing y formatting para la plataforma detectada.
+
+### Paso 3: Configurar execution mode (opcional)
 
 Edita `openspec/config.yaml`:
+
 ```yaml
 x-conductor:
   execution_mode: auto    # auto (0 pausas) | interactive (pausa antes de apply/verify)
@@ -68,41 +67,34 @@ x-conductor:
 ### Paso 4: Primer cambio
 
 ```
-/sdd-new mi-feature      # Evalúa complejidad → elige pipeline automáticamente
+/sdd-new mi-feature
 ```
 
-Desde ahí:
+Evalúa complejidad automáticamente y elige el pipeline adecuado. Después:
+
 ```
-/sdd-continue    # avanzar a la siguiente fase pendiente (apply, verify, etc.)
-/sdd-archive     # cerrar y promover specs a main
+/sdd-continue    # avanza a la siguiente fase
+/sdd-archive     # cierra y promueve specs
 ```
 
----
-
-## Verificación rápida
+## Verificación
 
 - [ ] `/sdd-init` responde con detección de stack
-- [ ] `/sdd-new test` genera exploración + propuesta
+- [ ] `openspec/config.yaml` existe con datos del proyecto
+- [ ] `/sdd-instructions` genera instruction files en la ubicación de la plataforma
+- [ ] `/sdd-new test` genera artefactos en `openspec/changes/`
 - [ ] El orquestador delega a sub-agentes (no ejecuta código inline)
-- [ ] Se crean artefactos en `openspec/changes/` (modo openspec)
 
-### Síntomas de problema
+## Troubleshooting
 
-| Síntoma | Causa | Solución |
-|---------|-------|----------|
-| `/sdd-init` no reconocido | Plugin no instalado | `/plugin add <ruta>` y `/reload-plugins` |
-| Orquestador ejecuta código directamente | Skills no cargados | `/reload-plugins` para recargar |
-| No se crean artefactos | `/sdd-init` no ejecutado | Ejecutar `/sdd-init` |
-| Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/instructions` |
-
----
-
-### Referencias oficiales
-- **Claude Code**: https://docs.anthropic.com/en/docs/claude-code
-- **GitHub Copilot**: https://docs.github.com/en/copilot
-- **OpenSpec estándar**: https://openspec.dev/
-- **RFC 2119** (keywords): https://www.rfc-editor.org/rfc/rfc2119
+| Problema | Solución |
+|---|---|
+| `/sdd-init` no reconocido | Skills no copiados a la ubicación correcta de la plataforma. Verifica la estructura de directorios |
+| Orquestador ejecuta código directamente | Skills no cargados. Verifica que están en el directorio correcto de la plataforma |
+| No se crean artefactos en `openspec/` | `/sdd-init` no fue ejecutado. Ejecutar primero |
+| Sub-agentes ignoran convenciones | Instruction files no generados. Ejecuta `/sdd-instructions` |
+| Instruction files en ubicación incorrecta | `/sdd-instructions` no detectó la plataforma. Verifica que `.github/` o `.claude/` existen en el proyecto |
 
 ---
 
-→ [Conductor 101](./conductor-101.md) | [Pipeline SDD completo](./sdd-pipeline.md) | [OpenSpec y persistencia](./openspec.md)
+Siguiente: [Conductor 101](./conductor-101.md) | [Pipeline SDD](./sdd-pipeline.md) | [OpenSpec](./openspec.md) | [Avanzado](./advanced.md)

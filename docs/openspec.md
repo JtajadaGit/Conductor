@@ -1,117 +1,50 @@
-# OpenSpec — Persistencia y Artefactos
+# OpenSpec -- Persistencia y artefactos
 
-OpenSpec es el sistema de persistencia de Conductor: artefactos SDD en disco, recuperación tras compactación, y auditoría de decisiones.
+## Qué es OpenSpec
 
-> **Conductor extiende OpenSpec** con phase gates (`state.yaml`), artifact locks, verify phase y platform instruction files. Los artefactos base (`specs/`, `changes/`, `config.yaml` con `schema`/`context`/`rules`, `proposal.md`, `design.md`, `tasks.md`) siguen la convención OpenSpec estándar — lo que Conductor añade son las capas de orquestación y control de flujo. Campos bajo `x-conductor` en config.yaml son extensiones. El contexto del proyecto (stack, arquitectura, convenciones) se genera como instruction files nativos de plataforma (`.github/instructions/` y `.claude/rules/`) en vez del antiguo `context.md`.
+OpenSpec es el estándar abierto de persistencia que Conductor usa para organizar especificaciones y artefactos en disco. Todos los artefactos del pipeline SDD se guardan en `openspec/`, lo que permite recuperación tras compactación, phase gates, `/sdd-continue` y trazabilidad completa.
 
----
+Conductor extiende OpenSpec con `state.yaml` (control del DAG), artifact locks, verify phase e instruction files de plataforma. Los campos de extensión se agrupan bajo `x-conductor` en config.yaml.
 
-## Persistencia
-
-Todos los artefactos SDD persisten en `openspec/` en el filesystem. Esto es obligatorio para el DAG recovery, phase gates, `/sdd-continue` y resiliencia ante compactación. Se inicializa con `/sdd-init`.
-
----
-
-## Estructura de Directorios
+## Estructura de directorios
 
 ```
 openspec/
-├── config.yaml                   ← OpenSpec standard (schema, context, rules) + Conductor ext. (x-conductor)
-├── principles.md                 ← (Conductor ext., opcional) NON-NEGOTIABLE — solo humanos editan
-├── lessons-learned.md            ← (Conductor ext., opcional) Append-only entre cambios
-├── specs/                        ← OpenSpec standard — fuente de verdad (specs principales)
-│   └── {dominio}/
-│       └── spec.md
-└── changes/                      ← OpenSpec standard
-    ├── archive/
-    │   └── YYYY-MM-DD-{nombre}/  ← Cambio completado (audit trail, nunca modificar)
-    │       ├── state.yaml        ← (Conductor ext.)
-    │       ├── proposal.md       ← OpenSpec standard
-    │       ├── specs/            ← OpenSpec standard (delta specs)
-    │       ├── design.md         ← OpenSpec standard
-    │       ├── tasks.md          ← OpenSpec standard
-    │       ├── verify-report.md  ← (Conductor ext.)
-    └── {nombre-del-cambio}/      ← Cambio activo
-        ├── state.yaml            ← (Conductor ext.) Estado del DAG
-        ├── exploration.md        ← (Conductor ext., opcional)
-        ├── proposal.md           ← OpenSpec standard
-        ├── specs/{dominio}/spec.md  ← OpenSpec standard (delta spec)
-        ├── design.md             ← OpenSpec standard
-        ├── tasks.md              ← OpenSpec standard
-        ├── questions.md          ← (Conductor ext., opcional)
-        └── verify-report.md      ← (Conductor ext.)
+  config.yaml                     Config del proyecto (OpenSpec standard + extensiones Conductor)
+  lessons-learned.md              (opcional) Registro append-only de lecciones
+  specs/                          Fuente de verdad: specs principales
+    {dominio}/
+      spec.md
+  changes/                        Cambios activos y archivados
+    {nombre-del-cambio}/          Cambio activo
+      state.yaml                  Estado del DAG (extensión Conductor)
+      exploration.md              (opcional) Resultado de explore
+      proposal.md                 Propuesta de alto nivel
+      specs/{dominio}/spec.md     Delta spec (ADDED/MODIFIED/REMOVED)
+      design.md                   Diseño técnico
+      tasks.md                    Tareas descompuestas
+      questions.md                (opcional) Preguntas de clarify
+      verify-report.md            Resultado de verificación
+    archive/
+      YYYY-MM-DD-{nombre}/        Cambio completado (audit trail, nunca modificar)
 ```
-
----
-
-## Quién usa qué — Mapa de consumo
-
-Cada fichero OpenSpec tiene consumidores específicos. Esta tabla elimina ambigüedad sobre qué lee cada actor y para qué.
-
-### config.yaml
-
-| Campo | Quién lo lee | Cuándo | Para qué |
-|-------|-------------|--------|----------|
-| `context:` (1 línea) | **sdd-planner** | Cada fase de planificación | Se inyecta en prompts de artefactos — el planner sabe "Angular 20 standalone" al escribir specs |
-| `rules:` | **sdd-planner** | spec, tasks | Restricciones por artefacto (p. ej., "Use Given/When/Then") |
-| `x-conductor.execution_mode` | **Orquestador** | Inicio de cada pipeline | `auto` (0 pausas) o `interactive` (pausa antes de apply y verify) |
-| `x-conductor.strict_tdd` | **sdd-coder** (Step 2) | Inicio de apply | Decide si carga addon TDD (RED→GREEN→REFACTOR) |
-| `x-conductor.strict_tdd` | **sdd-reviewer** (Step 0) | Inicio de verify | Decide si carga addon de auditoría TDD |
-| `x-conductor.hooks.apply` | **sdd-coder** (Steps 1, 4) | Pre/post implementación | Qué comandos ejecutar (`ng build`) y cómo manejar fallos |
-| `x-conductor.hooks.verify` | **sdd-reviewer** (Steps 5, 6) | Verificación | Qué test/build commands ejecutar |
-| `x-conductor.testing` | **sdd-coder** (TDD) | Ciclo TDD | Qué test runner usar, qué framework |
-| `x-conductor.testing` | **sdd-reviewer** | Coverage check | Umbral de cobertura, comando de coverage |
-| `x-conductor.stack` | **`/sdd-init`**, **`/instructions`** | Re-init, scan | Metadata estructurada para auto-detección |
-
-### Platform instruction files (reemplaza context.md)
-
-El contexto del proyecto se genera como instruction files nativos para la plataforma detectada:
-
-| Archivo | applyTo (ejemplo Angular) | Generado por | Contenido |
-|---------|---------|---|---|
-| `{framework}.instructions.md` | `**/*.component.ts,**/*.service.ts,...` | `/instructions` | Stack, arquitectura, directorios, entry points, convenciones |
-| `testing.instructions.md` | `**/*.spec.ts` | `/instructions` | Convenciones de testing, patrones de archivos |
-| `formatting.instructions.md` | `**/*.ts,**/*.html` | `/instructions` | Formato, linting, TypeScript strict |
-| `principles.instructions.md` | `**/*.ts,**/*.py,...` (source) | `/instructions` | Principios del equipo (si existen) |
-
-> Todos generados por `/instructions`. Cada stack genera patrones distintos. Nunca `applyTo: "**"`.
-
-Ubicaciones:
-- **GitHub Copilot**: `.github/instructions/{topic}.instructions.md`
-- **Claude Code**: `.claude/rules/{topic}.md`
-
-La plataforma carga automáticamente las instrucciones relevantes según los archivos que el agente está tocando (via `applyTo`). No requiere inyección manual por el orquestador.
-
-### Principio de no-duplicación
-
-```
-config.yaml context:       → resumen 1-línea OpenSpec estándar (inyectado en prompts de artefactos)
-config.yaml x-conductor:   → config ejecutable del pipeline (hooks, tdd, testing commands)
-instruction files:         → contexto del PROYECTO (stack, arquitectura, formatting, testing conventions)
-                             NO repiten runner/coverage commands (están en x-conductor.testing)
-                             NO repiten hooks (están en x-conductor.hooks)
-```
-
-> **Regla**: instruction files contienen contexto del proyecto. config.yaml contiene config del pipeline. Sin duplicación entre ambos.
-
----
 
 ## config.yaml
 
-Generado por `/sdd-init`. Contiene campos OpenSpec estándar (`schema`, `context`, `rules`) y extensiones Conductor (`x-conductor`).
+Generado por `/sdd-init`. Tiene dos partes: campos OpenSpec estándar y extensiones Conductor.
 
 ```yaml
 schema: spec-driven
 
 # --- OpenSpec standard ---
-context: "Express, TypeScript strict, npm"    # 1-línea — inyectado en TODOS los prompts de artefactos
-rules:                                        # Restricciones por artefacto (solo inyectadas en el artefacto correspondiente)
+context: "Express, TypeScript strict, npm"       # 1 línea, inyectado en prompts
+rules:
   specs:
     - Use Given/When/Then format
   tasks:
     - Size tasks for single-session completion
 
-# --- Conductor extensions ---
+# --- Extensiones Conductor ---
 x-conductor:
   stack:
     language: "typescript"
@@ -120,7 +53,7 @@ x-conductor:
     framework: "express"
     package_manager: "npm"
   monorepo: false
-  execution_mode: interactive  # auto | interactive
+  execution_mode: interactive      # auto | interactive
   strict_tdd: true
   testing:
     test_runner: { command: "npx vitest run", framework: "vitest" }
@@ -131,7 +64,7 @@ x-conductor:
     apply:
       pre_hook: ""
       post_hook: "npm run build && npx tsc --noEmit"
-      post_hook_on_fail: retry
+      post_hook_on_fail: retry     # retry | stop | warn
       post_hook_max_retries: 3
       checkpoint_every: 5
     verify:
@@ -140,25 +73,21 @@ x-conductor:
       coverage_threshold: 80
 ```
 
-> **Nota**: `context:` (campo en config.yaml) es un resumen 1-línea estándar OpenSpec inyectado en prompts de artefactos. El contexto detallado del proyecto (arquitectura, directorios, convenciones) se genera como instruction files nativos de plataforma.
+### Quién consume qué en config.yaml
 
-### Sincronización de Stack
+| Campo | Consumidor | Propósito |
+|---|---|---|
+| `context:` | sdd-planner | Inyectado en prompts de artefactos |
+| `rules:` | sdd-planner | Restricciones por tipo de artefacto |
+| `x-conductor.execution_mode` | Orquestador | Decide auto vs interactive |
+| `x-conductor.strict_tdd` | sdd-coder, sdd-reviewer | Activa/desactiva modo TDD |
+| `x-conductor.hooks` | sdd-coder, sdd-reviewer | Comandos pre/post apply y verify |
+| `x-conductor.testing` | sdd-coder, sdd-reviewer | Test runner, coverage, quality tools |
+| `x-conductor.stack` | `/sdd-init`, `/sdd-instructions` | Auto-detección y regeneración |
 
-Los datos de stack aparecen en dos formatos con propósitos distintos:
+## state.yaml
 
-| Ubicación | Formato | Propósito | Actualizado por |
-|-----------|---------|-----------|-----------------|
-| `config.yaml` → `context:` | 1 línea | Inyección en prompts de artefactos (planner) | `/sdd-init` |
-| `config.yaml` → `x-conductor.stack` | YAML estructurado | Lógica del pipeline, auto-detección | `/sdd-init` |
-| `{framework}.instructions.md` | Markdown con `applyTo` específico por stack | Contexto auto-cargado por la plataforma | `/instructions` |
-
-**Regla de sincronización**: cuando el stack cambia, re-ejecuta `/sdd-init` (actualiza config.yaml) + `/instructions` (regenera instruction files).
-
----
-
-## state.yaml (Conductor extension)
-
-No existe en OpenSpec estándar (OpenSpec trackea progreso via checkboxes en `tasks.md`). Conductor añade `state.yaml` como mecanismo de recuperación del DAG y phase gates. Cada agente actualiza su propia fase al completarla (el orquestador NO escribe state.yaml).
+Extensión Conductor (no existe en OpenSpec estándar). Controla el progreso del DAG y permite recuperación tras compactación. Cada agente actualiza su propia fase al completarla.
 
 ```yaml
 change: add-user-auth
@@ -176,82 +105,68 @@ phases:
   verify: pending
   archive: pending
 locks:
-  spec: true      # frozen tras completar tasks (previene spec-drift)
+  spec: true       # frozen tras completar tasks
   design: true
 ```
 
-**Artifact Locks**: Al completar `tasks`, se bloquean `spec` y `design`. Si el usuario quiere modificarlos: el orquestador advierte → desbloquea → re-ejecuta tasks.
+**Artifact locks**: al completar `tasks`, se bloquean `spec` y `design`. Modificarlos requiere desbloqueo explícito y re-ejecución de tasks.
 
-**Recuperación tras compactación**:
-```
-Orquestador pierde contexto → lee state.yaml → reconstruye DAG → continúa desde current_phase
-```
+**Recuperación**: tras compactación el orquestador lee `state.yaml` -> reconstruye el DAG -> continúa desde `current_phase`.
 
----
+## Artefactos del pipeline
 
-## principles.md (Opcional)
+| Artefacto | Fase | Contenido |
+|---|---|---|
+| `exploration.md` | explore | Análisis del codebase relevante |
+| `proposal.md` | propose | Enfoque, riesgos, alternativas descartadas |
+| `specs/{domain}/spec.md` | spec | Escenarios GIVEN/WHEN/THEN, requisitos, criterios de aceptación |
+| `design.md` | design | Arquitectura, ficheros a crear/modificar, dependencias |
+| `tasks.md` | tasks | Tareas atómicas marcadas [P]/[S] con ficheros target |
+| `verify-report.md` | verify | Resultado PASS/FAIL, tests ejecutados, issues |
 
-Constitución del proyecto — principios NON-NEGOTIABLE que todas las fases respetan. **Nunca modificado por IA.**
+## Instruction files
 
-```markdown
-# Project Principles
+Generados por `/sdd-instructions`. Son ficheros nativos de plataforma con contexto del proyecto (stack, testing, formatting). La plataforma los carga automáticamente según los archivos que el agente está tocando (vía `applyTo` en Copilot, `paths` en Claude Code).
 
-1. **Spec-First**: No code without specifications.
-2. **Simplicity**: Prefer the simplest solution. No over-engineering.
-3. **Test Coverage**: Every requirement MUST have at least one automated test.
-4. **Existing Patterns**: Follow project patterns, not generic best practices.
-```
+| Ubicación por plataforma | Formato |
+|---|---|
+| Copilot CLI: `.github/instructions/*.instructions.md` | Markdown con `applyTo` header |
+| Claude Code: `.claude/rules/*.md` | Markdown con `paths` frontmatter |
 
-- Máximo 5 principios (más diluye la efectividad)
-- El orquestador lo lee una vez por sesión, lo inyecta como `## Project Principles` en cada sub-agente
-- Si no existe → se omite silenciosamente
+Contenido típico:
 
----
+| Archivo | Contenido |
+|---|---|
+| `{framework}.instructions.md` | Stack, arquitectura, directorios, entry points |
+| `testing.instructions.md` | Convenciones de testing, patrones de archivos |
+| `formatting.instructions.md` | Formato, linting, TypeScript strict |
 
-## lessons-learned.md
+**Regla de no-duplicación**: instruction files contienen contexto del proyecto. `config.yaml` contiene config del pipeline. Sin duplicación entre ambos.
 
-Registro append-only de lecciones entre cambios. Crece con cada `sdd-coder` fix exitoso.
+## Archivado (/sdd-archive)
 
-```markdown
-# Lessons Learned
+Tras verify PASS, el orquestador sugiere `/sdd-archive`. Al ejecutarlo:
 
-## 2026-04-01 — add-user-auth
-### Ecosystem Gotchas
-- jsonwebtoken 9.x: async sign required → use promisify
-### Design Insights
-- Refresh token rotation adds complexity; use simple expiry for MVPs
-```
-
----
-
-## Reglas de Frontera
-
-| Actor | Puede leer | Puede escribir |
-|-------|------------|----------------|
-| Orquestador | `state.yaml`, git status | Lectura para recovery (NO escribe state.yaml) |
-| sdd-planner | Artefactos de fases previas, código fuente | Su artefacto de fase + `state.yaml` (inicial) |
-| sdd-coder | tasks + spec + design + código + `state.yaml` | Código fuente + `tasks.md [x]` + `state.yaml` (apply: done) |
-| sdd-reviewer | spec + tasks + código + `state.yaml` | `verify-report.md` + `state.yaml` (verify: pass/fail) |
-| sdd-archive | Todos los artefactos | Main specs + archive/ |
-
-Cada agente es responsable de actualizar `state.yaml` para su fase. El orquestador lo lee para recovery/compactación, pero **nunca** lo escribe.
-
----
-
-## Archivado
-
-Tras verify PASS, el orquestador sugiere automáticamente `/sdd-archive`. Al ejecutarlo:
-1. **Sync delta specs** → `openspec/specs/{domain}/spec.md` (apply order: REMOVED → MODIFIED → ADDED; si existe sección RENAMED, se aplica primero)
-2. **Mover** `openspec/changes/{nombre}/` → `openspec/changes/archive/YYYY-MM-DD-{nombre}/`
-3. **Update instruction files** — si `verify-report.md` contiene sugerencias de actualización
-4. El archive es audit trail — **nunca eliminar ni modificar**
-
-> **Nota**: `openspec/specs/` permanece vacío hasta el primer archive. Es el archive quien promueve las delta specs a specs principales.
+1. **Sync delta specs** -> `openspec/specs/{domain}/spec.md` (orden: REMOVED -> MODIFIED -> ADDED)
+2. **Mover** `openspec/changes/{nombre}/` -> `openspec/changes/archive/YYYY-MM-DD-{nombre}/`
+3. **Actualizar instruction files** si verify-report contiene sugerencias
+4. El archive es audit trail: nunca eliminar ni modificar
 
 Reglas:
-- NUNCA archivar con CRITICAL issues en verify-report
-- Si merge sería destructivo (elimina secciones grandes) → WARN y pedir confirmación
+
+- Nunca archivar con CRITICAL issues en verify-report
+- Si merge sería destructivo (elimina secciones grandes) -> advertencia y confirmación
+- `openspec/specs/` permanece vacío hasta el primer archive
+
+## Reglas de frontera
+
+| Actor | Puede leer | Puede escribir |
+|---|---|---|
+| Orquestador | `state.yaml`, git status | Solo lectura (recovery) |
+| sdd-planner | Artefactos previos, código fuente | Artefacto de su fase + state.yaml |
+| sdd-coder | tasks + spec + design + código | Código + tasks.md [x] + state.yaml |
+| sdd-reviewer | spec + tasks + código | verify-report.md + state.yaml |
 
 ---
 
-→ [Quick Start](./quick-start.md) | [Pipeline SDD](./sdd-pipeline.md) | [Avanzado](./advanced.md)
+Siguiente: [Quick Start](./quick-start.md) | [Pipeline SDD](./sdd-pipeline.md) | [Avanzado](./advanced.md)

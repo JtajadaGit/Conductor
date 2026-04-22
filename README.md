@@ -1,6 +1,6 @@
 # Conductor
 
-**Framework SDD compacto, agnóstico de stack, multi-platform (Claude Code · GitHub Copilot)**
+**Framework de orquestación SDD compacto y agnóstico -- Copilot CLI / Claude Code**
 
 ---
 
@@ -8,233 +8,155 @@
 
 | Doc | Descripción |
 |-----|-------------|
-| [Conductor 101](docs/conductor-101.md) | **Empieza aquí** — Tus primeros 15 minutos |
-| [Quick Start](docs/quick-start.md) | Instalación y primer uso |
-| [Pipeline SDD](docs/sdd-pipeline.md) | Fases, modos, paralelismo, TDD, hooks |
-| [OpenSpec](docs/openspec.md) | Persistencia, artefactos, config.yaml, recuperación |
-| [Avanzado](docs/advanced.md) | Tokens, mejores prácticas, troubleshooting |
+| [Conductor 101](docs/conductor-101.md) | Primeros 15 minutos con Conductor. |
+| [Quick Start](docs/quick-start.md) | Instalación y primer uso detallado. |
+| [Adopción por stack](docs/extending-stacks.md) | Cómo integrar Conductor en tu proyecto: nuevo, legacy, monorepo. Instruction files por stack. |
+| [Pipeline SDD](docs/sdd-pipeline.md) | Fases, modos, paralelismo, TDD, hooks. |
+| [OpenSpec](docs/openspec.md) | Persistencia, artefactos, config.yaml, recuperación. |
+| [POC: Pipeline completo](docs/poc-pipeline.md) | Walkthrough práctico del pipeline en Copilot CLI y Claude Code. |
+| [Avanzado](docs/advanced.md) | Tokens, mejores prácticas, troubleshooting. |
 
 ---
 
-## ¿Qué es Conductor?
+## Qué es Conductor?
 
-Cuando pides a una IA que implemente un cambio complejo, suele generar código sin planificar, sin verificar y sin documentar. Conductor cambia eso: un **orquestador central** delega trabajo a **3 agentes especializados** (planificador, implementador, verificador) con contexto fresco y convenciones del proyecto inyectadas automáticamente.
+Cuando pides a una IA que implemente un cambio complejo, suele generar código sin planificar, sin verificar y sin documentar. Conductor resuelve esto: un framework de orquestación que convierte peticiones en código verificado mediante **Spec-Driven Development (SDD)** -- escribir una especificación ANTES del código, para que el diseño sea testable y el resultado auditable.
 
-Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación ANTES del código, para que el diseño sea testable y el resultado auditable: las especificaciones dirigen el diseño, el diseño dirige la implementación. Compatible con [OpenSpec](https://openspec.dev/) — ver también [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) y [GitHub Copilot docs](https://docs.github.com/en/copilot) — los artefactos base (`specs/`, `changes/`, `config.yaml`) siguen la convención estándar; Conductor extiende con phase gates, artifact locks y sub-agent context injection bajo el namespace `x-conductor`.
+Conductor orquesta 3 agentes especializados (planner, coder, reviewer) que colaboran a través de un pipeline de fases. Un orquestador central evalúa la complejidad de cada cambio y decide automáticamente cuánto pipeline aplicar: desde delegación directa para cambios triviales hasta el pipeline completo con exploración y clarificación para cambios grandes.
+
+Los artefactos SDD se persisten en `openspec/` siguiendo el estándar [OpenSpec](https://openspec.dev/), lo que permite recuperación entre sesiones, auditoría completa y portabilidad entre plataformas.
 
 ---
 
 ## Arquitectura
 
 ```
-                 ┌─────────────────────────────────┐
-                 │           USUARIO               │
-                 └───────────────┬─────────────────┘
-                                 ▼
-                 ┌─────────────────────────────────┐
-                 │        ORQUESTADOR               │
-                 │  Coordina · NO ejecuta           │
-                 │  skills/ (on-demand entry point) │
-                 └───────────────┬─────────────────┘
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                   ▼
-      ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-      │ sdd-planner  │  │  sdd-coder   │  │ sdd-reviewer │
-      │ explore      │  │ apply        │  │ verify       │
-      │ propose      │  │ fix          │  │              │
-      │ clarify      │  │              │  │              │
-      │ spec         │  │  ┌─ parallel ─┐│              │
-      │ design       │  │  │ worktree A ││              │
-      │ tasks        │  │  │ worktree B ││              │
-      │              │  │  │ worktree N ││              │
-      │              │  │  └────────────┘│              │
-      └──────────────┘  └──────────────┘  └──────────────┘
+                     /sdd-new "mi cambio"
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  ORQUESTADOR                                                    │
+│                                                                 │
+│  ① Evalúa complejidad ─── trivial? ──→ directo al coder         │
+│  ② Elige pipeline ─────── medium?  ──→ condensado (1 llamada)   │
+│  ③ Delega a agentes ───── large?   ──→ completo (fase a fase)   │
+│  ④ Valida resultados                                            │
+└──────────┬──────────────────┬───────────────────┬───────────────┘
+           │                  │                   │
+           ▼                  ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌──────────────────┐
+│   PLANNER       │ │     CODER       │ │    REVIEWER      │
+│                 │ │                 │ │                  │
+│  explore        │ │  apply          │ │  verify          │
+│  propose        │ │  fix            │ │                  │
+│  clarify        │ │                 │ │                  │
+│  spec · design  │ │                 │ │                  │
+│  tasks          │ │                 │ │                  │
+└────────┬────────┘ └────────┬────────┘ └────────┬─────────┘
+         │                   │                   │
+         └───────────────────┼───────────────────┘
+                             ▼
+              ┌──────────────────────────────┐
+              │         openspec/            │
+              │                              │
+              │  config.yaml                 │
+              │  specs/                      │
+              │  changes/{nombre}/           │
+              │    state · spec · design     │
+              │    tasks · apply-report      │
+              │  changes/archive/            │
+              └──────────────────────────────┘
+
+              ┌──────────────────────────────┐
+              │     Instruction Files        │
+              │  (cargadas por plataforma)   │
+              │                              │
+              │  .github/instructions/       │
+              │  .claude/rules/              │
+              └──────────────────────────────┘
 ```
 
-### Capas
+### Agentes
 
-| Capa | Archivos | Función |
-|------|----------|---------|
-| **Skills** | `skills/sdd-*/` + `instructions/` | Entry point del orquestador. Flujos invocables on-demand (0 tokens hasta uso) |
-| **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
-| **Shared** | `agents/_shared/`, `skills/_shared/` | Protocolos compartidos (cargados on-demand por agentes y skills) |
+| | Agente | Fases | Qué hace |
+|--|--------|-------|----------|
+| 🏗 | **sdd-planner** | explore, propose, clarify, spec, design, tasks | Analiza el cambio, genera especificación, diseño técnico y lista de tareas |
+| ⚡ | **sdd-coder** | apply, fix | Implementa las tareas, escribe código y tests. Soporta ejecución paralela con aislamiento por plataforma |
+| ✓ | **sdd-reviewer** | verify | Valida que el código cumple la spec, ejecuta tests y build |
 
-> **Plugin architecture**: Conductor no sobrescribe instrucciones del proyecto (`CLAUDE.md`, `.github/copilot-instructions.md`). Los skills son el entry point — cada `/sdd-*` define su propia lógica de orquestación.
+### Skills
 
-### Características principales
+| Skill | Qué hace |
+|-------|----------|
+| `/sdd-init` | Detecta stack, crea `openspec/config.yaml` |
+| `/sdd-instructions` | Genera instruction files por stack (framework, testing, formatting) |
+| `/sdd-new <cambio>` | Inicia un cambio: evalúa complejidad y elige pipeline |
+| `/sdd-continue` | Continúa la siguiente fase pendiente |
+| `/sdd-status` | Muestra progreso del cambio activo |
+| `/sdd-archive` | Archiva cambio completado a `changes/archive/` |
 
-| Feature | Descripción |
-|---------|-------------|
-| **Hard Stop Rule** | Evalúa complejidad antes de actuar: trivial/simple → delega directo, medio/grande → sugiere SDD |
-| **Spec-light Mode** | Cambios medium con scope claro → omite proposal, produce spec+design+tasks directamente. Menos tokens, misma calidad |
-| **Condensed Pipeline** | Cambios medium → 1 sola llamada al planner produce todos los artefactos. 3 agents total |
-| **Execution Mode** | `auto` (0 pausas) o `interactive` (pausa antes de apply y verify). Persistente en `config.yaml` — se configura una vez |
-| **Model Routing** | Asigna tier de modelo por fase: high-capability para propose/design, standard para el resto, fast para inline |
-| **Post-Delegation Validation** | Tras cada agente, el orquestador verifica artefactos y state.yaml. Si faltan → re-lanza (nunca escribe inline) |
-| **Spec Amendments** | Si el coder descubre un gap en la spec durante apply → lo documenta como amendment sin romper el pipeline |
-| **Parallel Apply** | ≥2 grupos por dominio con ≥2 tasks cada uno y 0 archivos compartidos → coders paralelos en worktrees. Wave 1 (parallel) → merge → Wave 2 (sequential + reconciliación) |
-| **`[P]`/`[S]` Marking** | Source files disjuntos → `[P]`. Tests, integración, imports cruzados → siempre `[S]` |
-| **Artifact Locks** | Spec y design se bloquean tras completar tasks (previene spec-drift) |
-| **Lessons Learned** | Registro append-only de errores y soluciones entre sesiones |
-| **OpenSpec Compatible** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
-| **Visual Output** | Delegation boxes (`┌─ ... ─┐`), pipeline progress bar (`● ◉ ○ ⊘`), gate warnings — todo visible |
-| **Agent State Updates** | Cada agente actualiza state.yaml al completar su fase (no depende del orquestador) |
-| **Compaction Awareness** | Estado en artefactos para recovery sin pérdida tras compactación |
-| **Trivial Tracking** | Incluso cambios triviales/simples crean `state.yaml` mínimo para historial completo |
-| **Team Conventions** | `/instructions` genera instruction files nativos de plataforma — contrato entre personas e IAs del equipo |
+### Persistencia -- OpenSpec
 
-### Contexto persistente (sin re-explorar en cada sesión)
+Todo se persiste en `openspec/` siguiendo el estándar [OpenSpec](https://openspec.dev/):
 
-| Artefacto | Generado por | Lo lee |
-|-----------|-------------|--------|
-| `.github/instructions/` + `.claude/rules/` | `/instructions` | Auto-cargados por la plataforma. Stack, arquitectura, testing, formatting |
-| `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
+```
+openspec/
+├── config.yaml              ← Configuración del pipeline (ejecución, TDD, hooks)
+├── specs/                   ← Especificaciones principales del proyecto
+└── changes/
+    ├── {nombre}/            ← Cambio activo (state, spec, design, tasks, reports)
+    └── archive/             ← Cambios completados
+```
+
+Los agentes leen y escriben artefactos directamente. El orquestador valida pero no escribe por cuenta de los agentes.
+
+### Instruction Files
+
+Archivos generados por `/sdd-instructions` que proveen contexto del stack a personas y agentes por igual. La plataforma las carga automáticamente cuando se tocan archivos relevantes (vía `applyTo` en Copilot, `paths` en Claude Code).
+
+No forman parte del core de Conductor -- son el único punto de extensión por proyecto. Conductor no sobrescribe instrucciones existentes.
 
 ---
 
 ## Pipeline SDD
 
 ```
-init? → [explore?] → propose → clarify? → spec → design → tasks → apply ⟲ fix → verify → archive?
+explore? -> propose -> clarify? -> spec -> design? -> tasks? -> apply -> verify -> archive?
 ```
+
+| Complejidad | Pipeline | Agentes | Comportamiento |
+|-------------|----------|---------|----------------|
+| **Trivial / Simple** | Directo | 1 (coder) | Sin pipeline SDD. Delegación directa al coder. |
+| **Medium** | Condensado | 3 | Una sola llamada al planner produce todos los artefactos. Luego apply + verify. |
+| **Large** | Completo | 3 | Fase por fase con validación entre cada una. Soporta modo interactivo con pausas. |
+
+El modo de ejecución (`auto` o `interactive`) se configura en `config.yaml` y es persistente. En modo `auto`, el pipeline corre sin pausas. En modo `interactive`, pausa antes de apply y antes de verify.
 
 ---
 
-## Comandos
-
-| Comando | Descripción |
-|---------|-------------|
-| `/sdd-init` | Detecta stack, crea `openspec/config.yaml` |
-| `/instructions` | Genera instruction files por stack: framework, testing, formatting |
-| `/sdd-new <name>` | Nuevo cambio: evalúa complejidad → elige pipeline automáticamente |
-| `/sdd-continue` | Continuar siguiente fase pendiente |
-| `/sdd-status` | Mostrar progreso del cambio activo |
-| `/sdd-archive` | Archivar cambio completado |
-
----
-
-## Estructura de un proyecto con Conductor
-
-Tras `/sdd-init` + `/instructions` + un cambio SDD:
+## Primer uso
 
 ```
-tu-proyecto/
-├── .github/
-│   └── instructions/                    ← Instruction files para GitHub Copilot
-│       ├── angular.instructions.md      ←   applyTo: "**/*.component.ts,**/*.service.ts,..."
-│       ├── testing.instructions.md      ←   applyTo: "**/*.spec.ts"
-│       └── formatting.instructions.md   ←   applyTo: "**/*.ts,**/*.html"
-├── .claude/
-│   └── rules/                           ← Instruction files para Claude Code
-│       ├── angular.md                   ←   (mismo contenido, formato Claude)
-│       ├── testing.md
-│       └── formatting.md
-├── openspec/                            ← Pipeline SDD (generado por /sdd-init)
-│   ├── config.yaml                      ←   Config ejecutable (hooks, TDD, test commands)
-│   ├── specs/                           ←   Especificaciones principales
-│   └── changes/
-│       ├── mi-feature/                  ←   Cambio activo (generado por /sdd-new)
-│       │   ├── state.yaml
-│       │   ├── specs/{domain}/spec.md
-│       │   ├── design.md
-│       │   └── tasks.md
-│       └── archive/                     ←   Cambios completados
-└── src/                                 ←   Tu código (Conductor no lo toca directamente)
+1. Copiar agents/ y skills/ al proyecto
+2. /sdd-init               # detecta stack, crea openspec/config.yaml
+3. /sdd-instructions        # genera instruction files por stack
+4. /sdd-new <cambio>        # primer cambio SDD
 ```
 
-> Los instruction files se generan por stack detectado (Angular, React, Django, Spring, etc.) con `applyTo` específico. La plataforma los carga automáticamente cuando el agente toca archivos relevantes.
+> **Vienes de Angular, React, Java, Salesforce, SAP Commerce, Magento u otro stack?** Lee la [Guía de Adopción](docs/extending-stacks.md) para saber cómo integrar Conductor en tu proyecto (nuevo, legacy o en curso), cómo iterar las instruction files y cuándo crear skills propias.
 
 ---
 
 ## Plataformas
 
-### Comparativa
+| | Copilot CLI | Claude Code |
+|--|-------------|-------------|
+| **Skills** | `.github/skills/` | `.claude/skills/` |
+| **Agents** | `.github/agents/` (`.agent.md`) | `.claude/agents/` |
+| **Instruction files** | `.github/instructions/*.instructions.md` | `.claude/rules/*.md` |
+| **Delegación** | Sub-agents nativos + `/delegate` | `Agent` tool |
+| **Apply paralelo** | `/fleet` (paralelismo por context-window isolation) | `Agent` tool + `isolation: "worktree"` |
+| **Model routing** | `model` frontmatter, `/model`, BYOK | `model` frontmatter, `/model`, env vars |
 
-|  | Claude Code | Copilot CLI | Copilot VS Code |
-|--|-------------|-------------|-----------------|
-| **Plugin system** | `/plugin add` | `/plugin install` | No nativo (copiar a `.github/`) |
-| **Skills** | `.claude/commands/` o plugin | `.github/skills/` | `.github/skills/` |
-| **Agents** | `.claude/agents/` o plugin | `.github/agents/` (`.agent.md`) | `.github/agents/` (`.agent.md`) |
-| **Instruction files** | `.claude/rules/*.md` | `.github/instructions/*.instructions.md` | `.github/instructions/*.instructions.md` |
-| **Parallel apply** | `Agent` tool + `isolation: "worktree"` | `/fleet` + worktrees | Delega a Copilot CLI |
-| **Model routing** | `model:` por delegación (opus/sonnet/haiku) | `--model` flag o BYOK | Modelo de Copilot settings |
-| **Sub-agent delegation** | `Agent` tool | Sub-agents automáticos + `/delegate` | Copilot Chat agents |
-| **No sobrescribe** | `CLAUDE.md` intacto | `copilot-instructions.md` intacto | `copilot-instructions.md` intacto |
-
-### Cómo funciona en cada plataforma
-
-**Claude Code**: El orquestador usa `Agent` tool para delegar a sub-agentes (`sdd-planner`, `sdd-coder`, `sdd-reviewer`). Cada agente se lanza en un contexto aislado. Parallel apply usa `isolation: "worktree"` + `run_in_background: true`.
-
-**Copilot CLI**: El orquestador delega a sub-agentes via el sistema nativo de agentes. Parallel apply usa `/fleet` para lanzar coders simultáneos en worktrees independientes. Soporta BYOK para usar cualquier modelo compatible.
-
-**Copilot VS Code**: El orquestador delega via Copilot Chat agents. Para pipelines complejos con paralelismo, puede hand-off a Copilot CLI. Las instruction files se cargan automáticamente al editar archivos que matchean `applyTo`.
-
-### Qué comparten las 3 plataformas
-
-- **`openspec/`** — mismos artefactos SDD (config.yaml, specs, changes, state.yaml). Cualquier plataforma lee y escribe los mismos archivos.
-- **Instruction files** — `/instructions` detecta la plataforma y genera el formato correcto (`.claude/rules/` o `.github/instructions/`). En proyectos dual-platform, genera ambos.
-- **Skills y agents** — misma lógica, mismos archivos `.md`. La plataforma determina cómo se cargan y ejecutan.
-
-### Primer uso (cualquier plataforma)
-
-```
-1. /sdd-init     ← detecta stack, genera openspec/config.yaml (pipeline config)
-2. /instructions ← genera instruction files por stack (framework, testing, formatting)
-3. (opcional) editar openspec/config.yaml → execution_mode: auto
-4. /sdd-new <nombre>  ← evalúa complejidad, elige pipeline automáticamente
-```
-
----
-
-## Prueba de Concepto: trazas de ejemplo
-
-### Cambio trivial (short-circuit)
-```
-USUARIO: /sdd-new "añade título animado al header"
-ORQUESTADOR:
-  1. Complexity Gate → scope claro, single concern, ≤4 archivos → SIMPLE
-  2. "Cambio simple — delegando directamente al coder sin pipeline SDD."
-  3. Delega a sdd-coder (model: sonnet) con instrucciones directas
-  → 1 agente, ~30s, 0 artefactos markdown
-```
-
-### Cambio medium (pipeline condensado — 3 agents)
-```
-USUARIO: /sdd-new contact-page "Añadir página de contacto con formulario reactivo,
-         validaciones, toast de éxito y ruta /contact"
-ORQUESTADOR:
-  1. Complexity Gate → multi-file, necesita diseño → MEDIUM ✓
-  2. SDD Init Guard → openspec/config.yaml existe ✓
-  3. Spec-light → request >50 palabras con scope claro → omite proposal
-  4. Execution Mode → lee config.yaml → auto
-
-  ── FAST-FORWARD (sdd-planner, SPEC_LIGHT, model: opus) ───────
-  UNA sola llamada produce: spec.md + design.md + tasks.md + state.yaml
-  Post-delegation validation → artefactos OK ✓
-
-  ── APPLY ──────────────────────────────────────────────────────
-  Parallelism check:
-    Dominio "toast" (4 tasks) + dominio "contact" (4 tasks) → Trigger B
-  ┌─ PARALLEL ─┐
-  │ ◉ coder-A (worktree): toast service + component + tests
-  │ ◉ coder-B (worktree): contact component + tests
-  └────────────┘
-  Merge worktrees → coder sequential: routing + app integration
-  Post-delegation validation → artefactos OK ✓
-
-  ── VERIFY (sdd-reviewer, model: sonnet) ──────────────────────
-  Post-delegation validation → verify-report.md OK ✓
-```
-
-### Cambio large (pipeline completo)
-```
-USUARIO: /sdd-new add-user-auth "Añadir autenticación JWT con refresh tokens"
-ORQUESTADOR:
-  1. Complexity Gate → multi-domain, vago → LARGE ✓
-  2. Execution Mode → lee config.yaml → interactive
-  3. explore → propose → clarify (GATE si hay preguntas) → spec → design → tasks
-  4. Post-delegation validation tras cada agente
-  → Pausa (interactive): "Planning complete. ¿Continúo con apply?"
-  → Pausa (interactive): "Apply complete. ¿Verifico?"
-```
+Ambas plataformas comparten los mismos artefactos en `openspec/`, la misma lógica de skills y agents, y los mismos protocolos. `/sdd-instructions` detecta la plataforma y genera instruction files en el formato correcto.
 

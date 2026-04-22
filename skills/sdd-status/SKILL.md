@@ -1,10 +1,6 @@
 ---
 name: sdd-status
 description: Show progress of current SDD change — reads state.yaml
-user-invocable: true
-disable-model-invocation: true
-argument-hint: "[change-name]"
-effort: low
 allowed-tools: Read, Glob
 ---
 
