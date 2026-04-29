@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": ".github/hooks/inject-state.sh",
+        "powershell": ".github/hooks/inject-state.ps1",
+        "timeoutSec": 10
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": ".github/hooks/inject-context.sh",
+        "powershell": ".github/hooks/inject-context.ps1",
+        "timeoutSec": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": ".github/hooks/guard-tools.sh",
+        "powershell": ".github/hooks/guard-tools.ps1",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

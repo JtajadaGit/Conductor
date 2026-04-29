@@ -1,0 +1,12 @@
+# OpenSpec — SDD pipeline artifacts
+# Add these lines to your project's .gitignore
+
+# Active changes (work in progress — not ready for commit)
+openspec/changes/*/
+
+# Keep the archive (completed changes — these ARE committed)
+!openspec/changes/archive/
+
+# Keep config and main specs (these ARE committed)
+!openspec/config.yaml
+!openspec/specs/

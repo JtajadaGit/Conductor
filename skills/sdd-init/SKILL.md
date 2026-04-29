@@ -1,29 +1,36 @@
 ---
 name: sdd-init
-description: Initialize SDD context — detect tech stack, testing capabilities, bootstrap persistence and context files
+description: >
+  Initialize SDD pipeline — detect tech stack, bootstrap openspec/ persistence
+  structure. Use when setting up Conductor in a new or existing project.
 user-invocable: true
 disable-model-invocation: true
 ---
 
-## Steps
+## Purpose
+
+Bootstrap `openspec/` — the persistence layer for the SDD pipeline. Detects stack, testing, architecture and stores it as executable config in `openspec/config.yaml`. This file drives agent behavior (hooks, TDD mode, test commands).
+
+**Does NOT generate instruction files.** Run `/sdd-instructions` after init to generate platform instruction files (`.github/instructions/`, `.claude/rules/`).
+
+## Order
+
+The orchestrator MUST perform the following phases:
 
 ### 1. Detect Stack
-Scan for markers **in project root only** (exclude `node_modules/`, `vendor/`, `.venv/`, `target/`): `package.json` (Node.js), `go.mod` (Go), `pyproject.toml`/`requirements.txt` (Python), `Cargo.toml` (Rust), `pom.xml`/`build.gradle` (Java/Kotlin), `composer.json` (PHP), `Gemfile` (Ruby), `*.csproj`/`*.sln` (.NET).
+
+Scan the project root for language/framework manifest files (exclude dependency directories). Identify: primary language, runtime, version, framework, and package manager.
 
 ### 2. Detect Testing
 
-| Category | Detect | Examples |
-|----------|--------|----------|
-| Test runner | Primary framework | jest, vitest, pytest, go test, cargo test |
-| Test layers | Available types | unit, integration, e2e |
-| Coverage | Reporter | istanbul, c8, coverage.py, go test -cover |
-| Quality | Linter/type-checker/formatter | eslint, ruff, clippy, tsc, mypy, prettier |
+Identify the project's testing infrastructure: test runner and framework, available test layers (unit, integration, e2e), coverage tooling, and quality tools (linter, type-checker, formatter).
 
 ### 3. Detect Architecture
-Scan for patterns: directory structure, key config files, framework markers.
-Identify: architecture style (Clean, MVC, Hexagonal, layered), key modules/packages, entry points, notable conventions.
+
+Identify architecture style (Clean, Hexagonal, MVC, layered, etc.), key modules/packages, entry points, and notable conventions from project structure.
 
 ### 4. Resolve strict_tdd
+
 Priority chain (first match wins):
 1. System prompt marker `strict-tdd-mode` → use value
 2. Existing `openspec/config.yaml` `x-conductor.strict_tdd` → use value
@@ -31,28 +38,49 @@ Priority chain (first match wins):
 4. No test runner → `false`
 
 ### 5. Initialize Persistence
-- **Re-init** (openspec/ exists): READ existing config, MERGE (preserve user rules, update detected fields)
-- **First-init**: Create openspec structure directly (always openspec mode — required for DAG, recovery, and phase gates).
-- Create structure using **RELATIVE paths only** (e.g., `openspec/specs/`, NOT absolute paths):
+
+- **Re-init** (openspec/ exists): READ existing config, MERGE (preserve user rules, update detected fields).
+- **First-init**: Create openspec structure directly.
+- Create structure using **RELATIVE paths only**:
   ```
   openspec/
   ├── config.yaml
-  ├── context.md
   ├── specs/
   └── changes/
       └── archive/
   ```
-- **CRITICAL**: NEVER use absolute paths in mkdir or file writes. On Windows, absolute paths in bash create garbage directories.
+- **CRITICAL**: NEVER use absolute paths in mkdir. On Windows, absolute paths in bash create garbage directories.
+
+### 5b. Generate `.copilotignore` (if not exists)
+
+If `.copilotignore` does not exist in the project root, create it with:
+```
+node_modules/
+dist/
+build/
+.env
+.env.*
+*.pem
+*.key
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+coverage/
+logs/
+```
+
+Do NOT overwrite if it already exists.
 
 ### 6. Generate `openspec/config.yaml`
+
 OpenSpec standard fields (`schema`, `context`, `rules`) + Conductor extensions (`x-conductor`).
+
 ```yaml
 schema: spec-driven
 
 # OpenSpec standard — SINGLE LINE summary injected into all artifact prompts
 context: "{framework} {version}, {language} strict, {package_manager}"
 # Example: "Angular 20 standalone, TypeScript strict, npm"
-# NOT a multi-line block — keep it as a concise 1-line string.
 rules:
   specs:
     - Use Given/When/Then format
@@ -62,13 +90,13 @@ rules:
 # Conductor extensions
 x-conductor:
   stack:
-    language: ""        # e.g., "typescript", "python", "go"
-    runtime: ""         # e.g., "node", "bun", "deno"
-    version: ""         # e.g., "20.x", "3.12"
-    framework: ""       # e.g., "angular", "express", "django"
-    package_manager: "" # e.g., "npm", "pnpm", "yarn"
+    language: ""        # detected primary language
+    runtime: ""         # detected runtime
+    version: ""         # detected version
+    framework: ""       # detected framework
+    package_manager: "" # detected package manager
   monorepo: false       # true if workspace/monorepo detected
-  execution_mode: interactive  # auto | interactive — user changes this manually
+  auto_mode: false             # true = full pipeline without pauses | false = pause after planning and after implementation
   strict_tdd: {true/false}
   testing:
     detected: {ISO date}
@@ -89,48 +117,15 @@ x-conductor:
       coverage_threshold: 0
 ```
 
-### 7. Generate `openspec/context.md`
-Single source of truth for repo context AND team standards — survives compaction, read by orchestrator at session start. Platform-agnostic.
-```markdown
-# Repo Context
-_Generated by sdd-init on {date}. Update manually as architecture evolves._
+### 7. Return Summary
 
-## Stack
-{framework} {version} {pattern} · {language} {version} strict · {runtime} · {package_manager}
-<!-- 1 línea resumen — misma info que config.yaml context: pero con detalle arquitectónico (p. ej., "no NgModules"). Mantener sincronizado con config.yaml al re-ejecutar /sdd-init. -->
-
-## Architecture
-{pattern: Clean/MVC/Hexagonal/etc.}
-
-## Key Directories
-| Path | Purpose |
-|------|---------|
-{detected modules and what they contain}
-
-## External Dependencies
-{databases, message queues, external APIs, required services — leave blank if none detected}
-
-## Entry Points
-{main files, CLI entrypoints, API roots}
-
-## Known Fragile Areas
-{leave blank — fill as discovered}
-
----
-
-## Team Standards
-_Run /conventions to auto-populate from project config files._
-```
-
-### 8. Conventions reminder
-After init completes, always remind the user: "Run `/conventions` to update the `## Team Standards` section of `openspec/context.md` with formatting, linting, and project rules." Do NOT attempt to invoke `/conventions` programmatically — it is user-invocable only.
-
-### 9. Return Summary
-Report: stack detected, architecture pattern, persistence mode, strict TDD, context files created.
+Report: stack detected, architecture pattern, strict TDD, openspec files created.
+Always end with: "Run `/sdd-instructions` to generate platform instruction files for your stack."
 
 ## Rules
-- NEVER create placeholder spec files
-- ALWAYS detect real stack, don't guess
-- OpenSpec persistence is always enabled (required for pipeline functionality)
-- `openspec/context.md` is ALWAYS generated (both modes) — canonical source of truth
-- `openspec/context.md` IS version-controlled
+
+- NEVER create placeholder spec files.
+- ALWAYS detect real stack from project files, don't guess.
+- OpenSpec persistence is always enabled (required for pipeline functionality).
+- `/sdd-init` owns `openspec/` ONLY — does NOT write to `.github/instructions/` or `.claude/rules/`.
+- `openspec/config.yaml` is executable pipeline config (what tools to RUN). Instruction files (generated by `/sdd-instructions`) are project context (HOW to write code). No overlap.

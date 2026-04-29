@@ -1,138 +1,64 @@
-# Quick Start — Conductor
-
-Conductor funcionando en tu proyecto en menos de 5 minutos.
-
----
+# Quick Start -- Instalación y primer uso
 
 ## Requisitos
 
 | Requisito | Descripción |
-|-----------|-------------|
-| **Plataforma IA** | Claude Code (Anthropic) **o** GitHub Copilot (VS Code / CLI) |
+|---|---|
+| **Plataforma IA** | GitHub Copilot CLI (principal) o Claude Code |
 | **Git** | Repositorio git inicializado |
-| **Proyecto existente** | Conductor se integra en proyectos existentes |
-
----
+| **Proyecto existente** | Conductor se integra en proyectos con código existente |
 
 ## Instalación
 
-### Paso 1: Obtener Conductor
+Copia las carpetas `agents/` y `skills/` al directorio de tu plataforma:
 
-```bash
-git clone https://github.com/tu-org/Conductor.git
-# o descargar el ZIP desde GitHub
-```
+| Plataforma | Agents | Skills |
+|---|---|---|
+| **Copilot CLI** | `.github/agents/` | `.github/skills/` |
+| **Claude Code** | `.claude/agents/` | `.claude/skills/` |
 
-### Paso 2: Copiar a tu proyecto
+## Plataformas soportadas
 
-#### Claude Code
+| Componente | Copilot CLI | Claude Code |
+|---|---|---|
+| **Skills** | `/sdd-init`, `/sdd-new`, etc. | Idénticos |
+| **Agents** | `.github/agents/` + sub-agents | `.claude/agents/` + tool `Agent` |
+| **Instruction files** | `.github/instructions/*.instructions.md` | `.claude/rules/*.md` |
+| **Apply paralelo** | `/fleet` (context-window isolation) | `Agent` tool + `isolation: "worktree"` |
+| **Model routing** | `model` frontmatter, `/model`, BYOK | `model` frontmatter, `/model`, env vars |
 
-```bash
-# Linux/Mac
-cp Conductor/instructions/CLAUDE.md tu-proyecto/CLAUDE.md
-cp -r Conductor/agents/ tu-proyecto/.claude/agents/
-cp -r Conductor/skills/ tu-proyecto/.claude/skills/
-```
+`/sdd-instructions` detecta la plataforma automáticamente y genera los instruction files en la ubicación correcta.
 
-```powershell
-# Windows PowerShell
-Copy-Item Conductor\instructions\CLAUDE.md tu-proyecto\CLAUDE.md
-Copy-Item -Recurse Conductor\agents\ tu-proyecto\.claude\agents\
-Copy-Item -Recurse Conductor\skills\ tu-proyecto\.claude\skills\
-```
+## Primer uso: 4 pasos
 
-#### GitHub Copilot (VS Code / CLI)
-
-```bash
-# Linux/Mac
-cp Conductor/instructions/copilot-instructions.md tu-proyecto/.github/copilot-instructions.md
-cp -r Conductor/agents/ tu-proyecto/.github/agents/
-cp -r Conductor/skills/ tu-proyecto/.github/skills/
-```
-
-```powershell
-# Windows PowerShell
-Copy-Item Conductor\instructions\copilot-instructions.md tu-proyecto\.github\copilot-instructions.md
-Copy-Item -Recurse Conductor\agents\ tu-proyecto\.github\agents\
-Copy-Item -Recurse Conductor\skills\ tu-proyecto\.github\skills\
-```
-
-#### Ambas plataformas (dual)
-
-Combina los dos bloques anteriores. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos.
-
-### Paso 3: Estructura resultante
-
-```
-tu-proyecto/
-├── CLAUDE.md                        ← Orquestador Claude Code (raíz del proyecto)
-├── .claude/                         ← Claude Code
-│   ├── agents/
-│   │   ├── _shared/
-│   │   ├── sdd-planner/AGENT.md
-│   │   ├── sdd-coder/AGENT.md
-│   │   └── sdd-reviewer/AGENT.md
-│   └── skills/
-│       ├── sdd-init/
-│       ├── sdd-new/
-│       ├── sdd-ff/
-│       ├── sdd-continue/
-│       ├── sdd-status/
-│       ├── sdd-archive/
-│       └── conventions/
-├── .github/                         ← GitHub Copilot (si dual)
-│   ├── copilot-instructions.md
-│   ├── agents/
-│   └── skills/
-└── openspec/                        ← Artefactos SDD (creados por /sdd-init)
-```
-
----
-
-## Diferencias por plataforma
-
-| Característica | Claude Code | Copilot VS Code | Copilot CLI |
-|---------------|-------------|-----------------|-------------|
-| Orquestador | `CLAUDE.md` (raíz) | `.github/copilot-instructions.md` | `.github/copilot-instructions.md` |
-| Agentes | `.claude/agents/` | `.github/agents/` | `.github/agents/` |
-| Skills | `.claude/skills/` | `.github/skills/` | `.github/skills/` |
-| Modelos | high-capability / standard / fast | high-capability / standard / fast | high-capability / standard / fast |
-| Tool use | ✅ Completo | ✅ Completo | ✅ Completo (agentic) |
-| Slash commands | ✅ `/sdd-init` | ✅ `/sdd-init` | ✅ `/sdd-init` |
-
----
-
-## Primer uso: paso a paso
-
-### Paso 1: `/sdd-init`
+### Paso 1: Inicializar SDD
 
 ```
 /sdd-init
 ```
 
-Detecta stack, testing, crea `openspec/` con `config.yaml` y `context.md`.
-
-Resultado esperado:
-```
-✅ SDD inicializado
-   Stack: Node.js + TypeScript + Express
-   Testing: Jest (detectado), strict_tdd: true
-   Execution mode: interactive (cambiar en config.yaml)
-   Persistencia: openspec (habilitado)
-   → Ejecuta /conventions para completar Team Standards
-```
-
-### Paso 2: `/conventions`
+Detecta stack tecnológico, testing framework, crea `openspec/config.yaml`. Resultado esperado:
 
 ```
-/conventions
+SDD inicializado
+  Stack: Node.js + TypeScript + Express
+  Testing: Jest (detectado), strict_tdd: true
+  Execution mode: interactive
+  Persistencia: openspec (habilitado)
 ```
 
-Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. y puebla la sección `## Team Standards` de `openspec/context.md`.
+### Paso 2: Generar instruction files
 
-### Paso 3 (opcional): Configurar execution mode
+```
+/sdd-instructions
+```
+
+Escanea `.editorconfig`, `tsconfig.json`, `eslint.config.*`, etc. Genera instruction files de testing y formatting para la plataforma detectada.
+
+### Paso 3: Configurar execution mode (opcional)
 
 Edita `openspec/config.yaml`:
+
 ```yaml
 x-conductor:
   execution_mode: auto    # auto (0 pausas) | interactive (pausa antes de apply/verify)
@@ -141,42 +67,34 @@ x-conductor:
 ### Paso 4: Primer cambio
 
 ```
-/sdd-ff mi-feature       # Cambio medio — pipeline condensado
-/sdd-new mi-feature      # Cambio grande o vago — pipeline completo
+/sdd-new mi-feature
 ```
 
-Desde ahí:
+Evalúa complejidad automáticamente y elige el pipeline adecuado. Después:
+
 ```
-/sdd-continue    # avanzar a la siguiente fase pendiente (apply, verify, etc.)
-/sdd-archive     # cerrar y promover specs a main
+/sdd-continue    # avanza a la siguiente fase
+/sdd-archive     # cierra y promueve specs
 ```
 
----
-
-## Verificación rápida
+## Verificación
 
 - [ ] `/sdd-init` responde con detección de stack
-- [ ] `/sdd-new test` genera exploración + propuesta
+- [ ] `openspec/config.yaml` existe con datos del proyecto
+- [ ] `/sdd-instructions` genera instruction files en la ubicación de la plataforma
+- [ ] `/sdd-new test` genera artefactos en `openspec/changes/`
 - [ ] El orquestador delega a sub-agentes (no ejecuta código inline)
-- [ ] Se crean artefactos en `openspec/changes/` (modo openspec)
 
-### Síntomas de problema
+## Troubleshooting
 
-| Síntoma | Causa | Solución |
-|---------|-------|----------|
-| `/sdd-init` no reconocido | Skills no copiados al path correcto | Verificar `.claude/skills/` o `.github/skills/` |
-| Orquestador ejecuta código directamente | Instrucciones no cargadas | Verificar `CLAUDE.md` en raíz o `.github/copilot-instructions.md` |
-| No se crean artefactos | `/sdd-init` no ejecutado | Ejecutar `/sdd-init` |
-| Sub-agentes ignoran convenciones | Conventions no generado | Ejecutar `/conventions` |
-
----
-
-### Referencias oficiales
-- **Claude Code**: https://docs.anthropic.com/en/docs/claude-code
-- **GitHub Copilot**: https://docs.github.com/en/copilot
-- **OpenSpec estándar**: https://openspec.dev/
-- **RFC 2119** (keywords): https://www.rfc-editor.org/rfc/rfc2119
+| Problema | Solución |
+|---|---|
+| `/sdd-init` no reconocido | Skills no copiados a la ubicación correcta de la plataforma. Verifica la estructura de directorios |
+| Orquestador ejecuta código directamente | Skills no cargados. Verifica que están en el directorio correcto de la plataforma |
+| No se crean artefactos en `openspec/` | `/sdd-init` no fue ejecutado. Ejecutar primero |
+| Sub-agentes ignoran convenciones | Instruction files no generados. Ejecuta `/sdd-instructions` |
+| Instruction files en ubicación incorrecta | `/sdd-instructions` no detectó la plataforma. Verifica que `.github/` o `.claude/` existen en el proyecto |
 
 ---
 
-→ [Conductor 101](./conductor-101.md) | [Pipeline SDD completo](./sdd-pipeline.md) | [OpenSpec y persistencia](./openspec.md)
+Siguiente: [Conductor 101](./conductor-101.md) | [Pipeline SDD](./sdd-pipeline.md) | [OpenSpec](./openspec.md) | [Avanzado](./advanced.md)
