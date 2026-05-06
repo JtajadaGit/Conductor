@@ -95,22 +95,17 @@ El pipeline separa el **QUÉ** (specs, technology-agnostic) del **CÓMO** (instr
 
 ### 1. Instalar el plugin
 
-**Opción A — Copilot CLI (desde repositorio local):**
+**Opción A — Copilot CLI:**
 ```bash
-copilot plugin add /ruta/a/Conductor
+copilot plugin add https://gitlabdes.hiberus.com/iasmartcommerce/conductor.git
 ```
 
-**Opción B — Copilot CLI (desde repositorio git):**
-```bash
-copilot plugin add https://github.com/TU-ORG/Conductor.git
-```
-
-**Opción C — VS Code:**
+**Opción B — VS Code:**
 1. Abre la Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
 2. Ejecuta `Chat: Install Plugin From Source`
 3. Selecciona la carpeta raíz del repositorio de Conductor
 
-**Opción D — Instalación manual (sin plugin system):**
+**Opción C — Instalación manual (sin plugin system):**
 
 Si no tienes acceso al sistema de plugins, copia los ficheros directamente a tu proyecto:
 
@@ -130,7 +125,13 @@ En VS Code, añade estos settings a `.vscode/settings.json`:
 }
 ```
 
-**Verificación** — en Copilot CLI o VS Code, escribe `/sdd-` y comprueba que aparecen los skills: `/sdd-init`, `/sdd-instructions`, `/sdd-status`, `/sdd-archive`. Escribe `@sdd-` y comprueba que aparece `sdd-orchestrator`.
+**Verificación** — en Copilot CLI o VS Code, escribe `/sdd-` y comprueba que aparecen los skills: `/sdd-init`, `/sdd-instructions`, `/sdd-status`, `/sdd-archive`. Escribe `/agent` y comprueba que aparece `sdd-orchestrator`.
+
+**Actualización** — el plugin se versiona en `plugin.json`. Al iniciar sesión, Copilot CLI detecta si hay una nueva versión y la actualiza automáticamente. Si necesitas forzar la actualización:
+
+```bash
+/plugin update conductor
+```
 
 ### 2. Inicializar el proyecto
 

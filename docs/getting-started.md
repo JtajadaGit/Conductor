@@ -103,7 +103,7 @@ Conductor no requiere ningún runtime, ningún binario ni ningún package manage
 ### 4.1 Instalación vía plugin (Copilot CLI)
 
 ```bash
-copilot plugin add /ruta/a/Conductor
+copilot plugin add https://gitlabdes.hiberus.com/iasmartcommerce/conductor.git
 ```
 
 ### 4.2 Instalación en VS Code
