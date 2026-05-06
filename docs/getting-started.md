@@ -171,6 +171,15 @@ sdd-orchestrator --auto "crear listado de productos con fake API"
 | (sin flags) | Modo interactivo: pausa después de planificar y después de implementar para revisión humana. |
 | `--continue` | Retoma un cambio existente desde `state.yaml`. |
 
+> **`--auto` vs Autopilot de Copilot — no son lo mismo:**
+>
+> | Modo | Cómo se activa | Qué hace | Premium requests |
+> |------|---------------|----------|-----------------|
+> | `--auto` | En el prompt: `--auto mi petición` | El orchestrator **no pregunta** — salta los gates directamente | **Menos** — no hay mensaje extra de "y/n" |
+> | Autopilot | Al iniciar sesión: `--yolo` o `/allow-all` | Copilot **responde "y" automáticamente** a las preguntas del orchestrator | **Más** — cada gate genera un mensaje "Proceed?" + Copilot responde "Continuing autonomously" = premium request extra |
+>
+> **Recomendación:** usa siempre `--auto` en el prompt cuando quieras ejecución sin parar. Es más barato que autopilot porque el orchestrator ni siquiera genera la pregunta.
+
 ### Paso 4: Monitorizar el progreso
 
 ```
