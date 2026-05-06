@@ -1,35 +1,57 @@
 # guard-tools.ps1 — preToolUse hook
-# Security guard for Conductor pipeline.
-# Blocks: git operations, destructive commands, network calls.
+# BLOCKS: git operations, destructive commands, network calls.
+# ENFORCES: per-step scope via CONDUCTOR_STEP_SCOPE env var.
 
-$input = $Input | Out-String
-$toolName = if ($input -match '"toolName":"([^"]*)"') { $Matches[1] } else { "" }
-$command = if ($input -match '"command":"([^"]*)"') { $Matches[1] } else { "" }
+$rawInput = $Input | Out-String
 
-# Block web_fetch tool directly
-if ($toolName -eq "web_fetch") {
-    Write-Output '{"permissionDecision":"deny","permissionDecisionReason":"BLOCKED: web fetching not allowed during pipeline."}'
+$toolName = if ($rawInput -match '"tool_name"\s*:\s*"([^"]*)"') { $Matches[1] }
+  elseif ($rawInput -match '"toolName"\s*:\s*"([^"]*)"') { $Matches[1] }
+  else { "" }
+
+function Deny($reason) {
+    Write-Output "{`"hookSpecificOutput`":{`"hookEventName`":`"PreToolUse`",`"permissionDecision`":`"deny`",`"permissionDecisionReason`":`"$reason`"}}"
     exit 0
 }
 
-if ($toolName -eq "bash" -or $toolName -eq "shell" -or $toolName -eq "powershell") {
-    # Git — ALL operations blocked
-    if ($command -match "^git\s") {
-        Write-Output '{"permissionDecision":"deny","permissionDecisionReason":"BLOCKED: git operations are managed by the user, never by the agent."}'
-        exit 0
+# Block web_fetch
+if ($toolName -eq "web_fetch" -or $toolName -eq "WebFetch") {
+    Deny "BLOCKED: web fetching not allowed."
+}
+
+# Check shell commands
+if ($toolName -eq "bash" -or $toolName -eq "shell" -or $toolName -eq "powershell" -or $toolName -eq "execute") {
+
+    # Block ANY git command anywhere in the input
+    if ($rawInput -match '\bgit\b') {
+        Deny "BLOCKED: ALL git operations forbidden. The user manages git, never the agent."
     }
 
-    # Destructive
-    if ($command -match "^(rm -rf|rmdir|del /|Remove-Item.*-Recurse)") {
-        Write-Output '{"permissionDecision":"deny","permissionDecisionReason":"BLOCKED: destructive operations not allowed."}'
-        exit 0
+    # Block destructive
+    if ($rawInput -match '(rm\s+-rf|rmdir|del\s+/s|Remove-Item.*-Recurse)') {
+        Deny "BLOCKED: destructive operations not allowed."
     }
 
-    # Network — curl, wget, invoke-webrequest
-    if ($command -match "(curl|wget|Invoke-WebRequest|Invoke-RestMethod|curl\.exe)") {
-        Write-Output '{"permissionDecision":"deny","permissionDecisionReason":"BLOCKED: network calls not allowed during pipeline."}'
-        exit 0
+    # Block network
+    if ($rawInput -match '(curl|wget|Invoke-WebRequest|Invoke-RestMethod)') {
+        Deny "BLOCKED: network calls not allowed."
     }
 }
 
-Write-Output '{"permissionDecision":"allow"}'
+# Per-step scope enforcement
+# If CONDUCTOR_STEP_SCOPE is set, restrict file writes to those paths
+$scope = $env:CONDUCTOR_STEP_SCOPE
+if ($scope -and ($toolName -eq "edit" -or $toolName -eq "write" -or $toolName -eq "create")) {
+    $filePath = if ($rawInput -match '"(?:file_?[Pp]ath|path)"\s*:\s*"([^"]*)"') { $Matches[1] } else { "" }
+    if ($filePath) {
+        $allowedPaths = $scope -split ";"
+        $allowed = $false
+        foreach ($p in $allowedPaths) {
+            if ($filePath -like "*$p*") { $allowed = $true; break }
+        }
+        if (-not $allowed) {
+            Deny "BLOCKED: File '$filePath' is outside step scope: $scope"
+        }
+    }
+}
+
+Write-Output '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'

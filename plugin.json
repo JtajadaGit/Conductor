@@ -1,7 +1,7 @@
 {
   "name": "conductor",
-  "description": "Spec-Driven Development pipeline. Orchestrator delegates to planner, coder, and reviewer subagents following OpenSpec.",
-  "version": "1.0.1",
+  "description": "Spec-Driven Development pipeline. Orchestrator delegates to subagents following OpenSpec.",
+  "version": "1.0.0",
   "license": "MIT",
   "agents": ["./agents"],
   "skills": ["./skills/sdd-init", "./skills/sdd-instructions", "./skills/sdd-status", "./skills/sdd-archive"],
