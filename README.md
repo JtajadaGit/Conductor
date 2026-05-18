@@ -1,230 +1,275 @@
 # Conductor
 
-**Framework SDD compacto, agnóstico de stack, multi-platform (Claude Code · GitHub Copilot)**
+**Spec-Driven Development para GitHub Copilot — CLI y VS Code**
+
+Plugin sin dependencias que convierte la asistencia de IA en un proceso de ingeniería auditable. En lugar de generar código al vuelo, impone un pipeline: **especificar → implementar → verificar**. Cada decisión queda trazada, cada artefacto versionado en git, cada agente opera dentro de límites estrictos.
+
+Sin instalación. Sin binario. Sin runtime. Copia el plugin a tu proyecto y listo.
 
 ---
 
-## Documentación
+## Contenido
 
-| Doc | Descripción |
-|-----|-------------|
-| [Conductor 101](docs/conductor-101.md) | **Empieza aquí** — Tus primeros 15 minutos |
-| [Quick Start](docs/quick-start.md) | Instalación y primer uso |
-| [Pipeline SDD](docs/sdd-pipeline.md) | Fases, modos, paralelismo, TDD, hooks |
-| [OpenSpec](docs/openspec.md) | Persistencia, artefactos, config.yaml, recuperación |
-| [Avanzado](docs/advanced.md) | Tokens, mejores prácticas, troubleshooting |
+[Migración](docs/migration.md) | [Por qué Conductor](#por-qué-conductor) | [Arquitectura](#arquitectura) | [Primeros pasos](#primeros-pasos) | [Documentación](docs/)
 
 ---
 
-## ¿Qué es Conductor?
+## Por qué Conductor
 
-Cuando pides a una IA que implemente un cambio complejo, suele generar código sin planificar, sin verificar y sin documentar. Conductor cambia eso: un **orquestador central** delega trabajo a **3 agentes especializados** (planificador, implementador, verificador) con contexto fresco y convenciones del proyecto inyectadas automáticamente.
-
-Conductor usa **Spec-Driven Development (SDD)** — escribir una especificación ANTES del código, para que el diseño sea testable y el resultado auditable: las especificaciones dirigen el diseño, el diseño dirige la implementación. Compatible con [OpenSpec](https://openspec.dev/) — ver también [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) y [GitHub Copilot docs](https://docs.github.com/en/copilot) — los artefactos base (`specs/`, `changes/`, `config.yaml`) siguen la convención estándar; Conductor extiende con phase gates, artifact locks y sub-agent context injection bajo el namespace `x-conductor`.
+| Sin Conductor | Con Conductor |
+|---|---|
+| La IA genera código de inmediato | Redacta un spec primero, implementa después |
+| Sin trazabilidad | Cada cambio tiene spec, report y audit trail en `openspec/` |
+| Patrones inconsistentes | Los instruction files imponen las convenciones del equipo |
+| La IA ejecuta cualquier comando | `guard-tools` bloquea git, curl, wget y comandos destructivos |
+| Una conversación monolítica | El orchestrator despacha agentes especializados |
 
 ---
 
 ## Arquitectura
 
 ```
-                 ┌─────────────────────────────────┐
-                 │           USUARIO               │
-                 └───────────────┬─────────────────┘
-                                 ▼
-                 ┌─────────────────────────────────┐
-                 │        ORQUESTADOR               │
-                 │  Coordina · NO ejecuta           │
-                 │  instructions/ (per platform)    │
-                 └───────────────┬─────────────────┘
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                   ▼
-      ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-      │ sdd-planner  │  │  sdd-coder   │  │ sdd-reviewer │
-      │ explore      │  │ apply        │  │ verify       │
-      │ propose      │  │ fix          │  │              │
-      │ clarify      │  │              │  │              │
-      │ spec         │  │  ┌─ parallel ─┐│              │
-      │ design       │  │  │ worktree A ││              │
-      │ tasks        │  │  │ worktree B ││              │
-      │              │  │  │ worktree N ││              │
-      │              │  │  └────────────┘│              │
-      └──────────────┘  └──────────────┘  └──────────────┘
-```
-
-### Capas
-
-| Capa | Archivos | Función |
-|------|----------|---------|
-| **Instructions** | `CLAUDE.md` (raíz) o `.github/copilot-instructions.md` | Orquestador SDD (uno por plataforma) |
-| **Agents** | `agents/sdd-planner/`, `sdd-coder/`, `sdd-reviewer/` | Ejecutores de fases SDD (contexto aislado) |
-| **Skills** | `skills/sdd-*/` + `conventions/` | Flujos invocables on-demand (0 tokens hasta uso) |
-
-### Características principales
-
-| Feature | Descripción |
-|---------|-------------|
-| **Hard Stop Rule** | Evalúa complejidad antes de actuar: trivial/simple → delega directo, medio/grande → sugiere SDD |
-| **Spec-light Mode** | Cambios medium con scope claro → omite proposal, produce spec+design+tasks directamente. Menos tokens, misma calidad |
-| **Condensed Pipeline** | Cambios medium → 1 sola llamada al planner produce todos los artefactos. 3 agents total |
-| **Execution Mode** | `auto` (0 pausas) o `interactive` (pausa antes de apply y verify). Persistente en `config.yaml` — se configura una vez |
-| **Model Routing** | Asigna tier de modelo por fase: high-capability para propose/design, standard para el resto, fast para inline |
-| **Post-Delegation Validation** | Tras cada agente, el orquestador verifica artefactos y state.yaml. Si faltan → re-lanza (nunca escribe inline) |
-| **Spec Amendments** | Si el coder descubre un gap en la spec durante apply → lo documenta como amendment sin romper el pipeline |
-| **Parallel Apply** | ≥2 grupos por dominio con ≥2 tasks cada uno y 0 archivos compartidos → coders paralelos en worktrees. Wave 1 (parallel) → merge → Wave 2 (sequential + reconciliación) |
-| **`[P]`/`[S]` Marking** | Source files disjuntos → `[P]`. Tests, integración, imports cruzados → siempre `[S]` |
-| **Artifact Locks** | Spec y design se bloquean tras completar tasks (previene spec-drift) |
-| **Lessons Learned** | Registro append-only de errores y soluciones entre sesiones |
-| **OpenSpec Compatible** | `config.yaml` usa schema estándar + extensiones bajo `x-conductor` |
-| **Visual Output** | Delegation boxes (`┌─ ... ─┐`), pipeline progress bar (`● ◉ ○ ⊘`), gate warnings — todo visible |
-| **Agent State Updates** | Cada agente actualiza state.yaml al completar su fase (no depende del orquestador) |
-| **Compaction Awareness** | Estado en artefactos para recovery sin pérdida tras compactación |
-| **Trivial Tracking** | Incluso cambios triviales/simples crean `state.yaml` mínimo para historial completo |
-| **Team Conventions** | `/conventions` actualiza `## Team Standards` en `context.md` — contrato entre personas e IAs del equipo |
-
-### Contexto persistente (sin re-explorar en cada sesión)
-
-| Artefacto | Generado por | Lo lee |
-|-----------|-------------|--------|
-| `openspec/context.md` | sdd-init + conventions | Orquestador al iniciar sesión. Incluye repo context + team standards |
-| `openspec/changes/*/state.yaml` | Cada fase | Orquestador en compactación/recovery |
-
----
-
-## Pipeline SDD
-
-```
-init? → [explore?] → propose → clarify? → spec → design → tasks → apply ⟲ fix → verify → archive?
+plugin.json                         Manifiesto del plugin
+agents/
+  sdd-orchestrator.agent.md         Punto de entrada (sdd-orchestrator)
+  sdd-planner.agent.md              Subagente — crea artefactos OpenSpec
+  sdd-coder.agent.md                Subagente — implementa código
+  sdd-reviewer.agent.md             Subagente — valida y ejecuta tests
+  _shared/
+    openspec-format.md              Referencia del formato OpenSpec
+    security-rules.md               Reglas de seguridad compartidas
+skills/
+  sdd-init/                         /sdd-init — inicializa openspec/
+  sdd-instructions/                 /sdd-instructions — genera instruction files
+  sdd-status/                       /sdd-status — muestra progreso del pipeline
+  sdd-archive/                      /sdd-archive — archiva cambios completados
+hooks/
+  conductor.json                    Registro de 3 hooks
+  inject-state.sh/.ps1              sessionStart — carga estado del cambio activo
+  inject-context.sh/.ps1            subagentStart — inyecta contexto a subagentes
+  guard-tools.sh/.ps1               preToolUse — bloquea git/curl/wget/rm-rf
 ```
 
 ---
 
-## Comandos
+## Cómo funciona
 
-| Comando | Descripción | Coste |
-|---------|-------------|-------|
-| `/sdd-init` | Detecta stack, crea openspec, genera context files | 1 req |
-| `/sdd-new <name>` | Nuevo cambio: [explore?] → propose → clarify | 2-3 req |
-| `/sdd-ff <name>` | Fast-forward: condensado (1 planner) o completo según complejidad | 1-3 req |
-| `/sdd-continue` | Continuar siguiente fase pendiente | 1 req |
-| `/sdd-status` | Mostrar progreso del cambio activo | 0 req |
-| `/sdd-archive` | Archivar cambio completado | 1 req |
-| `/conventions` | Generar/actualizar `## Team Standards` en `context.md` desde config files | 1 req |
+```
+sdd-orchestrator "mi feature"
+        │
+        ▼
+  ┌───────────┐
+  │  PLANNER  │  →  exploration.md, proposal.md, specs/{dominio}/spec.md
+  └───────────┘
+        │
+        ▼
+  ┌───────────┐
+  │   CODER   │  →  código fuente + apply-report.md
+  └───────────┘
+        │
+        ▼
+  ┌───────────┐
+  │ REVIEWER  │  →  verify-report.md (PASS / FAIL)
+  └───────────┘
+        │
+    ¿FAIL? → coder en modo fix (máx 3 ciclos)
+    ¿PASS? → /sdd-archive
+```
+
+El pipeline separa el **QUÉ** (specs, technology-agnostic) del **CÓMO** (instruction files, stack-aware). Los specs describen comportamiento de negocio sin mencionar frameworks. Los instruction files describen cómo escribir código para tu stack concreto.
 
 ---
 
-## Estructura del Repositorio
+## Los 4 agentes
 
-```
-Conductor/
-├── instructions/
-│   ├── CLAUDE.md                    ← Orquestador para Claude Code
-│   └── copilot-instructions.md      ← Orquestador para GitHub Copilot (VS Code / CLI)
-├── agents/
-│   ├── _shared/
-│   │   ├── sdd-protocol.md          ← Protocolo SDD para agentes (on-demand)
-│   │   └── orchestrator-reference.md ← Referencia orquestador (on-demand)
-│   ├── sdd-planner/AGENT.md
-│   ├── sdd-coder/
-│   │   ├── AGENT.md
-│   │   └── strict-tdd.md
-│   └── sdd-reviewer/
-│       ├── AGENT.md
-│       └── strict-tdd-verify.md
-├── skills/
-│   ├── sdd-init/SKILL.md
-│   ├── sdd-new/SKILL.md
-│   ├── sdd-ff/SKILL.md
-│   ├── sdd-continue/SKILL.md
-│   ├── sdd-status/SKILL.md
-│   ├── sdd-archive/SKILL.md
-│   └── conventions/SKILL.md
-└── docs/
-    ├── quick-start.md
-    ├── sdd-pipeline.md
-    ├── openspec.md
-    └── advanced.md
-```
+| Agente | Rol | Puede escribir | Invocable |
+|---|---|---|---|
+| **sdd-orchestrator** | Coordinador. Evalúa complejidad, despacha subagentes, verifica artefactos. Nunca implementa. | Nada | Sí: `sdd-orchestrator` |
+| **sdd-planner** | Produce artefactos OpenSpec. Define QUÉ construir en lenguaje de negocio. | Solo `openspec/changes/` | No (solo vía orchestrator) |
+| **sdd-coder** | Implementa código desde spec + instruction files. | Código fuente + `apply-report.md` | No (solo vía orchestrator) |
+| **sdd-reviewer** | Valida contra spec. Ejecuta tests y build. No edita código. | Solo `verify-report.md` | No (solo vía orchestrator) |
 
 ---
 
-## Deploy por Plataforma
+## Primeros pasos
 
-### Claude Code
+> **¿Vienes de la versión anterior?** Consulta la [guía de migración](docs/migration.md).
+
+### 1. Instalar el plugin
+
+**Opción A — Copilot CLI:**
 ```bash
-cp Conductor/instructions/CLAUDE.md            tu-proyecto/CLAUDE.md
-cp -r Conductor/agents/                        tu-proyecto/.claude/agents/
-cp -r Conductor/skills/                        tu-proyecto/.claude/skills/
+/plugin add https://gitlabdes.hiberus.com/iasmartcommerce/conductor
 ```
 
-### GitHub Copilot (VS Code / CLI)
+**Opción B — VS Code:**
+
+**Paso 1 — Habilitar settings requeridos:**
+
+Activa estos dos settings. Puedes hacerlo de forma global (para todos los proyectos) o por repositorio:
+
+- **Global:** abre VS Code Settings, busca `chat.plugins.enabled` y actívalo. Repite con `chat.subagents.allowInvocationsFromSubagents`.
+- **Por repositorio:** añade en `.vscode/settings.json` del proyecto:
+  ```json
+  {
+    "chat.plugins.enabled": true,
+    "chat.subagents.allowInvocationsFromSubagents": true
+  }
+  ```
+
+**Paso 2 — Instalar el plugin:**
+
+1. Abre la Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
+2. Ejecuta `Chat: Install Plugin from Source`
+3. Introduce `https://gitlabdes.hiberus.com/iasmartcommerce/conductor`
+
+**Opción C — Instalación manual (sin plugin system):**
+
+Si no tienes acceso al sistema de plugins, copia los ficheros directamente a tu proyecto:
+
 ```bash
-cp Conductor/instructions/copilot-instructions.md     tu-proyecto/.github/copilot-instructions.md
-cp -r Conductor/agents/                               tu-proyecto/.github/agents/
-cp -r Conductor/skills/                               tu-proyecto/.github/skills/
+# Copiar agentes, skills y hooks a .github/ de tu proyecto
+cp -r conductor/agents/    tu-proyecto/.github/agents/
+cp -r conductor/skills/    tu-proyecto/.github/skills/
+cp -r conductor/hooks/     tu-proyecto/.github/hooks/
 ```
 
-### Dual (ambas plataformas)
-Combina los dos bloques. `openspec/` es compartido — cualquier plataforma lee y escribe los mismos artefactos.
+**Verificación** — en Copilot CLI o VS Code, escribe `/sdd-` y comprueba que aparecen los skills: `/sdd-init`, `/sdd-instructions`, `/sdd-status`, `/sdd-archive`. Escribe `/agent` y comprueba que aparece `sdd-orchestrator`.
 
-### Primer uso
+> **Nota:** Al cargar el plugin por primera vez, VS Code puede mostrar el aviso "La llamada de herramienta recibió una advertencia". Es comportamiento estándar de seguridad para plugins externos — dale a permitir y marca **"Always allow"** para el workspace.
+
+**Actualización** — el plugin se versiona en `plugin.json` (campo `version`). Para que se detecte una nueva versión, hay que bumpar ese campo antes de hacer push.
+
+- **VS Code:** actualiza automáticamente cada 24h. Para forzar: Command Palette → `Extensions: Check for Extension Updates`.
+- **CLI:** no actualiza automáticamente. Ejecuta:
+  ```bash
+  /plugin update conductor
+  ```
+
+### 2. Inicializar el proyecto
+
 ```
-1. /sdd-init         ← detecta stack, genera openspec/ (config.yaml + context.md)
-2. /conventions      ← auto-puebla ## Team Standards en context.md
-3. (opcional) editar openspec/config.yaml → execution_mode: auto
-4. /sdd-ff <nombre>  ← pipeline condensado (o /sdd-new para cambios grandes)
+/sdd-init
+```
+
+Detecta stack, testing, arquitectura. Genera `openspec/config.yaml`.
+
+### 3. Generar instruction files
+
+```
+/sdd-instructions
+```
+
+Genera ficheros en `.github/instructions/` con las convenciones de tu stack.
+
+### 4. Seleccionar el agente orchestrator
+
+Todo pasa por `sdd-orchestrator`. Es el punto de entrada único al pipeline.
+
+**En Copilot CLI:** escribe `/agent` y selecciona `sdd-orchestrator` de la lista. Una vez seleccionado, tu prompt va directamente al orchestrator.
+
+**En VS Code:** en el selector de agentes del chat de Copilot, elige `sdd-orchestrator`.
+
+### 5. Lanzar el pipeline
+
+Una vez seleccionado el agente, escribe tu petición:
+
+```
+--auto crear listado de productos con fake API
+```
+
+O sin `--auto` para modo interactivo (pausa entre fases para revisión humana):
+
+```
+crear listado de productos con fake API
+```
+
+| Flag | Efecto |
+|---|---|
+| `--auto` | Sin pausas. El pipeline se ejecuta completo. |
+| (sin flag) | Pausa después de planificar y después de implementar para revisión humana. |
+| `--continue` | Retoma un cambio existente desde `state.yaml`. |
+
+### 6. Monitorizar
+
+```
+/sdd-status     Ver progreso del cambio activo
+/tasks          Ver subagentes en segundo plano (Copilot CLI)
+```
+
+### 7. Archivar
+
+```
+/sdd-archive
+```
+
+Promueve los delta specs a `openspec/specs/` (fuente de verdad) y archiva el cambio.
+
+---
+
+## Selección de fases por complejidad
+
+El planner evalúa la complejidad en la fase de exploración:
+
+| Complejidad | Fases activas |
+|---|---|
+| **simple** | explore → propose → spec → apply → verify |
+| **medium** | explore → propose → spec → tasks → apply → verify |
+| **complex** | explore → propose → clarify → spec → design → tasks → apply → verify |
+
+---
+
+## OpenSpec
+
+Conductor sigue el estándar [OpenSpec](https://github.com/Fission-AI/OpenSpec). Nuestra extensión `x-conductor` en `config.yaml` añade: pipeline declarativo, hooks, agentes, y comandos de test/build.
+
+```
+openspec/
+├── config.yaml                        Configuración del proyecto + pipeline
+├── specs/{dominio}/spec.md            Fuente de verdad (promovida desde changes)
+├── changes/{nombre}/                  Cambio activo
+│   ├── exploration.md                 Exploración del codebase
+│   ├── proposal.md                    Propuesta tech-agnostic
+│   ├── specs/{dominio}/spec.md        Delta spec (ADDED/MODIFIED/REMOVED)
+│   ├── design.md                      Diseño técnico (complejidad media+)
+│   ├── tasks.md                       Desglose de tareas (complejidad media+)
+│   ├── apply-report.md                Reporte del coder
+│   ├── verify-report.md               Reporte del reviewer
+│   └── state.yaml                     Estado del pipeline
+└── changes/archive/                   Cambios completados (audit trail)
 ```
 
 ---
 
-## Prueba de Concepto: trazas de ejemplo
+## Seguridad
 
-### Cambio trivial (short-circuit)
-```
-USUARIO: /sdd-new "añade título animado al header"
-ORQUESTADOR:
-  1. Complexity Gate → scope claro, single concern, ≤4 archivos → SIMPLE
-  2. "Cambio simple — delegando directamente al coder sin pipeline SDD."
-  3. Delega a sdd-coder (model: sonnet) con instrucciones directas
-  → 1 agente, ~30s, 0 artefactos markdown
-```
+El hook `guard-tools` bloquea a nivel `preToolUse` (determinístico, no evitable):
 
-### Cambio medium (pipeline condensado — 3 agents)
-```
-USUARIO: /sdd-ff contact-page "Añadir página de contacto con formulario reactivo,
-         validaciones, toast de éxito y ruta /contact"
-ORQUESTADOR:
-  1. Complexity Gate → multi-file, necesita diseño → MEDIUM ✓
-  2. SDD Init Guard → openspec/config.yaml existe ✓
-  3. Spec-light → request >50 palabras con scope claro → omite proposal
-  4. Execution Mode → lee config.yaml → auto
+- **Todas** las operaciones git (commit, push, pull, merge, checkout)
+- **Todas** las llamadas de red (curl, wget, Invoke-WebRequest)
+- **Todas** las operaciones destructivas (rm -rf, rmdir)
 
-  ── FAST-FORWARD (sdd-planner, SPEC_LIGHT, model: opus) ───────
-  UNA sola llamada produce: spec.md + design.md + tasks.md + state.yaml
-  Post-delegation validation → artefactos OK ✓
+Los agentes pueden **recomendar** acciones git pero **nunca** ejecutarlas.
 
-  ── APPLY ──────────────────────────────────────────────────────
-  Parallelism check:
-    Dominio "toast" (4 tasks) + dominio "contact" (4 tasks) → Trigger B
-  ┌─ PARALLEL ─┐
-  │ ◉ coder-A (worktree): toast service + component + tests
-  │ ◉ coder-B (worktree): contact component + tests
-  └────────────┘
-  Merge worktrees → coder sequential: routing + app integration
-  Post-delegation validation → artefactos OK ✓
+---
 
-  ── VERIFY (sdd-reviewer, model: sonnet) ──────────────────────
-  Post-delegation validation → verify-report.md OK ✓
-```
+## Documentación
 
-### Cambio large (pipeline completo)
-```
-USUARIO: /sdd-new add-user-auth "Añadir autenticación JWT con refresh tokens"
-ORQUESTADOR:
-  1. Complexity Gate → multi-domain, vago → LARGE ✓
-  2. Execution Mode → lee config.yaml → interactive
-  3. explore → propose → clarify (GATE si hay preguntas) → spec → design → tasks
-  4. Post-delegation validation tras cada agente
-  → Pausa (interactive): "Planning complete. ¿Continúo con apply?"
-  → Pausa (interactive): "Apply complete. ¿Verifico?"
-```
+| Documento | Contenido |
+|---|---|
+| [Guía de inicio](docs/getting-started.md) | Tutorial completo, primer uso, ejemplos |
+| [Migración](docs/migration.md) | Migrar desde la versión anterior (archivos en `.github/`) al plugin |
+| [Pipeline](docs/pipeline.md) | Referencia de fases, complejidad, fix loop |
+| [OpenSpec](docs/openspec.md) | Formato de artefactos, config.yaml, estructura |
+| [Integración de stacks](docs/stacks.md) | Cómo adoptar Conductor en cualquier proyecto |
+| [Avanzado](docs/advanced.md) | Optimización, buenas prácticas, troubleshooting |
 
+---
+
+## Requisitos
+
+- GitHub Copilot (CLI v1.0.40+ o VS Code con Copilot Chat)
+- Licencia GitHub Copilot activa
+- Modelo recomendado: Claude Sonnet 4.6 o superior
+
+No requiere Node.js, Python, Docker, ni ningún runtime adicional.

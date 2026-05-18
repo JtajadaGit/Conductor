@@ -1,6 +1,8 @@
 ---
 name: sdd-status
-description: Show progress of current SDD change — reads state.yaml
+description: >
+  Show progress of current SDD change — reads state.yaml and shows
+  phase status. Use to check where the pipeline is.
 user-invocable: true
 ---
 

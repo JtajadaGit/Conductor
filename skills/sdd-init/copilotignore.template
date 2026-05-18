@@ -1,0 +1,43 @@
+# .copilotignore — Directories and files Copilot should NOT read or index.
+# Copy this to your project root as .copilotignore
+
+# Dependencies
+node_modules/
+.pnpm-store/
+vendor/
+
+# Build output
+dist/
+build/
+out/
+.next/
+.nuxt/
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.cert
+
+# IDE
+.idea/
+.vscode/settings.json
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Package locks (large, no value for AI)
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Coverage
+coverage/
+.nyc_output/

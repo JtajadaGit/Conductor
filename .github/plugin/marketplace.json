@@ -1,0 +1,19 @@
+{
+  "name": "iasmartcommerce-plugins",
+  "owner": {
+    "name": "IASmartCommerce",
+    "email": "iasmartcommerce@hiberus.com"
+  },
+  "metadata": {
+    "description": "Marketplace interno de agent plugins para GitHub Copilot",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "conductor",
+      "description": "Spec-Driven Development pipeline. Orchestrator delegates to subagents following OpenSpec.",
+      "version": "1.0.0",
+      "source": "."
+    }
+  ]
+}

@@ -1,257 +1,271 @@
-# OpenSpec — Persistencia y Artefactos
+# Referencia de persistencia OpenSpec
 
-OpenSpec es el sistema de persistencia de Conductor: artefactos SDD en disco, recuperación tras compactación, y auditoría de decisiones.
+Referencia técnica de OpenSpec, el estándar de persistencia que Conductor utiliza para organizar especificaciones y artefactos en disco. Todos los artefactos del pipeline residen bajo `openspec/`, lo que permite recuperación tras context compaction, puertas entre fases, continuación del pipeline y trazabilidad completa.
 
-> **Conductor extiende OpenSpec** con phase gates (`state.yaml`), artifact locks, verify phase, context.md y sub-agent context injection. Los artefactos base (`specs/`, `changes/`, `config.yaml` con `schema`/`context`/`rules`, `proposal.md`, `design.md`, `tasks.md`) siguen la convención OpenSpec estándar — lo que Conductor añade son las capas de orquestación y control de flujo. Campos bajo `x-conductor` en config.yaml son extensiones.
+Conductor extiende el estándar base de OpenSpec con `state.yaml` (control del DAG), locks de artefactos, la fase de verify e instruction files de plataforma. Los campos de extensión se agrupan bajo `x-conductor` en config.yaml.
 
----
-
-## Persistencia
-
-Todos los artefactos SDD persisten en `openspec/` en el filesystem. Esto es obligatorio para el DAG recovery, phase gates, `/sdd-continue` y resiliencia ante compactación. Se inicializa con `/sdd-init`.
-
----
-
-## Estructura de Directorios
+## Estructura de directorios
 
 ```
 openspec/
-├── config.yaml                   ← OpenSpec standard (schema, context, rules) + Conductor ext. (x-conductor)
-├── context.md                    ← (Conductor ext.) Expande config.yaml context: con arquitectura y team standards
-├── principles.md                 ← (Conductor ext., opcional) NON-NEGOTIABLE — solo humanos editan
-├── lessons-learned.md            ← (Conductor ext., opcional) Append-only entre cambios
-├── specs/                        ← OpenSpec standard — fuente de verdad (specs principales)
-│   └── {dominio}/
-│       └── spec.md
-└── changes/                      ← OpenSpec standard
-    ├── archive/
-    │   └── YYYY-MM-DD-{nombre}/  ← Cambio completado (audit trail, nunca modificar)
-    │       ├── state.yaml        ← (Conductor ext.)
-    │       ├── proposal.md       ← OpenSpec standard
-    │       ├── specs/            ← OpenSpec standard (delta specs)
-    │       ├── design.md         ← OpenSpec standard
-    │       ├── tasks.md          ← OpenSpec standard
-    │       ├── verify-report.md  ← (Conductor ext.)
-    └── {nombre-del-cambio}/      ← Cambio activo
-        ├── state.yaml            ← (Conductor ext.) Estado del DAG
-        ├── exploration.md        ← (Conductor ext., opcional)
-        ├── proposal.md           ← OpenSpec standard
-        ├── specs/{dominio}/spec.md  ← OpenSpec standard (delta spec)
-        ├── design.md             ← OpenSpec standard
-        ├── tasks.md              ← OpenSpec standard
-        ├── questions.md          ← (Conductor ext., opcional)
-        └── verify-report.md      ← (Conductor ext.)
+  config.yaml                          Configuración del proyecto (estándar + extensiones)
+  specs/                               Fuente de verdad (promovida desde cambios completados)
+    {domain}/
+      spec.md
+  changes/                             Cambios activos y archivados
+    {change-name}/                     Directorio de cambio activo
+      state.yaml                       Estado del pipeline (extensión Conductor)
+      exploration.md                   Exploración del proyecto (extensión Conductor)
+      proposal.md                      Propuesta de alto nivel
+      specs/
+        {domain}/
+          spec.md                      Delta spec (ADDED / MODIFIED / REMOVED)
+      design.md                        Diseño técnico
+      tasks.md                         Descomposición de tareas
+      apply-report.md                  Report de salida del coder (extensión Conductor)
+      verify-report.md                 Report de salida del reviewer (extensión Conductor)
+    archive/
+      YYYY-MM-DD-{change-name}/        Cambio completado (registro de auditoría, no modificar)
 ```
 
----
+`openspec/specs/` permanece vacío hasta que la primera operación de archive promueve delta specs en él.
 
-## Quién usa qué — Mapa de consumo
+## Reglas de nombrado
 
-Cada fichero OpenSpec tiene consumidores específicos. Esta tabla elimina ambigüedad sobre qué lee cada actor y para qué.
+Solo ficheros `.md` para artefactos. Solo `state.yaml` para el estado del pipeline. Sin excepciones.
 
-### config.yaml
+| Artefacto | Nombre de fichero | Ubicación relativa a la raíz del cambio |
+|-----------|-------------------|----------------------------------------|
+| Exploration | `exploration.md` | raíz del cambio |
+| Proposal | `proposal.md` | raíz del cambio |
+| Spec | `spec.md` | `specs/{domain}/` |
+| Design | `design.md` | raíz del cambio |
+| Tasks | `tasks.md` | raíz del cambio |
+| State | `state.yaml` | raíz del cambio |
+| Apply report | `apply-report.md` | raíz del cambio |
+| Verify report | `verify-report.md` | raíz del cambio |
 
-| Campo | Quién lo lee | Cuándo | Para qué |
-|-------|-------------|--------|----------|
-| `context:` (1 línea) | **sdd-planner** | Cada fase de planificación | Se inyecta en prompts de artefactos — el planner sabe "Angular 20 standalone" al escribir specs |
-| `rules:` | **sdd-planner** | spec, tasks | Restricciones por artefacto (p. ej., "Use Given/When/Then") |
-| `x-conductor.execution_mode` | **Orquestador** | Inicio de cada pipeline | `auto` (0 pausas) o `interactive` (pausa antes de apply y verify) |
-| `x-conductor.strict_tdd` | **sdd-coder** (Step 2) | Inicio de apply | Decide si carga addon TDD (RED→GREEN→REFACTOR) |
-| `x-conductor.strict_tdd` | **sdd-reviewer** (Step 0) | Inicio de verify | Decide si carga addon de auditoría TDD |
-| `x-conductor.hooks.apply` | **sdd-coder** (Steps 1, 4) | Pre/post implementación | Qué comandos ejecutar (`ng build`) y cómo manejar fallos |
-| `x-conductor.hooks.verify` | **sdd-reviewer** (Steps 5, 6) | Verificación | Qué test/build commands ejecutar |
-| `x-conductor.testing` | **sdd-coder** (TDD) | Ciclo TDD | Qué test runner usar, qué framework |
-| `x-conductor.testing` | **sdd-reviewer** | Coverage check | Umbral de cobertura, comando de coverage |
-| `x-conductor.stack` | **`/sdd-init`**, **`/conventions`** | Re-init, scan | Metadata estructurada para auto-detección |
+### Prohibido dentro de openspec/
 
-### context.md
+| Prohibido | Usar en su lugar |
+|-----------|------------------|
+| Ficheros de spec `.yaml` | `spec.md` (Markdown) |
+| Ficheros de tareas `.json` | `tasks.md` (Markdown) |
+| `contract.api.yaml` | `spec.md` con GIVEN/WHEN/THEN |
+| `README.md` | Nada. Sin READMEs dentro de changes. |
+| Mock data, fixtures, ficheros de configuración | Mantener fuera de `openspec/` |
+| Ficheros de código | Mantener fuera de `openspec/` |
 
-| Sección | Quién lo lee | Cuándo | Para qué |
-|---------|-------------|--------|----------|
-| `## Stack` (1 línea) | **Todos** (inyectado por orquestador) | Cada delegación | Resumen autosuficiente — el agente no necesita leer config.yaml para saber el stack |
-| `## Architecture` | **Todos** (inyectado por orquestador) | Cada delegación | "No NgModules, usa app.config.ts" — evita que el coder invente |
-| `## Key Directories` | **Todos** (inyectado) | Cada delegación | Saber dónde buscar/crear ficheros |
-| `## Entry Points` | **Todos** (inyectado) | Cada delegación | Identificar ficheros críticos |
-| `## Known Fragile Areas` | **Todos** (inyectado) | Cada delegación | Alerta de zonas de riesgo |
-| `## Team Standards → Formatting` | **sdd-coder** | Apply | "2 spaces, single quotes, Prettier" — formatear bien |
-| `## Team Standards → Testing` | **sdd-coder** | Apply | "*.spec.ts alongside source" — poner tests donde toca |
-| `## Team Standards → Project Config` | **sdd-coder**, **sdd-reviewer** | Apply, verify | Qué config files existen y qué controlan |
+## Schema de config.yaml
 
-### Principio de no-duplicación
+### Campos estándar
 
-```
-config.yaml context:       → resumen 1-línea para prompt injection (planner)
-config.yaml x-conductor:   → config ejecutable para coder/reviewer
-context.md ## Stack:       → 1 línea autosuficiente con detalle arquitectónico (inyectado a todos)
-context.md resto:          → contenido EXCLUSIVO (arquitectura, dirs, entry points, formatting, spec patterns)
-                             NO repite runner/coverage commands (están en x-conductor.testing)
-                             NO repite hooks (están en x-conductor.hooks)
-```
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `schema` | string | Siempre `spec-driven` |
+| `context` | string | Contexto del proyecto en una línea, inyectado en los prompts de los agentes |
+| `rules.specs` | list of strings | Restricciones aplicadas al generar specs |
+| `rules.tasks` | list of strings | Restricciones aplicadas al generar tasks |
 
-> **Regla de duplicación mínima**: `## Stack` en context.md es la ÚNICA duplicación permitida (1 línea, ~18 tokens) porque context.md debe ser autosuficiente. Todo lo demás: si está en `config.yaml`, NO se repite en `context.md`.
+### Campos de extensión (x-conductor)
 
----
+| Campo | Tipo | Valor por defecto | Descripción |
+|-------|------|-------------------|-------------|
+| `x-conductor.stack.language` | string | -- | Lenguaje principal |
+| `x-conductor.stack.runtime` | string | -- | Entorno de ejecución |
+| `x-conductor.stack.version` | string | -- | Versión del runtime |
+| `x-conductor.stack.framework` | string | -- | Framework principal |
+| `x-conductor.stack.package_manager` | string | -- | Gestor de paquetes |
+| `x-conductor.monorepo` | boolean | `false` | Si el proyecto es un monorepo |
+| `x-conductor.strict_tdd` | boolean | `false` | Activa el modo TDD strict para coder y reviewer |
+| `x-conductor.testing.test_runner.command` | string | -- | Comando de ejecución de tests |
+| `x-conductor.testing.test_runner.framework` | string | -- | Nombre del framework de test |
+| `x-conductor.testing.layers.unit` | boolean | `true` | Tests unitarios habilitados |
+| `x-conductor.testing.layers.integration` | boolean | `true` | Tests de integración habilitados |
+| `x-conductor.testing.layers.e2e` | boolean | `false` | Tests end-to-end habilitados |
+| `x-conductor.testing.coverage.available` | boolean | -- | Herramienta de coverage presente |
+| `x-conductor.testing.coverage.command` | string | -- | Comando de ejecución de coverage |
+| `x-conductor.testing.quality.linter` | string | -- | Herramienta de linter |
+| `x-conductor.testing.quality.type_checker` | string | -- | Herramienta de type checker |
+| `x-conductor.testing.quality.formatter` | string | -- | Herramienta de formatter |
 
-## config.yaml
+### Pipeline declarativo (x-conductor.pipeline)
 
-Generado por `/sdd-init`. Contiene campos OpenSpec estándar (`schema`, `context`, `rules`) y extensiones Conductor (`x-conductor`).
+El orchestrator lee la sección `pipeline` y despacha agentes en orden. Cada fase se define como un objeto con los siguientes campos:
+
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| `name` | string | sí | Nombre de la fase (explore, propose, clarify, spec, design, tasks, apply, verify, archive) |
+| `agent` | string | sí | Agente responsable (sdd-planner, sdd-coder, sdd-reviewer, orchestrator) |
+| `optional` | boolean | sí | Si la fase puede omitirse según la complejidad |
+| `artifact` | string | sí | Fichero de salida esperado |
+| `max_words` | integer | no | Límite de palabras para el artefacto |
+| `pre_hook` | string | no | Comando ejecutado antes de la fase |
+| `post_hook` | string | no | Comando ejecutado después de la fase |
+| `post_hook_on_fail` | string | no | `retry`, `stop` o `warn` |
+| `post_hook_max_retries` | integer | no | Reintentos máximos para post_hook |
+| `test_command` | string | no | Comando de test (solo fase verify) |
+| `build_command` | string | no | Comando de build (solo fase verify) |
+| `coverage_threshold` | integer | no | Porcentaje mínimo de coverage (solo fase verify) |
+
+Campos adicionales a nivel de `pipeline`:
+
+| Campo | Tipo | Valor por defecto | Descripción |
+|-------|------|-------------------|-------------|
+| `x-conductor.pipeline.max_review_cycles` | integer | `3` | Ciclos máximos de fix antes de marcar como bloqueado |
+| `x-conductor.pipeline.agent_timeout_seconds` | integer | `300` | Timeout por agente en segundos |
+
+### Mapa de consumo
+
+| Campo | Leído por | Propósito |
+|-------|-----------|-----------|
+| `context` | planner | Inyectado en los prompts de artefactos |
+| `rules` | planner | Restricciones por tipo de artefacto |
+| `x-conductor.strict_tdd` | coder, reviewer | Activar ciclo TDD |
+| `x-conductor.pipeline.phases` | orchestrator | Determinar orden, agentes y artefactos de cada fase |
+| `x-conductor.pipeline.max_review_cycles` | orchestrator | Límite de ciclos de fix |
+| `x-conductor.testing` | coder, reviewer | Test runner, coverage, herramientas de calidad |
+| `x-conductor.stack` | init, generadores de instructions | Auto-detección y regeneración |
+
+## Schema de state.yaml
+
+Extensión de Conductor. No forma parte del estándar base de OpenSpec. Registra el progreso del pipeline y permite la recuperación tras context compaction. El **planner** crea y actualiza state.yaml durante las fases de planificación; el **coder** y el **reviewer** lo actualizan al completar sus fases. El **orchestrator nunca escribe ficheros** — solo lee state.yaml para determinar el estado actual.
+
+### Formato (máximo 15 líneas)
 
 ```yaml
-schema: spec-driven
-
-# --- OpenSpec standard ---
-context: "Express, TypeScript strict, npm"    # 1-línea — inyectado en TODOS los prompts de artefactos
-rules:                                        # Restricciones por artefacto (solo inyectadas en el artefacto correspondiente)
-  specs:
-    - Use Given/When/Then format
-  tasks:
-    - Size tasks for single-session completion
-
-# --- Conductor extensions ---
-x-conductor:
-  stack:
-    language: "typescript"
-    runtime: "node"
-    version: "20.x"
-    framework: "express"
-    package_manager: "npm"
-  monorepo: false
-  execution_mode: interactive  # auto | interactive
-  strict_tdd: true
-  testing:
-    test_runner: { command: "npx vitest run", framework: "vitest" }
-    layers: { unit: true, integration: true, e2e: false }
-    coverage: { available: true, command: "npx vitest run --coverage" }
-    quality: { linter: "eslint", type_checker: "tsc", formatter: "prettier" }
-  hooks:
-    apply:
-      pre_hook: ""
-      post_hook: "npm run build && npx tsc --noEmit"
-      post_hook_on_fail: retry
-      post_hook_max_retries: 3
-      checkpoint_every: 5
-    verify:
-      test_command: "npx vitest run"
-      build_command: "npm run build"
-      coverage_threshold: 80
-```
-
-> **Nota**: `context:` (campo en config.yaml) es un resumen 1-línea estándar OpenSpec inyectado en prompts de artefactos. `context.md` (archivo separado) es una extensión Conductor que complementa con contenido que el coder/reviewer necesitan: arquitectura, directorios, entry points y team standards.
-
-### Sincronización de Stack
-
-Los datos de stack aparecen en tres formatos con propósitos distintos:
-
-| Ubicación | Formato | Propósito | Actualizado por |
-|-----------|---------|-----------|-----------------|
-| `config.yaml` → `context:` | 1 línea | Inyección en prompts de artefactos (planner) | `/sdd-init` (auto) |
-| `config.yaml` → `x-conductor.stack` | YAML estructurado | Lógica del pipeline, auto-detección | `/sdd-init` (auto) |
-| `context.md` → `## Stack` | 1 línea con detalle arquitectónico | Contexto autosuficiente para agentes (inyectado por orquestador) | `/sdd-init` (auto) |
-
-**Por qué `## Stack` en context.md si ya está en config.yaml**: context.md debe ser **autosuficiente** — los agentes lo reciben inyectado y no deben necesitar leer otro fichero para entender el stack. Una cross-reference ("ver config.yaml") costaría más tokens (file read extra) que 1 línea de resumen (~18 tokens). La línea en context.md puede incluir detalle arquitectónico extra (p. ej., "no NgModules") que no está en el campo `context:`.
-
-**Regla de sincronización**: cuando el stack cambia, re-ejecuta `/sdd-init` — regenera las 3 ubicaciones preservando `rules:` personalizadas y secciones manuales de context.md.
-
-**Regla de no-duplicación**: más allá de la 1 línea de `## Stack`, context.md NO repite información de config.yaml. Testing commands, runner, coverage → están en `x-conductor.testing`. Hooks → están en `x-conductor.hooks`. context.md solo tiene lo EXCLUSIVO: arquitectura, directorios, entry points, formatting rules, spec patterns.
-
----
-
-## state.yaml (Conductor extension)
-
-No existe en OpenSpec estándar (OpenSpec trackea progreso via checkboxes en `tasks.md`). Conductor añade `state.yaml` como mecanismo de recuperación del DAG y phase gates. Cada agente actualiza su propia fase al completarla (el orquestador NO escribe state.yaml).
-
-```yaml
-change: add-user-auth
-created: 2026-04-01T10:30:00Z
-updated: 2026-04-01T11:45:00Z
-current_phase: apply
+change: {kebab-name}
+status: planning | implementing | reviewing | complete | blocked
+complexity: simple | medium | complex
+current_phase: {last-phase}
 phases:
   explore: done
   propose: done
-  clarify: skipped
+  clarify: done | skipped
   spec: done
-  design: done
-  tasks: done
-  apply: in_progress
-  verify: pending
-  archive: pending
-locks:
-  spec: true      # frozen tras completar tasks (previene spec-drift)
-  design: true
+  design: done | skipped
+  tasks: done | skipped
+  apply: done
+  verify: pass | fail
 ```
 
-**Artifact Locks**: Al completar `tasks`, se bloquean `spec` y `design`. Si el usuario quiere modificarlos: el orquestador advierte → desbloquea → re-ejecuta tasks.
+Las fases omitidas por complejidad DEBEN marcarse como `skipped`, no eliminarse.
+Sin resúmenes, sin métricas, sin hallazgos de exploración. Solo seguimiento de fases.
 
-**Recuperación tras compactación**:
+### Transiciones de estado
+
+| Desde | Hacia | Disparador |
+|-------|-------|------------|
+| `planning` | `implementing` | El planner completa todos los artefactos de planificación |
+| `implementing` | `reviewing` | El coder completa la fase apply |
+| `reviewing` | `implementing` | El reviewer devuelve FAIL (ciclo de fix) |
+| `reviewing` | `complete` | El reviewer devuelve PASS o PASS_WARNINGS |
+| Cualquiera | `blocked` | 3 veredictos FAIL consecutivos, o error irrecuperable |
+
+### Recuperación
+
+Tras un context compaction, el orchestrator lee `state.yaml`, reconstruye el DAG y reanuda desde el estado actual. No se regeneran artefactos de fases ya completadas.
+
+## Formatos de artefactos
+
+### exploration.md (máx 400 palabras)
+
+Exploración del proyecto. Escanea la estructura del proyecto, identifica patrones, restricciones y código existente. Es la **única fase donde se permiten términos técnicos** (nombres de frameworks, rutas de ficheros). Termina con una sección `## Complexity` que clasifica el cambio como simple, medium o complex.
+
+### proposal.md (máx 400 palabras)
+
+Propuesta de alto nivel. Contiene intención, alcance, enfoque, riesgos y alternativas descartadas.
+
+### spec.md (máx 650 palabras por dominio)
+
+Especificación formal. Agnóstica de tecnología. Usa palabras clave RFC 2119.
+
 ```
-Orquestador pierde contexto → lee state.yaml → reconstruye DAG → continúa desde current_phase
+# {Domain} Specification
+
+## Purpose
+{Un párrafo describiendo lo que hace este dominio}
+
+## Requirements
+
+### Requirement: {Name} (MUST | SHALL | SHOULD | MAY)
+
+#### Scenario: {Descriptive Name}
+- GIVEN {precondición}
+- WHEN {acción}
+- THEN {resultado}
+- AND {resultado adicional}
 ```
+
+Las delta specs de dominios existentes usan cabeceras de sección: `## ADDED`, `## MODIFIED`, `## REMOVED`.
+
+### design.md (máx 800 palabras)
+
+Diseño técnico. Describe las responsabilidades lógicas de los componentes, el flujo de datos y las decisiones arquitectónicas. Sin nombres de clase, sin rutas de fichero, sin términos específicos de framework.
+
+```
+# Design: {change-name}
+
+## Components
+{Responsabilidades lógicas}
+
+## Data Flow
+{Cómo fluyen los datos entre componentes}
+
+## Decisions
+| Decision | Rationale | Alternatives considered |
+```
+
+### tasks.md (máx 530 palabras)
+
+Descomposición de tareas con numeración jerárquica. Cada tarea describe qué construir en lenguaje de dominio. Las tareas marcadas `[P]` pueden ejecutarse en paralelo; las marcadas `[S]` deben ejecutarse secuencialmente.
+
+```
+## Phase 1: Foundation
+- [ ] 1.1 {qué construir}
+- [ ] 1.2 {qué construir}
+
+## Phase 2: Core
+- [ ] 2.1 {qué construir}
+```
+
+### apply-report.md
+
+Escrito por el coder tras implementar. Lista los ficheros creados o modificados, las tareas completadas y cualquier incidencia encontrada. Durante los ciclos de fix, el coder añade `## Fix Cycle {N}` al fichero existente en lugar de crear uno nuevo.
+
+### verify-report.md
+
+Escrito por el reviewer tras la validación. Contiene puntuaciones de conformidad por escenario, resultados de ejecución de tests y un veredicto final (PASS, PASS_WARNINGS o FAIL).
+
+## Proceso de archive
+
+El archive solo se ejecuta cuando el veredicto de verify es PASS o PASS_WARNINGS. Nunca archivar cuando existen issues críticos en verify-report.md.
+
+### Pasos
+
+| Paso | Acción |
+|------|--------|
+| 1 | Promover delta specs a `openspec/specs/{domain}/spec.md`. Aplicar en orden: REMOVED, luego MODIFIED, luego ADDED. |
+| 2 | Mover `openspec/changes/{change-name}/` a `openspec/changes/archive/YYYY-MM-DD-{change-name}/`. |
+| 3 | Actualizar instruction files si verify-report contiene sugerencias. |
+
+### Reglas
+
+| Regla | Detalle |
+|-------|---------|
+| Protección contra merge destructivo | Si la promoción eliminaría secciones grandes de la spec fuente de verdad, requerir confirmación explícita. |
+| Archive inmutable | Nunca eliminar ni modificar el contenido de los directorios `archive/`. |
+| Directorio specs vacío | `openspec/specs/` permanece vacío hasta que el primer archive promueve en él. |
+
+## Límites de lectura/escritura de los agentes
+
+| Agente | Puede leer | Puede escribir |
+|--------|------------|----------------|
+| Orchestrator | state.yaml, config.yaml, git status | **nada** — solo lee, nunca escribe ficheros |
+| Planner | artefactos previos, código fuente, instruction files (solo contexto) | artefactos de planificación (exploration, proposal, spec, design, tasks) + state.yaml |
+| Coder | tasks + spec + design + instruction files + código fuente | código fuente + apply-report.md + state.yaml |
+| Reviewer | spec + apply-report + código fuente + config.yaml | verify-report.md + state.yaml |
 
 ---
 
-## principles.md (Opcional)
-
-Constitución del proyecto — principios NON-NEGOTIABLE que todas las fases respetan. **Nunca modificado por IA.**
-
-```markdown
-# Project Principles
-
-1. **Spec-First**: No code without specifications.
-2. **Simplicity**: Prefer the simplest solution. No over-engineering.
-3. **Test Coverage**: Every requirement MUST have at least one automated test.
-4. **Existing Patterns**: Follow project patterns, not generic best practices.
-```
-
-- Máximo 5 principios (más diluye la efectividad)
-- El orquestador lo lee una vez por sesión, lo inyecta como `## Project Principles` en cada sub-agente
-- Si no existe → se omite silenciosamente
-
----
-
-## lessons-learned.md
-
-Registro append-only de lecciones entre cambios. Crece con cada `sdd-coder` fix exitoso.
-
-```markdown
-# Lessons Learned
-
-## 2026-04-01 — add-user-auth
-### Ecosystem Gotchas
-- jsonwebtoken 9.x: async sign required → use promisify
-### Design Insights
-- Refresh token rotation adds complexity; use simple expiry for MVPs
-```
-
----
-
-## Reglas de Frontera
-
-| Actor | Puede leer | Puede escribir |
-|-------|------------|----------------|
-| Orquestador | `state.yaml`, git status | Lectura para recovery (NO escribe state.yaml) |
-| sdd-planner | Artefactos de fases previas, código fuente | Su artefacto de fase + `state.yaml` (inicial) |
-| sdd-coder | tasks + spec + design + código + `state.yaml` | Código fuente + `tasks.md [x]` + `state.yaml` (apply: done) |
-| sdd-reviewer | spec + tasks + código + `state.yaml` | `verify-report.md` + `state.yaml` (verify: pass/fail) |
-| sdd-archive | Todos los artefactos | Main specs + archive/ |
-
-Cada agente es responsable de actualizar `state.yaml` para su fase. El orquestador lo lee para recovery/compactación, pero **nunca** lo escribe.
-
----
-
-## Archivado
-
-Tras verify PASS, el orquestador sugiere automáticamente `/sdd-archive`. Al ejecutarlo:
-1. **Sync delta specs** → `openspec/specs/{domain}/spec.md` (apply order: REMOVED → MODIFIED → ADDED; si existe sección RENAMED, se aplica primero)
-2. **Mover** `openspec/changes/{nombre}/` → `openspec/changes/archive/YYYY-MM-DD-{nombre}/`
-3. **Update context.md** — si `verify-report.md` contiene sugerencias de actualización
-4. El archive es audit trail — **nunca eliminar ni modificar**
-
-> **Nota**: `openspec/specs/` permanece vacío hasta el primer archive. Es el archive quien promueve las delta specs a specs principales.
-
-Reglas:
-- NUNCA archivar con CRITICAL issues en verify-report
-- Si merge sería destructivo (elimina secciones grandes) → WARN y pedir confirmación
-
----
-
-→ [Quick Start](./quick-start.md) | [Pipeline SDD](./sdd-pipeline.md) | [Avanzado](./advanced.md)
+Siguiente lectura: [getting-started.md](getting-started.md) | [pipeline.md](pipeline.md) | [stacks.md](stacks.md) | [advanced.md](advanced.md)
