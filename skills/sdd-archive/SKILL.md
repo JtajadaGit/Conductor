@@ -24,9 +24,28 @@ Merge delta specs from the change into `openspec/specs/`. The EXACT structure is
 - **Target**: `openspec/specs/{domain}/spec.md`
 
 For each domain found in the change's `specs/` subdirectory:
-1. Create `openspec/specs/{domain}/` directory if it doesn't exist
-2. If target spec.md doesn't exist → copy delta as full spec
-3. If target exists → apply delta in order: REMOVED → MODIFIED → ADDED
+
+1. Create `openspec/specs/{domain}/` directory if it doesn't exist.
+
+2. **If target spec.md does NOT exist** (new domain) — build the promoted spec from the delta with this EXACT structure:
+   ```markdown
+   # {Domain} Specification
+
+   ## Purpose
+   {ONE paragraph in domain language describing what this capability covers. Synthesize from the delta's requirements — NEVER use framework/library/technology names. Minimum 50 characters or OpenSpec validator flags as WARNING.}
+
+   ## Requirements
+
+   {All requirements from the delta's `## ADDED Requirements` section, each as `### Requirement: ...` with its normative sentence and scenarios — but WITHOUT the `## ADDED Requirements` wrapper header. The promoted spec uses `## Requirements` as a flat container, never delta operation headers.}
+   ```
+
+3. **If target spec.md exists** (modifying existing domain) — apply the delta to it in this EXACT order:
+   1. **RENAMED**: for each entry, rename the `### Requirement:` header from FROM to TO in the target spec.
+   2. **REMOVED**: delete each named requirement from the target.
+   3. **MODIFIED**: replace each named requirement with the delta's complete version (header MUST match existing exactly; if RENAMED was applied above, match against the NEW name).
+   4. **ADDED**: append each new requirement under the target's `## Requirements` section.
+
+   After applying, verify `## Purpose` still describes the domain accurately; refresh it if scope changed. Keep it in domain language.
 
 NEVER promote specs as flat files (e.g., `openspec/specs/my-feature.md`). ALWAYS use domain subdirectories (`openspec/specs/{domain}/spec.md`).
 

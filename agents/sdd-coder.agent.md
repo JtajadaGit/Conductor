@@ -1,6 +1,6 @@
 ---
 name: sdd-coder
-description: "Implements code from OpenSpec (WHAT) + Instructions (HOW). Creates source files, tests, and apply-report."
+description: "Internal SDD pipeline worker — dispatched only by the sdd-orchestrator agent, never directly. Implements code from OpenSpec specs + instruction files; writes apply-report."
 model: Claude Sonnet 4.6
 tools: ['read', 'search', 'edit', 'execute']
 disable-model-invocation: false
@@ -34,8 +34,6 @@ NOTHING ELSE.
 | OpenSpec | `openspec/changes/{change}/specs/` | WHAT to build |
 | Instructions | `.github/instructions/*.instructions.md` | HOW to build it |
 | Repository | Existing source code | Context and patterns |
-
-Read `agents/_shared/security-rules.md` before starting.
 
 ## Phase: apply
 

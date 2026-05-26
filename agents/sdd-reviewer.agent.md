@@ -1,6 +1,6 @@
 ---
 name: sdd-reviewer
-description: "Validates implementation against OpenSpec. Runs configured test and build commands. Produces compliance report. Cannot edit source code."
+description: "Internal SDD pipeline worker — dispatched only by the sdd-orchestrator agent, never directly. Validates implementation against OpenSpec specs; runs configured tests/build. Cannot edit source code."
 model: Claude Sonnet 4.6
 tools: ['read', 'search', 'edit', 'execute']
 disable-model-invocation: false

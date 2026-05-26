@@ -103,7 +103,7 @@ Conductor no requiere ningún runtime, ningún binario ni ningún package manage
 ### 4.1 Instalación vía plugin (Copilot CLI)
 
 ```bash
-copilot plugin add https://gitlabdes.hiberus.com/iasmartcommerce/conductor.git
+/plugin install https://gitlabdes.hiberus.com/iasmartcommerce/conductor.git
 ```
 
 ### 4.2 Instalación en VS Code
@@ -317,7 +317,7 @@ openspec/
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| `/sdd-init` no aparece | Plugin no registrado | `copilot plugin add /ruta` o reinstalar desde VS Code |
+| `/sdd-init` no aparece | Plugin no registrado | `/plugin install /ruta` o reinstalar desde VS Code |
 | `sdd-orchestrator` no aparece | Settings de VS Code | Verificar `chat.plugins.enabled: true` |
 | El orchestrator no despacha subagentes | Settings de VS Code | Verificar `chat.subagents.allowInvocationsFromSubagents: true` |
 | "La llamada de herramienta recibió una advertencia" al leer skills | VS Code pide confirmación la primera vez que un plugin externo ejecuta tool calls | Permitir y marcar "Always allow" para el workspace. No volverá a salir. |

@@ -16,7 +16,7 @@ El planner produce artefactos de especificación. El coder implementa a partir d
 
 | Fase | Agente | Lee | Escribe | Límite de palabras |
 |------|--------|-----|---------|-------------------|
-| explore | planner | código fuente | `exploration.md` | 400 |
+| explore | planner | entry points + ficheros relacionados con la petición | `exploration.md` | 400 |
 | propose | planner | exploration (si existe) | `proposal.md` | 400 |
 | clarify | planner | proposal | `questions.md` (si >0 preguntas) | 300 |
 | spec | planner | proposal + questions | `specs/{domain}/spec.md` | 650/dominio |
@@ -24,13 +24,13 @@ El planner produce artefactos de especificación. El coder implementa a partir d
 | tasks | planner | spec + design | `tasks.md` | 530 |
 | apply | coder | tasks + spec + design + instruction files + código fuente | código fuente + `apply-report.md` | -- |
 | verify | reviewer | spec + apply-report + código fuente + config.yaml | `verify-report.md` | -- |
-| archive | orchestrator (inline) | todos los artefactos | specs promovidas, directorio de cambio archivado | -- |
+| archive | skill `/sdd-archive` (usuario) | todos los artefactos | specs promovidas, directorio de cambio archivado | -- |
 
 ## Detalle de cada fase
 
 ### explore
 
-El planner recorre el codebase para comprender el contexto. Solo se ejecuta en cambios de complejidad alta (complex). Se omite cuando la petición del usuario supera las 100 palabras e incluye alcance, enfoque y restricciones.
+Solo se ejecuta en cambios de complejidad alta (complex). El planner lee únicamente los entry points y los ficheros relacionados con la petición — nunca recorre el repo completo; el stack ya está descrito en `.github/instructions/`.
 
 ### propose
 
@@ -73,16 +73,16 @@ Restricciones del reviewer:
 
 ### archive
 
-Solo se ejecuta cuando el veredicto de verify es PASS o PASS_WARNINGS. Promueve las delta specs a `openspec/specs/{domain}/spec.md` en orden: REMOVED, MODIFIED, ADDED. Mueve el directorio de cambio a `openspec/changes/archive/YYYY-MM-DD-{name}/`. El archive es un registro de auditoría y no debe modificarse jamás tras su creación.
+No es una fase del pipeline automático: es la skill `/sdd-archive`, que el usuario ejecuta tras un PASS. El orchestrator la recomienda al terminar pero no la ejecuta (no escribe ficheros). Promueve las delta specs a `openspec/specs/{domain}/spec.md` en orden: REMOVED, MODIFIED, ADDED, y mueve el directorio de cambio a `openspec/changes/archive/YYYY-MM-DD-{name}/`. El archive es un registro de auditoría y no debe modificarse jamás tras su creación.
 
 ## Puerta de complejidad
 
-El orchestrator evalúa la complejidad antes de despachar las fases.
+El orchestrator evalúa la complejidad a partir de la petición del usuario, antes de despachar las fases.
 
 | Complejidad | Señal | Fases que se ejecutan |
 |-------------|-------|-----------------------|
-| Simple | Alcance claro, un solo concern, pocos ficheros | spec → apply → verify (se omiten clarify, design y tasks) |
-| Medium | Multi-fichero, requiere diseño, testeable | spec → design → tasks → apply → verify (se omite clarify) |
+| Simple | Alcance claro, un solo concern, pocos ficheros | propose → spec → apply → verify |
+| Medium | Multi-fichero, requiere diseño, testeable | propose → spec → design → tasks → apply → verify |
 | Complex | Alcance amplio, multi-dominio, necesita exploración | explore → propose → clarify → spec → design → tasks → apply → verify |
 
 ## Modo de ejecución
@@ -113,8 +113,8 @@ Máximo: 3 ciclos de fix. Tras 3 veredictos FAIL consecutivos, el orchestrator s
 
 | Veredicto | Condición | Siguiente acción |
 |-----------|-----------|------------------|
-| PASS | 0 issues críticos, conforme a la spec, tests pasan | Proceder al archive |
-| PASS_WARNINGS | 0 issues críticos, warnings presentes | Proceder al archive |
+| PASS | 0 issues críticos, conforme a la spec, tests pasan | Recomendar `/sdd-archive` |
+| PASS_WARNINGS | 0 issues críticos, warnings presentes | Recomendar `/sdd-archive` |
 | FAIL | 1 o más issues críticos | Entrar en ciclo de fix |
 
 ## Paralelismo en apply
@@ -156,8 +156,7 @@ Los módulos TDD (`strict-tdd.md`, `strict-tdd-verify.md`) se cargan solo cuando
 
 | Fase | Se omite cuando |
 |------|-----------------|
-| explore | Complejidad simple o medium |
-| propose | Complejidad simple o medium |
+| explore | Complejidad simple o medium (solo corre en complex) |
 | clarify | Complejidad simple o medium, o el planner detecta 0 preguntas |
 | design | Complejidad simple |
 | tasks | Complejidad simple |

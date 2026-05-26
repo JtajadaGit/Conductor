@@ -61,10 +61,16 @@ schema: spec-driven
 # OpenSpec standard
 context: "{framework} {version}, {language} strict, {package_manager}"
 rules:
+  proposal:
+    - Why, What Changes, Capabilities, Impact — no architecture
   specs:
     - Use Given/When/Then format
+    - Clean Requirement headers; SHALL/MUST in the normative sentence, never in the header
+  design:
+    - Logical responsibilities only; no class/file names
   tasks:
     - Size tasks for single-session completion
+    - Use checkbox format `- [ ] N.M {description}`
 
 # Conductor extensions
 x-conductor:
@@ -97,7 +103,7 @@ x-conductor:
 
       - name: propose
         agent: sdd-planner
-        optional: true
+        optional: false
         artifact: proposal.md
         max_words: 400
 

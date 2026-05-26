@@ -27,10 +27,7 @@ your-project/
     │   ├── sdd-orchestrator.agent.md    # Dispatcher (punto de entrada)
     │   ├── sdd-planner.agent.md
     │   ├── sdd-coder.agent.md
-    │   ├── sdd-reviewer.agent.md
-    │   └── _shared/                     # Documentación compartida
-    │       ├── openspec-format.md
-    │       └── security-rules.md
+    │   └── sdd-reviewer.agent.md
     ├── skills/                          # 4 skills utilitarios
     │   ├── sdd-init/SKILL.md
     │   ├── sdd-instructions/SKILL.md

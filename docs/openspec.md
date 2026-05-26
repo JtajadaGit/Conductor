@@ -170,64 +170,115 @@ Tras un context compaction, el orchestrator lee `state.yaml`, reconstruye el DAG
 
 ### exploration.md (máx 400 palabras)
 
-Exploración del proyecto. Escanea la estructura del proyecto, identifica patrones, restricciones y código existente. Es la **única fase donde se permiten términos técnicos** (nombres de frameworks, rutas de ficheros). Termina con una sección `## Complexity` que clasifica el cambio como simple, medium o complex.
+Exploración dirigida del proyecto. Lee los entry points y los ficheros relacionados con la petición — no recorre el repo completo. Identifica patrones reutilizables, restricciones y código existente. Es la **única fase donde se permiten términos técnicos** (nombres de frameworks, rutas de ficheros). Solo se ejecuta en cambios de complejidad `complex`.
 
 ### proposal.md (máx 400 palabras)
 
-Propuesta de alto nivel. Contiene intención, alcance, enfoque, riesgos y alternativas descartadas.
+Intención de negocio. EXACTAMENTE 4 secciones: `## Why`, `## What Changes`, `## Capabilities` (con `### New Capabilities` + `### Modified Capabilities`), `## Impact`. NO arquitectura, NO componentes (eso va en `design.md`). `## Capabilities` lista NOMBRES (kebab-case) de capability/domain, no features.
+
+```markdown
+## Why
+{1-2 frases: el problema u oportunidad}
+
+## What Changes
+- {Cambio concreto en lenguaje de dominio; marcar breaking changes con **BREAKING**}
+
+## Capabilities
+
+### New Capabilities
+- `{domain-name}`: {qué cubre este nuevo dominio}
+
+### Modified Capabilities
+- `{existing-domain-name}`: {qué requirement cambia}
+
+## Impact
+{Áreas afectadas, dependencias, consumidores}
+```
 
 ### spec.md (máx 650 palabras por dominio)
 
-Especificación formal. Agnóstica de tecnología. Usa palabras clave RFC 2119.
+Especificación formal. Agnóstica de tecnología. **Promoted spec** (en `openspec/specs/{domain}/spec.md`) y **delta spec** (en `openspec/changes/{change}/specs/{domain}/spec.md`) tienen formatos DISTINTOS.
 
-```
+**Promoted spec** — tiene título + Purpose + Requirements:
+
+```markdown
 # {Domain} Specification
 
 ## Purpose
-{Un párrafo describiendo lo que hace este dominio}
+{Un párrafo en lenguaje de dominio describiendo qué hace esta capability. Mínimo 50 caracteres.}
 
 ## Requirements
 
-### Requirement: {Name} (MUST | SHALL | SHOULD | MAY)
+### Requirement: {Nombre limpio descriptivo}
+The system SHALL {comportamiento observable en lenguaje de dominio}.
 
-#### Scenario: {Descriptive Name}
-- GIVEN {precondición}
-- WHEN {acción}
-- THEN {resultado}
-- AND {resultado adicional}
+#### Scenario: {Nombre descriptivo}
+- **GIVEN** {precondición}
+- **WHEN** {acción}
+- **THEN** {resultado}
+- **AND** {resultado adicional}
 ```
 
-Las delta specs de dominios existentes usan cabeceras de sección: `## ADDED`, `## MODIFIED`, `## REMOVED`.
+- Header `### Requirement:` LIMPIO — NUNCA `(MUST)` en el header. La keyword RFC 2119 (SHALL/MUST/SHOULD/MAY) va en la frase normativa debajo.
+- Cada requirement: UNA frase normativa + al menos UN `#### Scenario:` (EXACTAMENTE 4 hashtags — 3 hashtags o bullets fallan en silencio).
+- Separar requirements con línea en blanco; NUNCA con `---`.
+
+**Delta spec** — empieza DIRECTAMENTE con operación, sin `# Title` ni `## Purpose` (esos se añaden al promover en archive):
+
+```markdown
+## ADDED Requirements
+
+### Requirement: {Nombre nuevo}
+The system SHALL {comportamiento}.
+
+#### Scenario: {Nombre}
+- **WHEN** {acción}
+- **THEN** {resultado}
+```
+
+Operaciones delta disponibles (un mismo fichero puede combinar varias):
+- `## ADDED Requirements` — nuevos requirements completos.
+- `## MODIFIED Requirements` — requirement COMPLETO actualizado (no diff), header idéntico al existente.
+- `## REMOVED Requirements` — incluye `**Reason**: ...` y `**Migration**: ...`.
+- `## RENAMED Requirements` — `- FROM: \`### Requirement: Old\`` / `- TO: \`### Requirement: New\``.
 
 ### design.md (máx 800 palabras)
 
-Diseño técnico. Describe las responsabilidades lógicas de los componentes, el flujo de datos y las decisiones arquitectónicas. Sin nombres de clase, sin rutas de fichero, sin términos específicos de framework.
+Diseño técnico. Responsabilidades lógicas y decisiones — NO nombres de clase, NO rutas de fichero, NO términos específicos de framework. Secciones obligatorias:
 
-```
+```markdown
 # Design: {change-name}
 
-## Components
-{Responsabilidades lógicas}
+## Context
+{Background y estado actual}
 
-## Data Flow
-{Cómo fluyen los datos entre componentes}
+## Goals / Non-Goals
+**Goals:** {qué consigue este diseño}
+**Non-Goals:** {explícitamente fuera de scope}
 
 ## Decisions
-| Decision | Rationale | Alternatives considered |
+{Decisiones clave y su rationale — responsabilidades lógicas, NO nombres de clase}
+
+## Risks / Trade-offs
+{Riesgos conocidos y compromisos}
 ```
 
 ### tasks.md (máx 530 palabras)
 
-Descomposición de tareas con numeración jerárquica. Cada tarea describe qué construir en lenguaje de dominio. Las tareas marcadas `[P]` pueden ejecutarse en paralelo; las marcadas `[S]` deben ejecutarse secuencialmente.
+Descomposición de tareas. Cada grupo usa `## N. {Nombre}` y cada tarea es un checkbox `- [ ] N.M {descripción}`. La fase apply parsea `- [ ]` para trackear progreso — tareas en otro formato son INVISIBLES al parser.
 
-```
-## Phase 1: Foundation
-- [ ] 1.1 {qué construir}
+```markdown
+## 1. {Nombre del grupo}
+- [ ] 1.1 {qué construir — lenguaje de dominio}
 - [ ] 1.2 {qué construir}
 
-## Phase 2: Core
+## 2. {Nombre del grupo}
 - [ ] 2.1 {qué construir}
 ```
+
+- Cabeceras: `## {N}. {Nombre}` — NUNCA `## Task 1: ...` ni `## Phase 1: ...`.
+- Cada tarea: `- [ ] {N}.{M} {descripción}`, una línea. El checkbox `- [ ]` es OBLIGATORIO.
+- Sin bloques de prosa, sin sub-secciones `**Acceptance Criteria**` por tarea, sin separadores `---`.
 
 ### apply-report.md
 
@@ -245,7 +296,7 @@ El archive solo se ejecuta cuando el veredicto de verify es PASS o PASS_WARNINGS
 
 | Paso | Acción |
 |------|--------|
-| 1 | Promover delta specs a `openspec/specs/{domain}/spec.md`. Aplicar en orden: REMOVED, luego MODIFIED, luego ADDED. |
+| 1 | Promover delta specs a `openspec/specs/{domain}/spec.md`. **Dominio nuevo** (target no existe): crear con estructura `# Title` + `## Purpose` (lenguaje de dominio, mín. 50 chars) + `## Requirements`. **Dominio existente**: aplicar delta en orden **RENAMED → REMOVED → MODIFIED → ADDED**. |
 | 2 | Mover `openspec/changes/{change-name}/` a `openspec/changes/archive/YYYY-MM-DD-{change-name}/`. |
 | 3 | Actualizar instruction files si verify-report contiene sugerencias. |
 

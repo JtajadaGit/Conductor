@@ -39,7 +39,7 @@ A partir de ahora Conductor funciona como plugin de Copilot — los agentes, ski
 
 **Copilot CLI:**
 ```bash
-/plugin add https://gitlabdes.hiberus.com/iasmartcommerce/conductor
+/plugin install https://gitlabdes.hiberus.com/iasmartcommerce/conductor
 ```
 
 **VS Code:**

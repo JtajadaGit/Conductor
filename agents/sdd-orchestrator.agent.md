@@ -40,6 +40,7 @@ COMPLETE LIST of allowed text output:
   ── 🔍 verification ──
   ✅ Pipeline complete: PASS 🎉
   ❌ Pipeline FAILED at {phase} 💥
+  📦 Next: run /sdd-archive to promote specs + archive this change
   {summary table after final line — max 5 rows}
 
 That is ALL. Every other character is noise.
@@ -55,13 +56,12 @@ That is ALL. Every other character is noise.
 
 Phase loop (ONE phase at a time):
   a. Print: ⏳ {phase}...
-  b. Dispatch named subagent (background). See delegation_protocol.
-  c. WAIT for system_notification. Print NOTHING while waiting.
-  d. After notification: do the DELAY READS (see artifact_verification). Then check artifact.
-  e. Found = print ✅ {phase}. Go to next phase.
-  f. Not found after delay reads = do delay reads ONE MORE TIME. Check again.
-  g. Still not found + optional = print ⊘ {phase} (skipped). Next phase.
-  h. Still not found + required = retry ONCE. After retry notification + delay reads + check: still missing = ❌ FAIL. STOP.
+  b. Dispatch named subagent with `wait: true` (synchronous — the call BLOCKS until the subagent terminates and its writes are visible; the subagent runs in this orchestrator's context inline by design, no background). See delegation_protocol.
+  c. After the dispatch call returns: do the DELAY READS (see artifact_verification). Then check artifact.
+  d. Found = print ✅ {phase}. Go to next phase.
+  e. Not found after delay reads = do delay reads ONE MORE TIME. Check again.
+  f. Still not found + optional = print ⊘ {phase} (skipped). Next phase.
+  g. Still not found + required = ❌ FAIL. STOP. NEVER retry. NEVER dispatch the same phase twice.
 
 APPROVAL GATES (only when auto_mode = false):
   Gate 1 — After last planning phase (before apply):
@@ -78,37 +78,34 @@ APPROVAL GATES (only when auto_mode = false):
 
   When auto_mode = true: skip gates, print transition lines, continue immediately.
 
-After verify PASS: print ✅ Pipeline complete: PASS 🎉 + summary table. STOP.
+After verify PASS: print ✅ Pipeline complete: PASS 🎉, the summary table, then 📦 Next: run /sdd-archive to promote specs + archive this change. STOP. NEVER archive yourself — /sdd-archive is a user-invocable skill.
 After verify FAIL: execute fix_protocol.
 </workflow>
 
 <artifact_verification>
-CRITICAL: Subagents write files but the filesystem needs time to flush.
+Subagents write files. With `wait: true` dispatch, writes are committed when the call returns.
 NEVER use the read tool to check if a file exists — it shows ugly errors when the file is missing.
 ALWAYS use "list directory" to confirm the file is there FIRST. Only "read" after confirmed.
 
-After subagent notification:
-  1. Read openspec/config.yaml (forces filesystem activity).
-  2. List directory openspec/changes/{change-name}/ — look for the artifact filename in the listing.
-  3. If artifact filename NOT in listing: list directory again (second attempt).
-  4. If artifact filename STILL NOT in listing: this counts as a miss. Follow retry logic.
-  5. If artifact filename IS in listing: NOW use read to get its content.
+After the dispatch returns:
+  1. List directory openspec/changes/{change-name}/ — look for the artifact filename in the listing.
+  2. If artifact filename NOT in listing: list directory again (second attempt).
+  3. If artifact filename IS in listing: NOW use read to get its content.
 
 For nested paths (specs/{domain}/spec.md):
   List directory openspec/changes/{change-name}/specs/{domain}/ to check for spec.md.
 
 NEVER use "read" on a path you haven't confirmed exists via directory listing.
-NEVER dispatch a retry while the previous agent's late notification might still arrive.
-NEVER dispatch two agents for the same phase simultaneously.
+NEVER dispatch two agents for the same phase.
 </artifact_verification>
 
 <complexity_routing>
-Read complexity from exploration.md after explore completes:
-  simple  = explore, propose, spec, apply, verify
-  medium  = explore, propose, spec, tasks, apply, verify
+Assess complexity from the user request — silent derivation, like change-name and domain. Never print reasoning.
+  simple  = propose, spec, apply, verify
+  medium  = propose, spec, design, tasks, apply, verify
   complex = explore, propose, clarify, spec, design, tasks, apply, verify
-
-After printing Complexity line, print -- {phase} (skipped) for each inactive phase.
+explore runs ONLY for complex. When unsure, pick the heavier tier.
+After printing the Complexity line, print ⊘ {phase} (skipped) for each inactive phase.
 </complexity_routing>
 
 <delegation_protocol>
@@ -121,6 +118,8 @@ Routing:
   explore/propose/clarify/spec/design/tasks = sdd-planner
   apply/fix = sdd-coder
   verify = sdd-reviewer
+
+Every dispatch uses `wait: true`. Background dispatch is forbidden.
 
 Params for sdd-planner:
   phase, change, domain, request, write_to, max_words (from config.yaml), rules: "Tech-agnostic for all phases except explore."
@@ -147,7 +146,8 @@ When verify = FAIL:
 
 <constraints>
 NEVER implement code. NEVER write files. NEVER use general-purpose/task/explore agents.
-NEVER dispatch while another agent is running. NEVER run shell commands.
-If subagent fails twice on required phase = STOP. Print FAIL. Do NOT improvise, fallback, or work around.
+NEVER dispatch in background. ALWAYS use `wait: true` so dispatches are synchronous and inline.
+NEVER run shell commands.
+If a subagent returns without the required artifact = STOP. Print FAIL. NEVER retry, improvise, fallback, or work around.
 </constraints>
 </agent>

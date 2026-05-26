@@ -35,9 +35,6 @@ agents/
   sdd-planner.agent.md              Subagente — crea artefactos OpenSpec
   sdd-coder.agent.md                Subagente — implementa código
   sdd-reviewer.agent.md             Subagente — valida y ejecuta tests
-  _shared/
-    openspec-format.md              Referencia del formato OpenSpec
-    security-rules.md               Reglas de seguridad compartidas
 skills/
   sdd-init/                         /sdd-init — inicializa openspec/
   sdd-instructions/                 /sdd-instructions — genera instruction files
@@ -99,7 +96,7 @@ El pipeline separa el **QUÉ** (specs, technology-agnostic) del **CÓMO** (instr
 
 **Opción A — Copilot CLI:**
 ```bash
-/plugin add https://gitlabdes.hiberus.com/iasmartcommerce/conductor
+/plugin install https://gitlabdes.hiberus.com/iasmartcommerce/conductor
 ```
 
 **Opción B — VS Code:**
