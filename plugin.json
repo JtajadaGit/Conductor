@@ -1,5 +1,5 @@
 {
-  "name": "conductor",
+  "name": "conductor-personal",
   "description": "Spec-Driven Development pipeline. Orchestrator delegates to subagents following OpenSpec.",
   "version": "1.0.2",
   "license": "MIT",
