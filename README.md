@@ -21,7 +21,7 @@ Sin instalación. Sin binario. Sin runtime. Copia el plugin a tu proyecto y list
 | La IA genera código de inmediato | Redacta un spec primero, implementa después |
 | Sin trazabilidad | Cada cambio tiene spec, report y audit trail en `openspec/` |
 | Patrones inconsistentes | Los instruction files imponen las convenciones del equipo |
-| La IA ejecuta cualquier comando | `guard-tools` bloquea git, curl, wget y comandos destructivos |
+| La IA ejecuta cualquier comando | Cada agente declara su scope: git, red y borrado destructivo están vetados en el frontmatter `tools` y la sección FORBIDDEN del agente |
 | Una conversación monolítica | El orchestrator despacha agentes especializados |
 
 ---
@@ -40,11 +40,6 @@ skills/
   sdd-instructions/                 /sdd-instructions — genera instruction files
   sdd-status/                       /sdd-status — muestra progreso del pipeline
   sdd-archive/                      /sdd-archive — archiva cambios completados
-hooks/
-  conductor.json                    Registro de 3 hooks
-  inject-state.sh/.ps1              sessionStart — carga estado del cambio activo
-  inject-context.sh/.ps1            subagentStart — inyecta contexto a subagentes
-  guard-tools.sh/.ps1               preToolUse — bloquea git/curl/wget/rm-rf
 ```
 
 ---
@@ -56,7 +51,7 @@ sdd-orchestrator "mi feature"
         │
         ▼
   ┌───────────┐
-  │  PLANNER  │  →  exploration.md, proposal.md, specs/{dominio}/spec.md
+  │  PLANNER  │  →  proposal.md, specs/{dominio}/spec.md (+ exploration/design/tasks según complejidad)
   └───────────┘
         │
         ▼
@@ -69,7 +64,7 @@ sdd-orchestrator "mi feature"
   │ REVIEWER  │  →  verify-report.md (PASS / FAIL)
   └───────────┘
         │
-    ¿FAIL? → coder en modo fix (máx 3 ciclos)
+    ¿FAIL? → coder en modo fix (máx ciclos = `x-conductor.pipeline.max_review_cycles` en config.yaml)
     ¿PASS? → /sdd-archive
 ```
 
@@ -125,10 +120,9 @@ Activa estos dos settings. Puedes hacerlo de forma global (para todos los proyec
 Si no tienes acceso al sistema de plugins, copia los ficheros directamente a tu proyecto:
 
 ```bash
-# Copiar agentes, skills y hooks a .github/ de tu proyecto
+# Copiar agentes y skills a .github/ de tu proyecto
 cp -r conductor/agents/    tu-proyecto/.github/agents/
 cp -r conductor/skills/    tu-proyecto/.github/skills/
-cp -r conductor/hooks/     tu-proyecto/.github/hooks/
 ```
 
 **Verificación** — en Copilot CLI o VS Code, escribe `/sdd-` y comprueba que aparecen los skills: `/sdd-init`, `/sdd-instructions`, `/sdd-status`, `/sdd-archive`. Escribe `/agent` y comprueba que aparece `sdd-orchestrator`.
@@ -185,13 +179,12 @@ crear listado de productos con fake API
 |---|---|
 | `--auto` | Sin pausas. El pipeline se ejecuta completo. |
 | (sin flag) | Pausa después de planificar y después de implementar para revisión humana. |
-| `--continue` | Retoma un cambio existente desde `state.yaml`. |
 
 ### 6. Monitorizar
 
 ```
 /sdd-status     Ver progreso del cambio activo
-/tasks          Ver subagentes en segundo plano (Copilot CLI)
+/tasks          Ver el subagente activo (Copilot CLI)
 ```
 
 ### 7. Archivar
@@ -206,19 +199,21 @@ Promueve los delta specs a `openspec/specs/` (fuente de verdad) y archiva el cam
 
 ## Selección de fases por complejidad
 
-El planner evalúa la complejidad en la fase de exploración:
+El orchestrator evalúa la complejidad al recibir la petición:
 
 | Complejidad | Fases activas |
 |---|---|
-| **simple** | explore → propose → spec → apply → verify |
-| **medium** | explore → propose → spec → tasks → apply → verify |
+| **simple** | propose → spec → apply → verify |
+| **medium** | propose → spec → design → tasks → apply → verify |
 | **complex** | explore → propose → clarify → spec → design → tasks → apply → verify |
+
+`explore` solo se ejecuta en complejidad **complex**.
 
 ---
 
 ## OpenSpec
 
-Conductor sigue el estándar [OpenSpec](https://github.com/Fission-AI/OpenSpec). Nuestra extensión `x-conductor` en `config.yaml` añade: pipeline declarativo, hooks, agentes, y comandos de test/build.
+Conductor sigue el estándar [OpenSpec](https://github.com/Fission-AI/OpenSpec). Nuestra extensión `x-conductor` en `config.yaml` añade: pipeline declarativo, agentes y comandos de test/build.
 
 ```
 openspec/
@@ -240,11 +235,13 @@ openspec/
 
 ## Seguridad
 
-El hook `guard-tools` bloquea a nivel `preToolUse` (determinístico, no evitable):
+Cada agente declara su scope en el frontmatter `tools` (allowlist) y en su sección `FORBIDDEN`/`Scope`. Quedan prohibidos para todos los agentes del pipeline:
 
-- **Todas** las operaciones git (commit, push, pull, merge, checkout)
-- **Todas** las llamadas de red (curl, wget, Invoke-WebRequest)
-- **Todas** las operaciones destructivas (rm -rf, rmdir)
+- **Todas** las operaciones git (commit, push, pull, merge, checkout). La gestión de git pertenece al usuario.
+- **Todas** las llamadas de red (curl, wget, Invoke-WebRequest).
+- **Todas** las operaciones destructivas (rm -rf, rmdir, Remove-Item -Recurse).
+
+El reviewer ejecuta solo `test_command` y `build_command` de `config.yaml`; el coder solo `pre_hook`/`post_hook` configurados; el planner solo `mkdir` para preparar `openspec/changes/`.
 
 Los agentes pueden **recomendar** acciones git pero **nunca** ejecutarlas.
 
@@ -267,6 +264,5 @@ Los agentes pueden **recomendar** acciones git pero **nunca** ejecutarlas.
 
 - GitHub Copilot (CLI v1.0.40+ o VS Code con Copilot Chat)
 - Licencia GitHub Copilot activa
-- Modelo recomendado: Claude Sonnet 4.6 o superior
 
-No requiere Node.js, Python, Docker, ni ningún runtime adicional.
+No requiere Node.js, Python, Docker, ni ningún runtime adicional. Los modelos por agente vienen fijados en el frontmatter de cada `.agent.md`; revisa el plan de Copilot para verificar la disponibilidad y consumo de cada modelo.

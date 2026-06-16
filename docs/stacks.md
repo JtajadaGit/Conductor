@@ -17,28 +17,24 @@ Esta guía cubre la adopción de Conductor en proyectos reales: greenfield, en c
 
 ## 1. Qué se añade a tu proyecto
 
-Instala como plugin o copia manualmente:
+Conductor se distribuye como un plugin de Copilot con esta estructura interna:
 
 ```
-your-project/
-└── .github/
-    ├── plugin.json                      # Manifiesto del plugin
-    ├── agents/                          # 4 agentes SDD
-    │   ├── sdd-orchestrator.agent.md    # Dispatcher (punto de entrada)
-    │   ├── sdd-planner.agent.md
-    │   ├── sdd-coder.agent.md
-    │   └── sdd-reviewer.agent.md
-    ├── skills/                          # 4 skills utilitarios
-    │   ├── sdd-init/SKILL.md
-    │   ├── sdd-instructions/SKILL.md
-    │   ├── sdd-status/SKILL.md
-    │   └── sdd-archive/SKILL.md
-    └── hooks/                           # 3 hooks determinísticos
-        ├── conductor.json
-        ├── inject-state.sh/.ps1
-        ├── inject-context.sh/.ps1
-        └── guard-tools.sh/.ps1
+conductor/
+├── plugin.json                        # Manifiesto del plugin (en la raíz)
+├── agents/
+│   ├── sdd-orchestrator.agent.md      # Dispatcher (punto de entrada)
+│   ├── sdd-planner.agent.md
+│   ├── sdd-coder.agent.md
+│   └── sdd-reviewer.agent.md
+└── skills/
+    ├── sdd-init/SKILL.md
+    ├── sdd-instructions/SKILL.md
+    ├── sdd-status/SKILL.md
+    └── sdd-archive/SKILL.md
 ```
+
+Cuando instalas con `/plugin install ...` no se copia ningún archivo dentro de tu proyecto: Copilot carga agents y skills desde el plugin. Si copias manualmente, mete `agents/` y `skills/` bajo `.github/` de tu proyecto (no copies `plugin.json`).
 
 **Tu código no se toca.** Conductor no modifica tu proyecto hasta que invocas `sdd-orchestrator`. Todo lo que genera va a `openspec/` (artefactos del pipeline) y `.github/instructions/` (reglas para la IA).
 
@@ -247,7 +243,7 @@ Los skills son los comandos `/sdd-*`. Conductor incluye 4 de serie. **La mayorí
 |----------|----------|
 | Que la IA siga las convenciones de tu stack | Instruction files |
 | Que la IA use un patrón de arquitectura concreto | Instruction files |
-| Quieres añadir validaciones de tests | Hooks en `config.yaml` |
+| Quieres añadir validaciones de tests | `pre_hook`/`post_hook` por fase en `x-conductor.pipeline.phases` del `config.yaml` |
 | Quieres cambiar el nivel de TDD | `strict_tdd` en `config.yaml` |
 
 ### SÍ necesitas un skill personalizado si...
@@ -318,7 +314,7 @@ Qué delega y a quién.
 
 | Fase | Detalles |
 |------|----------|
-| `/sdd-init` detecta | Angular 19, TypeScript strict, npm, Jest/Vitest |
+| `/sdd-init` detecta | Angular 19, TypeScript strict, npm, Karma+Jasmine (o el runner real configurado en `angular.json` — Jest/Vitest si el equipo ha migrado) |
 | `config.yaml` | `strict_tdd: true` |
 | `/sdd-instructions` genera | `angular.instructions.md` (applyTo: `**/*.ts,**/*.html,**/*.scss`), `testing.instructions.md` (applyTo: `**/*.spec.ts`), `formatting.instructions.md` (applyTo: `**/*.ts,**/*.html`) |
 | Ediciones manuales recomendadas | Anti-patrones: `*ngIf` a `@if`, `BehaviorSubject` a `signal()`, DI por constructor a `inject()`. Arquitectura: `features/`, `shared/`, `core/`. Regla: "Standalone components, sin NgModules" |
@@ -410,10 +406,11 @@ Sí. Conductor no modifica tu código hasta que ejecutas `sdd-orchestrator`. Eje
 | Ruta | ¿Commitear? | Razón |
 |------|------------|-------|
 | `openspec/config.yaml` | Sí | Configuración compartida del equipo |
-| `openspec/changes/` | Opcional | Artefactos de cambios activos; útil para colaboración |
-| `openspec/changes/archive/` | Opcional | Historial de cambios; útil para auditorías |
+| `openspec/specs/` | Sí | Fuente de verdad — specs promovidas por `/sdd-archive` |
+| `openspec/changes/` | Sí (recomendado) | Audit trail completo; útil para colaboración y para recuperar cambios interrumpidos |
+| `openspec/changes/archive/` | Sí | Historial inmutable de cambios completados |
 | `.github/instructions/` | Sí | Convenciones compartidas del equipo |
-| `agents/` y `skills/` | Sí | Versionados con el proyecto |
+| `agents/` y `skills/` (solo si copiaste el plugin manualmente bajo `.github/`) | Sí | Versionados con el proyecto |
 
 ### ¿Mi stack no se detecta automáticamente?
 

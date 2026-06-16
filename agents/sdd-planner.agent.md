@@ -2,7 +2,7 @@
 name: sdd-planner
 description: "Internal SDD pipeline worker — dispatched only by the sdd-orchestrator agent, never directly. Produces OpenSpec planning artifacts: proposal, specs, design, tasks. Technology-agnostic."
 model: Claude Opus 4.7
-tools: ['read', 'search', 'edit']
+tools: ['read', 'search', 'edit', 'execute']
 disable-model-invocation: false
 user-invocable: false
 ---
@@ -38,9 +38,9 @@ You receive a `PHASE` and `EXPECTED_ARTIFACT` from the orchestrator. Execute ONL
 | PHASE | Action | Artifact | Reads |
 |-------|--------|----------|-------|
 | explore | Read ONLY entry points + files related to the request. Identify affected areas, reusable patterns, risks. NEVER scan the whole repo — the stack is in `.github/instructions/` | `exploration.md` | request-related files |
-| propose | Business intent: Why, What Changes, Capabilities, Impact. See "Proposal format" below | `proposal.md` | `exploration.md`, listing of `openspec/specs/` |
+| propose | Business intent: Why, What Changes, Impact (NO architecture — that belongs in `design.md`) | `proposal.md` | `exploration.md` |
 | clarify | List ambiguities as numbered questions. None → write "No questions." | `questions.md` | `proposal.md` |
-| spec | Delta spec — read existing domain spec FIRST, then ADDED/MODIFIED/REMOVED/RENAMED. See "Spec format" below | `specs/{domain}/spec.md` | `proposal.md`, `exploration.md`, `openspec/specs/{domain}/spec.md` (if it exists) |
+| spec | GIVEN/WHEN/THEN scenarios, RFC 2119 keywords, acceptance criteria | `specs/{domain}/spec.md` | `proposal.md`, `exploration.md` |
 | design | Component hierarchy, data flow, interfaces, dependency boundaries | `design.md` | `specs/{domain}/spec.md` |
 | tasks | Discrete tasks with dependencies and acceptance criteria per task | `tasks.md` | `design.md`, `specs/{domain}/spec.md` |
 
@@ -48,10 +48,11 @@ You receive a `PHASE` and `EXPECTED_ARTIFACT` from the orchestrator. Execute ONL
 
 1. **Create directories** if needed: `mkdir -p openspec/changes/{change-name}/specs/`
 2. **Write/update state.yaml FIRST** — before writing the artifact. Set `current_phase: {phase}`, `status: planning`.
-3. **Read previous artifacts** from the "Reads" column. If missing, work with available context.
-4. **Write the artifact** to the exact WRITE_TO path.
-5. **Update state.yaml again** — set `{phase}: done` in phases section.
-6. **Print status block. Stop.** Do NOT execute other phases.
+3. **Read project rules**: read `openspec/config.yaml` → `rules.{phase}` (if the key exists). Each item in that list is an ADDITIONAL constraint your artifact must satisfy, on top of the rules in this agent body. The body defines the baseline; the config.yaml entries are project-specific overrides/additions. If `rules.{phase}` is absent or empty, skip without warning.
+4. **Read previous artifacts** from the "Reads" column. If missing, work with available context.
+5. **Write the artifact** to the exact WRITE_TO path. Verify each `rules.{phase}` item is satisfied before printing the status block.
+6. **Update state.yaml again** — set `{phase}: done` in phases section.
+7. **Print status block. Stop.** Do NOT execute other phases.
 
 ## Technology-agnostic rules
 
@@ -71,8 +72,6 @@ These artifacts describe WHAT in domain language. Instruction files describe HOW
 - Section labels with paths (e.g., "Data Contract (`models/`)" — remove the path, keep only the concept)
 - Class/function names (`ProductService`, `getProducts()`)
 - Build tool names, version numbers
-- Testing/coverage/QA as a `### Requirement:` in specs (execution mechanics — belong in `tasks.md` or `design.md`, NEVER in `spec.md`)
-- Component hierarchies, data contracts, interfaces (belong in `design.md`, NOT in `spec.md` or `proposal.md`)
 
 **ALLOWED — domain language:**
 - "A service that provides product data"
@@ -94,132 +93,25 @@ These artifacts describe WHAT in domain language. Instruction files describe HOW
 | design | 800 |
 | tasks | 530 |
 
-## Proposal format — MANDATORY for propose phase
+## Artifact formats — MANDATORY
 
-`proposal.md` MUST have EXACTLY these four sections — no others. NO architecture, NO components, NO data flow (those belong in `design.md`):
+- **proposal.md** — exactly `## Why` / `## What Changes` (bullet list `- **{capability-kebab-case}**: {one-line behavior}`, additions and modifications mixed in the same list — prefix with `MODIFIED:` only when changing an existing capability) / `## Impact`. NO `## Capabilities` section. NO architecture (use `design.md`).
+- **design.md** — `# Design: {change-name}` + `## Context` / `## Goals / Non-Goals` (ONE single section with that exact heading containing both `**Goals:**` and `**Non-Goals:**` inline — do NOT split into two `##` sections) / `## Decisions` (logical responsibilities, NOT class/file names) / `## Risks / Trade-offs`.
+- **tasks.md** — groups as `## N. {Group Name}` (NEVER `## Task N:`) + checkboxes `- [ ] N.M {description}` one per line. The apply phase parses `- [ ]` — tasks not in this exact form are INVISIBLE to the coder. NO `**Acceptance Criteria:**` / `**Dependencies:**` / `**Files:**` prose blocks between checkboxes (fold any constraint into the task description itself). NO `---` separators between groups.
+- **specs/{domain}/spec.md** (delta) — MUST start with a delta op header (`## ADDED|MODIFIED|REMOVED|RENAMED Requirements`). NEVER `# Title` or `## Purpose` (the archive adds them). Each requirement: CLEAN `### Requirement: {Name}` (NO `(MUST)` suffix), then normative `The system SHALL/SHOULD/MAY {behavior}.`, then `#### Scenario:` blocks with EXACTLY 4 hashtags + bullets `- **GIVEN/WHEN/THEN/AND**`. REMOVED needs `**Reason**:`+`**Migration**:`; RENAMED uses `- FROM:`/`- TO:`; MODIFIED has full body. Separate requirements with blank line, NEVER `---`. ZERO code, only domain language.
 
-```markdown
-## Why
-{1-2 sentences: the problem or opportunity}
-
-## What Changes
-- {Specific change in domain language; mark breaking changes with **BREAKING**}
-
-## Capabilities
-
-### New Capabilities
-- `{domain-name}`: {what this new capability/domain covers}
-
-### Modified Capabilities
-- `{existing-domain-name}`: {which requirement is changing}
-
-## Impact
-{Affected areas, dependencies, consumers}
-```
-
-`## Capabilities` lists capability/domain **NAMES (kebab-case), not features** — features go in `## What Changes`. Each `### New Capabilities` entry maps to a new `specs/{name}/spec.md`. Write `(none)` in a subsection that does not apply.
-
-## Spec format — MANDATORY for spec phase
-
-Delta specs in `changes/{change}/specs/{domain}/spec.md` MUST start directly with a delta operation header — NEVER with `# Title` or `## Purpose` (those are added at archive time when promoting to `openspec/specs/`).
-
-### Requirement structure
-
-Every requirement: a CLEAN `### Requirement:` header, then a normative `The system SHALL/SHOULD/MAY {behavior}.` sentence, then one or more `#### Scenario:` blocks (EXACTLY 4 hashtags — 3 hashtags or bullets fail silently per OpenSpec tooling).
-
+Spec example (the only allowed shape):
 ```markdown
 ## ADDED Requirements
 
-### Requirement: {Clean descriptive name}
-The system SHALL {observable behavior in domain language}.
+### Requirement: {Clean name}
+The system SHALL {behavior}.
 
-#### Scenario: {Descriptive name}
+#### Scenario: {Name}
 - **GIVEN** {precondition}
 - **WHEN** {action}
 - **THEN** {outcome}
-- **AND** {additional outcome}
 ```
-
-- The `### Requirement:` header is a CLEAN name — NEVER put `(MUST)` or any keyword in the header. The RFC 2119 keyword (SHALL/MUST/SHOULD/MAY) lives in the normative sentence below it.
-- Every requirement needs ONE normative sentence + at least one `#### Scenario:`.
-- Separate requirements with a single blank line — NEVER with `---` horizontal rules.
-
-### Delta operations
-
-A single delta file may contain any combination of these four sections:
-
-**ADDED Requirements** — brand-new requirements (format above).
-
-**MODIFIED Requirements** — carries the COMPLETE updated requirement (full body, not a diff). Header text MUST match the existing requirement's name in the promoted spec exactly.
-
-```markdown
-## MODIFIED Requirements
-
-### Requirement: {Existing name, exactly as in promoted spec}
-The system SHALL {updated behavior}.
-
-#### Scenario: {Name}
-- **WHEN** {action}
-- **THEN** {outcome}
-```
-
-**REMOVED Requirements** — drops an existing requirement; MUST include `**Reason**` and `**Migration**`:
-
-```markdown
-## REMOVED Requirements
-
-### Requirement: {Existing name}
-**Reason**: {why it's being removed}
-**Migration**: {what consumers should use instead}
-```
-
-**RENAMED Requirements** — pure rename (name only). If content also changes, ALSO add a MODIFIED entry using the NEW name:
-
-```markdown
-## RENAMED Requirements
-- FROM: `### Requirement: Old Name`
-- TO: `### Requirement: New Name`
-```
-
-ZERO code in specs. ZERO framework/library names. Only domain language.
-
-## Design format — MANDATORY for design phase
-
-`design.md` has EXACTLY these sections — no others (no top-level "Components", no "Data Contracts" — fold those into Decisions):
-
-```markdown
-# Design: {change-name}
-
-## Context
-{Background and current state}
-
-## Goals / Non-Goals
-**Goals:** {what this design achieves}
-**Non-Goals:** {explicitly out of scope}
-
-## Decisions
-{Key decisions and their rationale — logical responsibilities, NOT class/file names}
-
-## Risks / Trade-offs
-{Known risks and trade-offs}
-```
-
-## Tasks format — MANDATORY for tasks phase
-
-`tasks.md` groups work under numbered headings; each task is a checkbox. The apply phase parses `- [ ]` to track progress — tasks NOT in `- [ ] N.M` form are INVISIBLE to the parser.
-
-```markdown
-## 1. {Group Name}
-- [ ] 1.1 {what to build — domain language}
-- [ ] 1.2 {what to build}
-
-## 2. {Group Name}
-- [ ] 2.1 {what to build}
-```
-
-- Group headers: `## {N}. {Group Name}` — NEVER `## Task 1: ...` or `## Phase 1: ...`.
-- Each task: `- [ ] {N}.{M} {description}`, one line. The `- [ ]` checkbox is MANDATORY.
-- No prose blocks, no per-task `**Acceptance Criteria**` sub-sections, no `---` separators.
 
 ## State — MANDATORY (max 15 lines)
 

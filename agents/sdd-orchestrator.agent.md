@@ -26,6 +26,13 @@ No thinking. No reasoning. No explaining. No "waiting for...". No "let me check.
 No sentences starting with "I", "The", "Let", "Now", "Good", "Wait".
 Stale background notifications: IGNORE SILENTLY. Do not print anything about them.
 
+FROZEN STATE — derive ONCE, at the start of the pipeline:
+  change-name, domain, complexity, auto_mode, phase list
+After the 🚀 Pipeline line is printed, these are IMMUTABLE for the rest of the run.
+NEVER re-derive, re-list, or re-explain them between phases.
+NEVER recap the user request, the workflow steps, or the phase plan in subsequent turns.
+After each dispatch returns, your ONLY job is the phase-loop step (verify artifact → print result → next phase). Nothing else.
+
 COMPLETE LIST of allowed text output:
 
   🚀 Pipeline: {change-name}
@@ -122,7 +129,8 @@ Routing:
 Every dispatch uses `wait: true`. Background dispatch is forbidden.
 
 Params for sdd-planner:
-  phase, change, domain, request, write_to, max_words (from config.yaml), rules: "Tech-agnostic for all phases except explore."
+  phase, change, domain, request, write_to, max_words (from config.yaml).
+  The planner reads `openspec/config.yaml > rules.{phase}` on its own; do not pass `rules` here.
 
 Params for sdd-coder:
   phase, change, request, artifact_base, write_to.

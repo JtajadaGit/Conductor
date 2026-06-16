@@ -1,6 +1,6 @@
 # Referencia del Pipeline
 
-Referencia técnica del pipeline de desarrollo dirigido por especificación (Spec-Driven Development). Cubre las fases del pipeline, la puerta de complejidad, el bucle de revisión, el paralelismo y el modo TDD.
+Referencia técnica del pipeline de desarrollo dirigido por especificación (Spec-Driven Development). Cubre las fases del pipeline, la puerta de complejidad, el bucle de revisión, el modelo de despacho y el modo TDD.
 
 ## Vista general del pipeline
 
@@ -30,7 +30,7 @@ El planner produce artefactos de especificación. El coder implementa a partir d
 
 ### explore
 
-Solo se ejecuta en cambios de complejidad alta (complex). El planner lee únicamente los entry points y los ficheros relacionados con la petición — nunca recorre el repo completo; el stack ya está descrito en `.github/instructions/`.
+Solo se ejecuta en cambios de complejidad alta (complex). En complejidad simple y medium se omite. El planner lee únicamente los entry points y los ficheros relacionados con la petición — nunca recorre el repo completo; el stack ya está descrito en `.github/instructions/`.
 
 ### propose
 
@@ -54,7 +54,7 @@ Descomposición en tareas atómicas con numeración jerárquica. Cada tarea apun
 
 ### apply
 
-El coder lee la spec (obligatoria), tasks y design. Lee los instruction files para patrones específicos de la plataforma. Implementa código, ejecuta los hooks configurados y escribe `apply-report.md`. Si `strict_tdd: true`, escribe tests antes que código.
+El coder lee la spec (obligatoria), tasks y design. Lee los instruction files para patrones específicos de la plataforma. Implementa código, ejecuta los `pre_hook`/`post_hook` configurados de la fase y escribe `apply-report.md`. Si `strict_tdd: true`, escribe tests antes que código.
 
 ### verify
 
@@ -104,10 +104,10 @@ Cuando el reviewer devuelve un veredicto FAIL, el orchestrator despacha al coder
 |------|--------|--------|
 | 1 | reviewer | Escribe `verify-report.md` con veredicto FAIL y lista de issues críticos |
 | 2 | orchestrator | Lee verify-report, despacha al coder con `PHASE: fix` |
-| 3 | coder | Lee `verify-report.md`, aplica correcciones quirúrgicas (máx 10 líneas por corrección), añade `## Fix Cycle {N}` a `apply-report.md` |
+| 3 | coder | Lee `verify-report.md`, aplica correcciones quirúrgicas a los issues críticos y añade `## Fix Cycle {N}` al `apply-report.md` existente |
 | 4 | orchestrator | Despacha al reviewer de nuevo |
 
-Máximo: 3 ciclos de fix. Tras 3 veredictos FAIL consecutivos, el orchestrator se detiene y reporta el bloqueo al usuario.
+El máximo de ciclos de fix lo define `x-conductor.pipeline.max_review_cycles` en `config.yaml` (valor por defecto generado por `/sdd-init`: `2`). Cuando se agotan, el orchestrator se detiene y reporta el bloqueo al usuario.
 
 ### Veredictos
 
@@ -117,40 +117,27 @@ Máximo: 3 ciclos de fix. Tras 3 veredictos FAIL consecutivos, el orchestrator s
 | PASS_WARNINGS | 0 issues críticos, warnings presentes | Recomendar `/sdd-archive` |
 | FAIL | 1 o más issues críticos | Entrar en ciclo de fix |
 
-## Paralelismo en apply
+## Modelo de despacho
 
-El orchestrator evalúa el paralelismo antes de cada fase de apply.
-
-1. Agrupar tareas por dominio funcional (ficheros en el mismo directorio pertenecen al mismo dominio).
-2. Si existen 2+ grupos con 2+ tareas cada uno y 0 ficheros compartidos, despachar instancias paralelas del coder.
-3. Las tareas de integración y las de test siempre se ejecutan en Wave 2 (secuencial).
-
-```
-Wave 1 (paralelo):     grupo A        grupo B        grupo C
-                        (aislado)      (aislado)      (aislado)
-                             |              |              |
-Merge:                  merge secuencial de resultados
-                                    |
-Wave 2 (secuencial):   tareas de integración + tests
-```
-
-Límites: máximo 4 instancias paralelas del coder por wave. No paralelizar cuando existen menos de 4 tareas o cuando hay ficheros compartidos entre grupos.
+El orchestrator es **secuencial y síncrono**. Cada fase se despacha con `wait: true`: la llamada al subagente bloquea hasta que termina y sus ficheros quedan visibles antes de pasar a la fase siguiente. No hay ejecución en paralelo, ni fan-out, ni background. El orchestrator nunca despacha dos agentes a la vez ni reintenta la misma fase.
 
 ## Modo TDD strict
 
-Prioridad de activación (de mayor a menor):
+Resolución de `strict_tdd` (la realiza `/sdd-init` al generar `config.yaml`):
 
-1. Configuración a nivel de agente
-2. `x-conductor.strict_tdd: true` en config.yaml
-3. Test runner detectado en config.yaml (por defecto activo)
+1. Si ya existía `openspec/config.yaml` con `x-conductor.strict_tdd` → se preserva su valor.
+2. Si se detecta un test runner en el proyecto → `true`.
+3. Si no hay test runner → `false`.
 
-Ciclo por tarea:
+Una vez fijado en `config.yaml`, coder y reviewer lo leen desde ahí.
+
+Ciclo por tarea cuando `strict_tdd: true`:
 
 ```
-SAFETY NET --> RED (test fallido) --> GREEN (código mínimo) --> TRIANGULATE --> REFACTOR
+RED (test fallido) --> GREEN (código mínimo) --> REFACTOR
 ```
 
-Los módulos TDD (`strict-tdd.md`, `strict-tdd-verify.md`) se cargan solo cuando TDD está activo. Cuando está inactivo, consumen cero tokens.
+El coder escribe primero los tests y luego la implementación; el reviewer comprueba en `apply-report.md` que hay evidencia TDD.
 
 ## Condiciones de omisión
 
@@ -167,19 +154,21 @@ Los módulos TDD (`strict-tdd.md`, `strict-tdd-verify.md`) se cargan solo cuando
 
 | Señal | Acción del orchestrator |
 |-------|------------------------|
-| `requires_human_input: true` | Pausar pipeline, mostrar mensaje al usuario, esperar input |
-| `status: blocked` | Detener pipeline, reportar bloqueo, sugerir resolución |
-| `status: partial` | Preguntar al usuario: continuar o reintentar |
-| Superados 2 reintentos por fase | Escalar al usuario |
+| Artefacto requerido no aparece tras la fase | `❌ FAIL` y se detiene. Nunca reintenta ni redispatcha la misma fase |
+| Artefacto opcional no aparece tras la fase | `⊘ {phase} (skipped)` y se continúa con la siguiente |
+| Subagente devuelve `status: blocked` | Detener pipeline y reportar el bloqueo |
+| Verify devuelve `FAIL` | Entrar en el bucle de fix (limitado por `max_review_cycles`) |
 
 ## Límites de I/O de los agentes
 
-| Agente | Lee | Escribe | Herramientas |
-|--------|-----|---------|--------------|
-| Orchestrator | config.yaml, verify-report, state.yaml | nada (solo lee y despacha) | read, agent, search |
-| Planner | artefactos previos, código fuente, instruction files (para contexto) | artefactos de planificación + state.yaml | read, search, edit, execute, agent |
-| Coder | tasks + spec + design + instruction files + código fuente | código fuente + apply-report.md | read, search, edit, execute |
-| Reviewer | spec + apply-report + código fuente + config.yaml | verify-report.md | read, search, execute |
+| Agente | Lee | Escribe | Herramientas (frontmatter `tools`) |
+|--------|-----|---------|------------------------------------|
+| Orchestrator | config.yaml, verify-report, state.yaml, artefactos del cambio | nada (solo lee y despacha) | `read`, `agent`, `search` |
+| Planner | artefactos previos, código fuente, instruction files (para contexto) | artefactos de planificación + state.yaml | `read`, `search`, `edit`, `execute` |
+| Coder | tasks + spec + design + instruction files + código fuente | código fuente + apply-report.md + state.yaml + checkboxes en tasks.md | `read`, `search`, `edit`, `execute` |
+| Reviewer | spec + apply-report + código fuente + config.yaml | verify-report.md + state.yaml | `read`, `search`, `edit`, `execute` |
+
+> El reviewer declara `edit` en `tools` porque necesita escribir `verify-report.md` y `state.yaml`. Su sección `Scope` le prohíbe editar código fuente o ficheros de test.
 
 ---
 

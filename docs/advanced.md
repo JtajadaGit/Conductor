@@ -8,7 +8,7 @@
 2. [Buenas prácticas](#2-buenas-prácticas)
 3. [Anti-patrones](#3-anti-patrones)
 4. [Git y seguridad](#4-git-y-seguridad)
-5. [Delegación en background](#5-delegación-en-background)
+5. [Delegación síncrona](#5-delegación-síncrona)
 6. [Verificación de artefactos (delay reads)](#6-verificación-de-artefactos-delay-reads)
 7. [Comportamiento del reviewer](#7-comportamiento-del-reviewer)
 8. [Troubleshooting](#8-troubleshooting)
@@ -50,7 +50,7 @@ La calidad de tu petición impacta directamente en la eficiencia de tokens.
 | Re-ejecutar `/sdd-init` + `/sdd-instructions` cuando cambie el stack | Mantiene la detección y los instruction files al día |
 | Acotar los instruction files | Usa patrones `applyTo` específicos. Patrones amplios gastan tokens en ficheros irrelevantes. |
 | Usar modo interactivo en dominios desconocidos | Sin `--auto` puedes revisar la spec antes de que el coder implemente |
-| Monitorizar tareas en background con `/tasks` | El orchestrator despacha sub-agentes como tareas en background; `/tasks` muestra el progreso |
+| Monitorizar el subagente activo con `/tasks` | El orchestrator despacha cada subagente síncronamente (`wait: true`); `/tasks` muestra cuál está en curso en Copilot CLI |
 
 ---
 
@@ -63,10 +63,10 @@ La calidad de tu petición impacta directamente en la eficiencia de tokens.
 | Re-ejecutar verify sin cambios en el código | Coste en tokens sin ningún valor | Corregir el código primero, luego verify |
 | Batches de apply de 8-10 tareas | Si una falla, hay que rehacer todo el batch | Batches de 2-3 tareas |
 | Forzar SDD en tareas triviales | La Complexity Gate existe para saltarse el pipeline en cambios pequeños | Confiar en la gate; usar `sdd-orchestrator` y dejar que clasifique |
-| Editar `state.yaml` manualmente | Puede corromper el DAG y romper `--continue` | Borrar `state.yaml` y re-derivar desde artefactos si es necesario |
+| Editar `state.yaml` manualmente | Puede dejar el seguimiento de fases incoherente | Si está corrupto, borrarlo y relanzar al orchestrator: los agentes lo reescribirán al avanzar de fase |
 | Instruction files con `applyTo: "**"` | Carga tokens en TODAS las interacciones del agente sin importar el tipo de fichero | Usar patrones específicos: `**/*.ts`, `src/api/**/*.java` |
 | Pegar ficheros enteros en la petición | Gasta tokens de la petición; los agentes pueden leer ficheros por sí mismos | Referenciar rutas de ficheros; dejar que los agentes lean |
-| Saltarse `/sdd-init` | Los agentes carecen de contexto del stack, comandos de test y configuración de hooks | Siempre ejecutar init antes del primer uso |
+| Saltarse `/sdd-init` | Los agentes carecen de contexto del stack y de los comandos de test/build | Siempre ejecutar init antes del primer uso |
 
 ---
 
@@ -74,7 +74,7 @@ La calidad de tu petición impacta directamente en la eficiencia de tokens.
 
 ### Git está bloqueado
 
-Todas las operaciones git están **bloqueadas por el hook `guard-tools`**. Esto es por diseño.
+Todas las operaciones git están **vetadas en el frontmatter `tools` y en la sección FORBIDDEN/Scope de cada agente**. Esto es por diseño.
 
 | Lo que los agentes SÍ hacen | Lo que los agentes NO pueden hacer |
 |-----------------------------|------------------------------------|
@@ -105,38 +105,28 @@ El reviewer o el orchestrator pueden sugerir un mensaje de commit en sus informe
 
 ---
 
-## 5. Delegación en background
+## 5. Delegación síncrona
 
-El orchestrator despacha sub-agentes nombrados (`sdd-planner`, `sdd-coder`, `sdd-reviewer`) como **tareas en background**. Cada sub-agente se ejecuta en su propio hilo con contexto acotado, manteniendo el hilo de chat principal limpio.
+El orchestrator despacha sub-agentes nombrados (`sdd-planner`, `sdd-coder`, `sdd-reviewer`) **secuencialmente y con `wait: true`**. Cada llamada bloquea hasta que el subagente termina y sus ficheros quedan visibles; sólo entonces el orchestrator pasa a la fase siguiente. No hay ejecución en paralelo ni fan-out.
 
 ### Cómo funciona la delegación
 
 | Paso | Qué ocurre |
 |------|------------|
-| 1 | El orchestrator lee `config.yaml` y evalúa la complejidad de la petición |
-| 2 | Despacha `sdd-planner` como tarea en background — produce spec, design, tasks y state.yaml |
-| 3 | Tras completar el planner, despacha `sdd-coder` — implementa código según spec + instruction files |
-| 4 | Tras completar el coder, despacha `sdd-reviewer` — valida contra spec y ejecuta tests configurados |
-| 5 | Si el reviewer emite FAIL, el orchestrator despacha un ciclo de corrección (máximo 3 ciclos) |
+| 1 | El orchestrator lee `config.yaml` y deriva complejidad, change-name y dominio |
+| 2 | Despacha al planner una fase cada vez (propose, spec, y según complejidad explore/clarify/design/tasks) y verifica el artefacto en disco antes de avanzar |
+| 3 | Despacha `sdd-coder` para `apply` — implementa según spec + instruction files |
+| 4 | Despacha `sdd-reviewer` para `verify` — valida contra spec y ejecuta los comandos configurados |
+| 5 | Si el reviewer emite FAIL, el orchestrator entra en el bucle de fix (`max_review_cycles` de `config.yaml`) |
 
-### Monitorizar tareas
+El orchestrator **nunca** despacha dos agentes a la vez ni redispatcha la misma fase si el artefacto no aparece tras los reintentos de verificación: en ese caso imprime `❌ FAIL` y se detiene.
+
+### Monitorizar el progreso
 
 | Comando | Propósito |
 |---------|-----------|
-| `/tasks` | Mostrar todas las tareas en background con su estado (running, pending, completed, failed) |
-| `/sdd-status` | Mostrar el progreso del pipeline SDD (fase actual, cambio activo, tareas pendientes) |
-
-### Ejecución en paralelo
-
-Cuando el planner produce tareas en dominios independientes (ficheros en directorios distintos sin solapamiento), el orchestrator puede despachar múltiples coders en paralelo:
-
-| Oleada | Comportamiento | Ejemplo |
-|--------|----------------|---------|
-| Oleada 1 (paralelo) | Grupos independientes se ejecutan simultáneamente | Grupo A: módulo auth, Grupo B: módulo product |
-| Merge | Resultados fusionados secuencialmente | Comprobación de conflictos |
-| Oleada 2 (secuencial) | Tareas de integración y tests | Wiring + tests cross-module |
-
-Máximo recomendado: 4 coders en paralelo por oleada. Sin paralelización si hay menos de 4 tareas independientes o si los ficheros se solapan.
+| `/tasks` | En Copilot CLI muestra el subagente activo (siempre uno a la vez) |
+| `/sdd-status` | Lee `state.yaml` y muestra la fase actual y los artefactos existentes |
 
 ---
 
@@ -174,8 +164,8 @@ El reviewer es **de solo lectura** y ejecuta **únicamente comandos de test conf
 |--------|----------|
 | Lee spec, informe de apply y ficheros fuente | Compara la implementación contra la especificación |
 | Puntúa cada escenario | COMPLIANT, PARTIAL, FAILING o UNTESTED |
-| Ejecuta el comando de test configurado | Desde el campo `x-conductor.hooks.verify.test_command` en `config.yaml` |
-| Ejecuta el comando de build configurado | Desde el campo `x-conductor.hooks.verify.build_command` en `config.yaml` |
+| Ejecuta el comando de test configurado | Desde la fase `verify` en `x-conductor.pipeline.phases[verify].test_command` |
+| Ejecuta el comando de build configurado | Desde la fase `verify` en `x-conductor.pipeline.phases[verify].build_command` |
 | Produce `verify-report.md` | Con veredicto: PASS, PASS_WARNINGS o FAIL |
 
 ### Qué NO puede hacer el reviewer
@@ -204,15 +194,15 @@ El reviewer omite la ejecución de tests y anota "No test command configured" en
 | Tests se quedan colgados en verify | El test runner espera input interactivo o el timeout es demasiado corto | Verificar que `verify.test_command` no requiere stdin; añadir `--watch=false` |
 | Instruction files no detectados | `/sdd-instructions` no ejecutado o plataforma no detectada | Ejecutar `/sdd-init` + `/sdd-instructions` |
 | Los agentes no escriben ficheros | El sub-agente agotó su contexto por una lista de tareas demasiado grande | Reducir tamaño del batch; el orchestrator reintenta una vez automáticamente |
-| `sdd-orchestrator --continue` dice "No next phase" | El cambio ya está archivado o `state.yaml` está obsoleto | Comprobar con `/sdd-status`; si es necesario, borrar `state.yaml` |
+| El orchestrator vuelve a empezar desde cero un cambio ya iniciado | El usuario relanzó la petición sin describir lo ya hecho | Indicar en el prompt el `change-name` y el estado actual; `/sdd-status` te lo muestra |
 
 ### Problemas de estado y recuperación
 
 | Problema | Causa | Solución |
 |----------|-------|----------|
-| `state.yaml` inconsistente | Error de compactación o crash durante delegación | Borrar `state.yaml` y ejecutar `sdd-orchestrator --continue` (re-deriva el estado desde artefactos) |
+| `state.yaml` inconsistente | Crash durante delegación o edición manual | Borrar `state.yaml` y relanzar al orchestrator con el mismo prompt; los artefactos existentes se respetan |
 | Sub-agentes ignoran convenciones tras compactación | Los instruction files se recargan por interacción pero pueden faltar | Ejecutar `/sdd-instructions` para regenerar |
-| Pipeline atascado tras apply parcial | Algunas tareas completadas, otras fallaron a mitad de batch | Ejecutar `sdd-orchestrator --continue` — reanuda desde el último checkpoint |
+| Pipeline atascado tras apply parcial | Algunas tareas marcadas `[x]` en `tasks.md`, otras no | Relanzar al orchestrator con el mismo `change-name`; el coder verá los checkboxes pendientes en `tasks.md` |
 | Artefactos de un cambio anterior interfieren | Se olvidó archivar | Ejecutar `/sdd-archive` para cambios completados, o mover manualmente a `openspec/changes/archive/` |
 
 ### Problemas de configuración
@@ -220,10 +210,10 @@ El reviewer omite la ejecución de tests y anota "No test command configured" en
 | Problema | Causa | Solución |
 |----------|-------|----------|
 | Plugin no detectado | `plugin.json` ausente o settings no habilitados | Verificar que `plugin.json` está en `.github/` y `chat.plugins.enabled: true` |
-| El orchestrator se ejecuta inline en vez de en background | Invocación de sub-agentes no habilitada | Habilitar `chat.subagents.allowInvocationsFromSubagents: true` en los settings de VS Code |
+| El orchestrator no consigue invocar subagentes en VS Code | Setting necesario desactivado | Habilitar `chat.subagents.allowInvocationsFromSubagents: true` en los settings de VS Code (la ejecución sigue siendo síncrona — `wait: true` — no es background) |
 | `/sdd-init` no reconocido | Skills no cargados | Comprobar instalación del plugin; verificar el array `skills` en `plugin.json` |
 | `sdd-orchestrator` no aparece en el selector de agentes | Faltan campos requeridos en la configuración del agente | Verificar `disable-model-invocation: true` y `user-invocable: true` en el fichero del agente |
-| El reviewer ejecuta comandos de test inesperados | Comando de test mal configurado en `config.yaml` | Comprobar `x-conductor.hooks.verify.test_command`; el reviewer ejecuta ÚNICAMENTE este comando |
+| El reviewer ejecuta comandos de test inesperados | Comando de test mal configurado en `config.yaml` | Comprobar `x-conductor.pipeline.phases[verify].test_command`; el reviewer ejecuta ÚNICAMENTE este comando |
 
 ### Problemas de calidad de la IA
 
@@ -233,16 +223,16 @@ El reviewer omite la ejecución de tests y anota "No test command configured" en
 | La IA ignora convenciones del equipo | Convenciones no documentadas en instruction files | Añadirlas a `.github/instructions/` con el `applyTo` correcto |
 | La IA genera código en el directorio equivocado | Arquitectura no especificada | Añadir reglas de estructura de directorios en instruction files |
 | La IA produce specs demasiado extensas | Estilo por defecto en prosa | Añadir regla: "Tablas en vez de párrafos, presupuesto: <650 palabras por spec" |
-| La IA crea ficheros vía comandos shell | Se usó shell en vez de herramientas de edit/write | Esto lo bloquea el hook `guard-tools`; si ocurre, reportar como bug |
+| La IA crea ficheros vía comandos shell | Se usó shell en vez de herramientas de edit/write | El frontmatter `tools` del agente debe restringir esto; si ocurre, reportar como bug del agente |
 
 ### Chuleta de recuperación
 
 | Situación | Comando |
 |-----------|---------|
-| Reanudar pipeline interrumpido | `sdd-orchestrator --continue` |
 | Comprobar estado actual del pipeline | `/sdd-status` |
-| Monitorizar tareas en background | `/tasks` |
-| Resetear estado corrupto | Borrar `state.yaml`, luego `sdd-orchestrator --continue` |
+| Ver el subagente activo (Copilot CLI) | `/tasks` |
+| Reanudar un cambio interrumpido | Relanzar al orchestrator con el mismo `change-name`; los artefactos existentes y `state.yaml` se respetan |
+| Resetear estado corrupto | Borrar `state.yaml` y relanzar al orchestrator |
 | Archivar trabajo completado | `/sdd-archive` |
 | Regenerar instruction files | `/sdd-instructions` |
 | Re-detectar stack tras cambios | `/sdd-init` |

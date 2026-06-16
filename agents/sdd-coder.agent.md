@@ -50,6 +50,7 @@ If `pre_hook` configured → execute ONCE before coding. Fails → status: block
 1. Implement each task following existing repo patterns.
 2. Copy spec values literally. `/api/productos` in spec = `/api/productos` in code.
 3. If `strict_tdd: true` → write test files first, then implementation.
+4. After completing each task from `tasks.md`, edit that file and flip its checkbox `- [ ] N.M ...` → `- [x] N.M ...`. Mark only tasks actually implemented; leave skipped/blocked ones as `- [ ]`. Skip silently if `tasks.md` does not exist.
 
 ### Step 4 — Post-hook
 If `post_hook` configured → execute ONCE after all code is written.
@@ -62,7 +63,8 @@ Write `apply-report.md` in `openspec/changes/{change}/`:
 - One-line summary
 - `Status: done | partial | blocked`
 - `Files created:` — ONLY source code files
-- `Files modified:` — ONLY source code files
+- `Files modified:` — ONLY source code files (include `tasks.md` here when you flipped checkboxes)
+- `Tasks completed:` — count `X/Y` of checkboxes flipped to `[x]` (omit line if no `tasks.md`)
 - `Post-hook result:` — command + pass/fail
 - NOTHING ELSE.
 

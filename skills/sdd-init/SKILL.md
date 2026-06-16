@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 ## Purpose
 
-Bootstrap `openspec/` — the persistence layer for the SDD pipeline. Detects stack, testing, architecture and stores it as executable config in `openspec/config.yaml`. This file drives agent behavior — which agents run, what hooks execute, in what order.
+Bootstrap `openspec/` — the persistence layer for the SDD pipeline. Detects stack, testing, architecture and stores it as executable config in `openspec/config.yaml`. This file drives agent behavior — which agents run, what test/build commands they invoke, in what order.
 
 **Does NOT generate instruction files.** This skill ONLY creates `openspec/`. It must NOT invoke `/sdd-instructions` or any other skill — the user decides what to run next.
 
@@ -92,7 +92,7 @@ x-conductor:
 
   # DECLARATIVE PIPELINE — the orchestrator reads this and dispatches agents in order
   pipeline:
-    max_review_cycles: 3
+    max_review_cycles: 2
     agent_timeout_seconds: 300
     phases:
       - name: explore

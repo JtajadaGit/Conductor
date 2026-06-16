@@ -64,8 +64,12 @@ Solo ficheros `.md` para artefactos. Solo `state.yaml` para el estado del pipeli
 |-------|------|-------------|
 | `schema` | string | Siempre `spec-driven` |
 | `context` | string | Contexto del proyecto en una línea, inyectado en los prompts de los agentes |
+| `rules.proposal` | list of strings | Restricciones aplicadas al generar `proposal.md` |
 | `rules.specs` | list of strings | Restricciones aplicadas al generar specs |
+| `rules.design` | list of strings | Restricciones aplicadas al generar `design.md` |
 | `rules.tasks` | list of strings | Restricciones aplicadas al generar tasks |
+
+> El planner lee `rules.{phase}` para la fase en curso y trata cada entrada como una restricción adicional sobre la baseline definida en su propio cuerpo. Si la clave no existe, no aplica reglas extra.
 
 ### Campos de extensión (x-conductor)
 
@@ -100,10 +104,10 @@ El orchestrator lee la sección `pipeline` y despacha agentes en orden. Cada fas
 | `optional` | boolean | sí | Si la fase puede omitirse según la complejidad |
 | `artifact` | string | sí | Fichero de salida esperado |
 | `max_words` | integer | no | Límite de palabras para el artefacto |
-| `pre_hook` | string | no | Comando ejecutado antes de la fase |
-| `post_hook` | string | no | Comando ejecutado después de la fase |
-| `post_hook_on_fail` | string | no | `retry`, `stop` o `warn` |
-| `post_hook_max_retries` | integer | no | Reintentos máximos para post_hook |
+| `pre_hook` | string | no | Comando ejecutado antes de la fase (lo usa el coder en `apply`) |
+| `post_hook` | string | no | Comando ejecutado después de la fase (lo usa el coder en `apply`) |
+| `post_hook_on_fail` | string | no | `retry` o `stop` — comportamiento del coder cuando falla el `post_hook` |
+| `post_hook_max_retries` | integer | no | Reintentos máximos del `post_hook` cuando `post_hook_on_fail: retry` |
 | `test_command` | string | no | Comando de test (solo fase verify) |
 | `build_command` | string | no | Comando de build (solo fase verify) |
 | `coverage_threshold` | integer | no | Porcentaje mínimo de coverage (solo fase verify) |
@@ -112,7 +116,7 @@ Campos adicionales a nivel de `pipeline`:
 
 | Campo | Tipo | Valor por defecto | Descripción |
 |-------|------|-------------------|-------------|
-| `x-conductor.pipeline.max_review_cycles` | integer | `3` | Ciclos máximos de fix antes de marcar como bloqueado |
+| `x-conductor.pipeline.max_review_cycles` | integer | `2` | Ciclos máximos de fix antes de marcar como bloqueado |
 | `x-conductor.pipeline.agent_timeout_seconds` | integer | `300` | Timeout por agente en segundos |
 
 ### Mapa de consumo
@@ -136,35 +140,27 @@ Extensión de Conductor. No forma parte del estándar base de OpenSpec. Registra
 ```yaml
 change: {kebab-name}
 status: planning | implementing | reviewing | complete | blocked
-complexity: simple | medium | complex
 current_phase: {last-phase}
 phases:
-  explore: done
   propose: done
-  clarify: done | skipped
   spec: done
-  design: done | skipped
-  tasks: done | skipped
   apply: done
   verify: pass | fail
 ```
 
-Las fases omitidas por complejidad DEBEN marcarse como `skipped`, no eliminarse.
-Sin resúmenes, sin métricas, sin hallazgos de exploración. Solo seguimiento de fases.
+Cada agente actualiza state.yaml justo antes y después de escribir su artefacto, **añadiendo** su propia fase sin sobrescribir las anteriores. Las fases que no se ejecutan no aparecen en el bloque `phases`. Sin resúmenes, sin métricas, sin hallazgos de exploración: solo seguimiento de fases.
 
 ### Transiciones de estado
 
 | Desde | Hacia | Disparador |
 |-------|-------|------------|
-| `planning` | `implementing` | El planner completa todos los artefactos de planificación |
-| `implementing` | `reviewing` | El coder completa la fase apply |
+| `planning` | `implementing` | El coder arranca apply |
+| `implementing` | `reviewing` | El reviewer arranca verify tras un FAIL anterior |
+| `implementing` | `complete` | El reviewer devuelve PASS o PASS_WARNINGS |
 | `reviewing` | `implementing` | El reviewer devuelve FAIL (ciclo de fix) |
-| `reviewing` | `complete` | El reviewer devuelve PASS o PASS_WARNINGS |
-| Cualquiera | `blocked` | 3 veredictos FAIL consecutivos, o error irrecuperable |
+| Cualquiera | `blocked` | Se agotan `max_review_cycles` o un subagente devuelve `status: blocked` |
 
-### Recuperación
-
-Tras un context compaction, el orchestrator lee `state.yaml`, reconstruye el DAG y reanuda desde el estado actual. No se regeneran artefactos de fases ya completadas.
+`/sdd-archive` añade `archive: done` y `current_phase: archive` al state.yaml antes de mover el cambio a `openspec/changes/archive/`.
 
 ## Formatos de artefactos
 
@@ -174,111 +170,69 @@ Exploración dirigida del proyecto. Lee los entry points y los ficheros relacion
 
 ### proposal.md (máx 400 palabras)
 
-Intención de negocio. EXACTAMENTE 4 secciones: `## Why`, `## What Changes`, `## Capabilities` (con `### New Capabilities` + `### Modified Capabilities`), `## Impact`. NO arquitectura, NO componentes (eso va en `design.md`). `## Capabilities` lista NOMBRES (kebab-case) de capability/domain, no features.
-
-```markdown
-## Why
-{1-2 frases: el problema u oportunidad}
-
-## What Changes
-- {Cambio concreto en lenguaje de dominio; marcar breaking changes con **BREAKING**}
-
-## Capabilities
-
-### New Capabilities
-- `{domain-name}`: {qué cubre este nuevo dominio}
-
-### Modified Capabilities
-- `{existing-domain-name}`: {qué requirement cambia}
-
-## Impact
-{Áreas afectadas, dependencias, consumidores}
-```
+Propuesta de alto nivel. Contiene intención, alcance, enfoque, riesgos y alternativas descartadas.
 
 ### spec.md (máx 650 palabras por dominio)
 
-Especificación formal. Agnóstica de tecnología. **Promoted spec** (en `openspec/specs/{domain}/spec.md`) y **delta spec** (en `openspec/changes/{change}/specs/{domain}/spec.md`) tienen formatos DISTINTOS.
+Especificación formal. Agnóstica de tecnología. Usa palabras clave RFC 2119 dentro de la sentencia normativa, **nunca** en la cabecera del requirement.
 
-**Promoted spec** — tiene título + Purpose + Requirements:
+Durante el pipeline el planner escribe siempre **delta specs** (lo que cambia respecto al spec actual). El archive elimina los headers de delta y promueve los `### Requirement:` al spec definitivo en `openspec/specs/{domain}/spec.md`.
 
-```markdown
-# {Domain} Specification
+**Delta spec (lo que escribe el planner en `openspec/changes/{change}/specs/{domain}/spec.md`):**
 
-## Purpose
-{Un párrafo en lenguaje de dominio describiendo qué hace esta capability. Mínimo 50 caracteres.}
+```
+## ADDED Requirements
 
-## Requirements
+### Requirement: {Clean name}
+The system SHALL {behavior}.
 
-### Requirement: {Nombre limpio descriptivo}
-The system SHALL {comportamiento observable en lenguaje de dominio}.
-
-#### Scenario: {Nombre descriptivo}
+#### Scenario: {Name}
 - **GIVEN** {precondición}
 - **WHEN** {acción}
 - **THEN** {resultado}
 - **AND** {resultado adicional}
 ```
 
-- Header `### Requirement:` LIMPIO — NUNCA `(MUST)` en el header. La keyword RFC 2119 (SHALL/MUST/SHOULD/MAY) va en la frase normativa debajo.
-- Cada requirement: UNA frase normativa + al menos UN `#### Scenario:` (EXACTAMENTE 4 hashtags — 3 hashtags o bullets fallan en silencio).
-- Separar requirements con línea en blanco; NUNCA con `---`.
+Cabeceras de delta soportadas: `## ADDED Requirements`, `## MODIFIED Requirements`, `## REMOVED Requirements`, `## RENAMED Requirements`. Reglas adicionales:
 
-**Delta spec** — empieza DIRECTAMENTE con operación, sin `# Title` ni `## Purpose` (esos se añaden al promover en archive):
+- La cabecera del requirement NO lleva sufijo `(MUST)` / `(SHALL)` — esas keywords RFC 2119 van solo en la sentencia normativa.
+- `#### Scenario:` lleva exactamente 4 hashtags y los bullets usan `- **GIVEN/WHEN/THEN/AND**` (con asteriscos).
+- `REMOVED` exige `**Reason**:` y `**Migration**:`; `RENAMED` usa `- FROM:` / `- TO:`.
+- Separar requirements con línea en blanco; nunca con `---`.
 
-```markdown
-## ADDED Requirements
-
-### Requirement: {Nombre nuevo}
-The system SHALL {comportamiento}.
-
-#### Scenario: {Nombre}
-- **WHEN** {acción}
-- **THEN** {resultado}
-```
-
-Operaciones delta disponibles (un mismo fichero puede combinar varias):
-- `## ADDED Requirements` — nuevos requirements completos.
-- `## MODIFIED Requirements` — requirement COMPLETO actualizado (no diff), header idéntico al existente.
-- `## REMOVED Requirements` — incluye `**Reason**: ...` y `**Migration**: ...`.
-- `## RENAMED Requirements` — `- FROM: \`### Requirement: Old\`` / `- TO: \`### Requirement: New\``.
+**Spec promovido (lo que escribe `/sdd-archive` en `openspec/specs/{domain}/spec.md`):** los headers de delta se eliminan y se añade `# {Domain} Specification` + `## Purpose` antes de los `### Requirement:`.
 
 ### design.md (máx 800 palabras)
 
-Diseño técnico. Responsabilidades lógicas y decisiones — NO nombres de clase, NO rutas de fichero, NO términos específicos de framework. Secciones obligatorias:
+Diseño técnico. Describe las responsabilidades lógicas de los componentes, el flujo de datos y las decisiones arquitectónicas. Sin nombres de clase, sin rutas de fichero, sin términos específicos de framework.
 
-```markdown
+```
 # Design: {change-name}
 
-## Context
-{Background y estado actual}
+## Components
+{Responsabilidades lógicas}
 
-## Goals / Non-Goals
-**Goals:** {qué consigue este diseño}
-**Non-Goals:** {explícitamente fuera de scope}
+## Data Flow
+{Cómo fluyen los datos entre componentes}
 
 ## Decisions
-{Decisiones clave y su rationale — responsabilidades lógicas, NO nombres de clase}
-
-## Risks / Trade-offs
-{Riesgos conocidos y compromisos}
+| Decision | Rationale | Alternatives considered |
 ```
 
 ### tasks.md (máx 530 palabras)
 
-Descomposición de tareas. Cada grupo usa `## N. {Nombre}` y cada tarea es un checkbox `- [ ] N.M {descripción}`. La fase apply parsea `- [ ]` para trackear progreso — tareas en otro formato son INVISIBLES al parser.
+Descomposición de tareas con numeración jerárquica. Cada tarea describe qué construir en lenguaje de dominio. Los grupos usan `## N. {Group Name}` (nunca `## Task N:` ni `## Phase N:`). Los checkboxes deben tener la forma exacta `- [ ] N.M {descripción}` — el coder parsea esta sintaxis y va marcando `- [x]` conforme implementa.
 
-```markdown
-## 1. {Nombre del grupo}
-- [ ] 1.1 {qué construir — lenguaje de dominio}
+```
+## 1. Foundation
+- [ ] 1.1 {qué construir}
 - [ ] 1.2 {qué construir}
 
-## 2. {Nombre del grupo}
+## 2. Core
 - [ ] 2.1 {qué construir}
 ```
 
-- Cabeceras: `## {N}. {Nombre}` — NUNCA `## Task 1: ...` ni `## Phase 1: ...`.
-- Cada tarea: `- [ ] {N}.{M} {descripción}`, una línea. El checkbox `- [ ]` es OBLIGATORIO.
-- Sin bloques de prosa, sin sub-secciones `**Acceptance Criteria**` por tarea, sin separadores `---`.
+No se admiten bloques de prosa entre checkboxes (`**Acceptance Criteria:**`, `**Files:**`, etc.) — toda restricción se incorpora a la propia descripción de la tarea. No se usan marcadores `[P]` ni `[S]`: el pipeline es secuencial.
 
 ### apply-report.md
 
@@ -296,9 +250,10 @@ El archive solo se ejecuta cuando el veredicto de verify es PASS o PASS_WARNINGS
 
 | Paso | Acción |
 |------|--------|
-| 1 | Promover delta specs a `openspec/specs/{domain}/spec.md`. **Dominio nuevo** (target no existe): crear con estructura `# Title` + `## Purpose` (lenguaje de dominio, mín. 50 chars) + `## Requirements`. **Dominio existente**: aplicar delta en orden **RENAMED → REMOVED → MODIFIED → ADDED**. |
-| 2 | Mover `openspec/changes/{change-name}/` a `openspec/changes/archive/YYYY-MM-DD-{change-name}/`. |
-| 3 | Actualizar instruction files si verify-report contiene sugerencias. |
+| 1 | Promover delta specs a `openspec/specs/{domain}/spec.md`. Aplicar en orden: RENAMED, luego REMOVED, luego MODIFIED, luego ADDED. Al promover, eliminar las cabeceras `## ADDED|MODIFIED|REMOVED|RENAMED Requirements` (son marcadores delta) y conservar los `### Requirement:`. |
+| 2 | Actualizar instruction files si `verify-report.md` contiene una sección `## Suggested Instruction Updates`. |
+| 3 | Actualizar el `state.yaml` del cambio (`archive: done`, `current_phase: archive`). |
+| 4 | Mover `openspec/changes/{change-name}/` a `openspec/changes/archive/YYYY-MM-DD-{change-name}/`. |
 
 ### Reglas
 
@@ -312,10 +267,12 @@ El archive solo se ejecuta cuando el veredicto de verify es PASS o PASS_WARNINGS
 
 | Agente | Puede leer | Puede escribir |
 |--------|------------|----------------|
-| Orchestrator | state.yaml, config.yaml, git status | **nada** — solo lee, nunca escribe ficheros |
-| Planner | artefactos previos, código fuente, instruction files (solo contexto) | artefactos de planificación (exploration, proposal, spec, design, tasks) + state.yaml |
-| Coder | tasks + spec + design + instruction files + código fuente | código fuente + apply-report.md + state.yaml |
-| Reviewer | spec + apply-report + código fuente + config.yaml | verify-report.md + state.yaml |
+| Orchestrator | `config.yaml`, `verify-report.md`, `state.yaml`, artefactos del cambio | **nada** — solo lee y despacha |
+| Planner | artefactos previos, código fuente, instruction files (solo contexto) | artefactos de planificación (`exploration.md`, `proposal.md`, `questions.md`, `specs/{domain}/spec.md`, `design.md`, `tasks.md`) + `state.yaml` |
+| Coder | tasks + spec + design + instruction files + código fuente | código fuente + `apply-report.md` + checkboxes en `tasks.md` + `state.yaml` |
+| Reviewer | spec + `apply-report.md` + código fuente + `config.yaml` | `verify-report.md` + `state.yaml` |
+
+Todas las operaciones git, las llamadas de red (`curl`, `wget`, `Invoke-WebRequest`) y los borrados destructivos (`rm -rf`, `rmdir /s`) están vetados en los cuatro agentes.
 
 ---
 

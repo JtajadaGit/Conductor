@@ -31,7 +31,7 @@ Elimina todo lo relacionado con la versión anterior de Conductor en tu proyecto
 - `.github/skills/`
 - `openspec/`
 
-A partir de ahora Conductor funciona como plugin de Copilot — los agentes, skills y hooks se cargan directamente desde el plugin, no necesitarás estos archivos en local.
+A partir de ahora Conductor funciona como plugin de Copilot — los agentes y skills se cargan directamente desde el plugin, no necesitarás estos archivos en local.
 
 > **Nota:** no borres `.github/instructions/` si ya tenéis instruction files propios del equipo. El plugin no los sobreescribe.
 

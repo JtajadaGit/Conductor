@@ -38,8 +38,8 @@ Todo queda trazado en disco bajo `openspec/`, versionable con git.
 | La IA genera código de inmediato sin plan | La IA redacta un spec primero y luego implementa contra él |
 | Sin trazabilidad: no sabes por qué se generó algo | Cada cambio tiene spec, report y audit trail en `openspec/` |
 | Patrones inconsistentes entre ficheros | Los instruction files imponen las convenciones de tu equipo |
-| La IA ejecuta cualquier comando de shell | El hook `guard-tools` bloquea git, curl, wget y comandos destructivos |
-| Una conversación monolítica y frágil | El orchestrator despacha agentes especializados en segundo plano |
+| La IA ejecuta cualquier comando de shell | Cada agente declara su scope: git, red y borrado destructivo están vetados en el frontmatter `tools` y la sección FORBIDDEN del agente |
+| Una conversación monolítica y frágil | El orchestrator despacha agentes especializados secuencialmente |
 
 ### Principio central
 
@@ -69,7 +69,7 @@ El pipeline separa el **QUÉ** (spec, technology-agnostic) del **CÓMO** (instru
 
 | Extensión | Descripción |
 |---|---|
-| `x-conductor` en config.yaml | Pipeline declarativo: fases, hooks, agentes, comandos de test/build |
+| `x-conductor` en config.yaml | Pipeline declarativo: fases, agentes, comandos de test/build |
 | `state.yaml` | Seguimiento del estado del pipeline por cambio |
 | `exploration.md` | Artefacto de exploración (análisis del codebase existente) |
 | `apply-report.md` | Reporte del coder (archivos creados/modificados, resultado del post-hook) |
@@ -129,7 +129,6 @@ Sin estos settings el orchestrator no puede despachar subagentes.
 |---|---|---|
 | Plugin registrado | Escribe `/sdd-` en el chat | Aparecen: `/sdd-init`, `/sdd-instructions`, `/sdd-status`, `/sdd-archive` |
 | Agente accesible | Escribe `@sdd-` en el chat | Aparece `sdd-orchestrator` |
-| Hooks activos | Inicia una sesión nueva | Se muestra `Environment loaded: N hooks` |
 
 > **Nota:** Al cargar el plugin por primera vez, VS Code puede mostrar el aviso "La llamada de herramienta recibió una advertencia". Es el comportamiento estándar de seguridad para plugins externos. Dale a permitir y marca **"Always allow"** para el workspace — no volverá a salir.
 
@@ -171,7 +170,6 @@ sdd-orchestrator --auto "crear listado de productos con fake API"
 |---|---|
 | `--auto` | Sin pausas. El pipeline ejecuta todas las fases sin intervención. |
 | (sin flags) | Modo interactivo: pausa después de planificar y después de implementar para revisión humana. |
-| `--continue` | Retoma un cambio existente desde `state.yaml`. |
 
 > **`--auto` vs Autopilot de Copilot — no son lo mismo:**
 >
@@ -186,7 +184,7 @@ sdd-orchestrator --auto "crear listado de productos con fake API"
 
 ```
 /sdd-status        Progreso del cambio activo
-/tasks             Subagentes en segundo plano (Copilot CLI)
+/tasks             Estado del subagente activo (Copilot CLI)
 ```
 
 ### Paso 5: Revisar y archivar
@@ -213,33 +211,31 @@ sdd-orchestrator --auto "crear listado de productos con fake API"
 
 ```
 🚀 Pipeline: product-list-fake-api
-📋 Complejidad: simple | Fases: explore, propose, spec, apply, verify
-⏳ explore...
-✅ explore
+📋 Complexity: simple | Phases: propose, spec, apply, verify
+⊘ explore (skipped)
+⊘ clarify (skipped)
+⊘ design (skipped)
+⊘ tasks (skipped)
 ⏳ propose...
 ✅ propose
-⊘ clarify (saltado — complejidad simple)
-⊘ design (saltado — complejidad simple)
-⊘ tasks (saltado — complejidad simple)
 ⏳ spec...
 ✅ spec
-── 📐 planificación completa ──
-── 🔨 implementación ──
+── 📐 planning complete ──
+── 🔨 implementation ──
 ⏳ apply...
 ✅ apply
-── 🔍 verificación ──
+── 🔍 verification ──
 ⏳ verify...
 ✅ verify
-✅ Pipeline completo: PASS 🎉
+✅ Pipeline complete: PASS 🎉
 ```
 
 **Artefactos generados:**
 
 ```
 openspec/changes/product-list-fake-api/
-├── exploration.md                      Análisis del codebase existente
 ├── proposal.md                         Propuesta tech-agnostic
-├── specs/products/spec.md              Spec GIVEN/WHEN/THEN
+├── specs/products/spec.md              Delta spec GIVEN/WHEN/THEN
 ├── apply-report.md                     Archivos creados + resultado post-hook
 ├── verify-report.md                    Veredicto PASS + compliance por escenario
 └── state.yaml                          Estado del pipeline
@@ -273,7 +269,6 @@ src/app/products/
 ```
 agents/                     4 agentes (.agent.md)
 skills/                     4 skills (sdd-init, sdd-instructions, sdd-status, sdd-archive)
-hooks/                      3 hooks (inject-state, inject-context, guard-tools)
 plugin.json                 Manifiesto
 ```
 
@@ -301,11 +296,9 @@ openspec/
 | **Instruction file** | Fichero en `.github/instructions/` que define CÓMO escribir código para un stack concreto. |
 | **Agente** | Subagente especializado definido en un fichero `.agent.md`. Tiene tools y scope de escritura definidos. |
 | **Skill** | Comando invocable por el usuario con `/nombre`. Definido en `SKILL.md`. |
-| **Hook** | Script que se ejecuta automáticamente en eventos del ciclo de vida de Copilot. |
-| **Plugin** | Paquete distribuible definido por `plugin.json` que agrupa agentes, skills y hooks. |
+| **Plugin** | Paquete distribuible definido por `plugin.json` que agrupa agentes y skills. |
 | **Complejidad** | Evaluada en la fase explore: simple, medium, complex. Determina qué fases se activan. |
-| **Fix cycle** | Ciclo de corrección: reviewer detecta fallos → coder los corrige. Máximo 3 ciclos. |
-| **Guard-tools** | Hook que bloquea git, curl, wget y `rm -rf` antes de la ejecución. |
+| **Fix cycle** | Ciclo de corrección: reviewer detecta fallos → coder los corrige. Máximo de ciclos en `x-conductor.pipeline.max_review_cycles`. |
 | **Dominio** | Área funcional del sistema. Cada dominio tiene su propio `spec.md`. |
 | **Veredicto** | Resultado del reviewer: `PASS`, `PASS_WARNINGS` o `FAIL`. |
 
@@ -321,7 +314,6 @@ openspec/
 | `sdd-orchestrator` no aparece | Settings de VS Code | Verificar `chat.plugins.enabled: true` |
 | El orchestrator no despacha subagentes | Settings de VS Code | Verificar `chat.subagents.allowInvocationsFromSubagents: true` |
 | "La llamada de herramienta recibió una advertencia" al leer skills | VS Code pide confirmación la primera vez que un plugin externo ejecuta tool calls | Permitir y marcar "Always allow" para el workspace. No volverá a salir. |
-| Hooks no se ejecutan | `conductor.json` no encontrado | Verificar que `plugin.json` apunta a `"./hooks/conductor.json"` |
 
 ### Durante el pipeline
 
@@ -329,16 +321,16 @@ openspec/
 |---|---|---|
 | El spec contiene código o nombres de clases | Fuga de términos técnicos | El planner debe usar solo lenguaje de negocio. Reportar como bug. |
 | El reviewer entra en watch mode | Test command sin flags anti-watch | Añadir `--watch=false` al test command en `config.yaml` |
-| 3 ciclos de fix y sigue en FAIL | Problema sistémico | Revisar `verify-report.md` manualmente, corregir, y usar `--continue` |
-| El pipeline se interrumpe | Sesión demasiado larga | Usar `sdd-orchestrator --continue` para retomar |
+| Se agotan los ciclos de fix sin PASS | Problema sistémico | Revisar `verify-report.md` manualmente, corregir el código y volver a lanzar al orchestrator |
+| El pipeline se interrumpe | Sesión demasiado larga | Lanzar de nuevo al orchestrator describiendo el cambio; el `state.yaml` y los artefactos existentes se conservan |
 | Subagentes aparecen como "General-purpose" | Plugin no recargado | Reiniciar sesión de Copilot CLI o VS Code |
 
 ### Seguridad
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| Un agente ejecuta `git commit` | Hook `guard-tools` no activo | Verificar `conductor.json` y que los scripts tienen permisos de ejecución |
-| El coder instala dependencias | Comportamiento prohibido | El coder no puede modificar manifests de dependencias. Instalar manualmente. |
+| Un agente ejecuta `git commit` | El frontmatter `tools` del agente o su sección FORBIDDEN no incluye la restricción de git | Reportar como bug — la prohibición vive en el cuerpo del agente, no en infraestructura externa |
+| El coder instala dependencias | Comportamiento prohibido por la sección FORBIDDEN del coder | El coder no puede modificar manifests de dependencias. Instalar manualmente. |
 
 ---
 
@@ -359,20 +351,7 @@ openspec/
 |---|---|
 | `sdd-orchestrator --auto "petición"` | Pipeline completo sin pausas |
 | `sdd-orchestrator "petición"` | Modo interactivo: pausa tras planificar y tras implementar |
-| `sdd-orchestrator --continue` | Retoma un cambio existente |
 
-### Hooks (automáticos)
+### Modelos
 
-| Hook | Evento | Función |
-|---|---|---|
-| `inject-state` | `sessionStart` | Carga el contexto del cambio activo |
-| `inject-context` | `subagentStart` | Inyecta rutas del cambio e instruction files a subagentes |
-| `guard-tools` | `preToolUse` | Bloquea git, curl, wget y `rm -rf` |
-
-### Modelo recomendado
-
-| Modelo | Uso recomendado |
-|---|---|
-| Claude Sonnet 4.6+ | Mínimo recomendado para orchestrator y coder |
-| Claude Opus 4.6+ | Ideal para specs de alta complejidad |
-| Claude Haiku 4.5 | Aceptable para planner en complejidad simple |
+Cada agente declara su modelo en el frontmatter de su `.agent.md`. Esos campos son la fuente de verdad — esta documentación no recomienda modelos: la disponibilidad y el coste dependen del plan de Copilot.
