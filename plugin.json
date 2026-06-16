@@ -1,8 +1,21 @@
 {
   "name": "conductor",
   "description": "Spec-Driven Development pipeline. Orchestrator delegates to subagents following OpenSpec.",
-  "version": "1.0.0",
+  "version": "3.12.0",
   "license": "MIT",
-  "agents": ["./agents"],
-  "skills": ["./skills/sdd-init", "./skills/sdd-instructions", "./skills/sdd-status", "./skills/sdd-archive"]
+  "agents": [
+    "./agents"
+  ],
+  "skills": [
+    "./skills/sdd-init",
+    "./skills/sdd-instructions",
+    "./skills/sdd-status",
+    "./skills/sdd-archive",
+    "./skills/sdd-explain",
+    "./skills/sdd-run"
+  ],
+  "assets": [
+    "./assets/conductor.mjs"
+  ],
+  "mcpServers": "./.mcp.json"
 }

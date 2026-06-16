@@ -1,0 +1,23 @@
+{
+  "name": "conductor",
+  "version": "0.2.0",
+  "description": "Deterministic SDD verification engine — gate, contract-diff, traceability, cost telemetry, signed provenance, MCP server. Zero dependencies.",
+  "type": "module",
+  "bin": {
+    "conductor": "bin/conductor.mjs"
+  },
+  "scripts": {
+    "test": "node test/run.mjs",
+    "eval": "node eval/run.mjs",
+    "build": "node build.mjs",
+    "gate": "node bin/conductor.mjs gate",
+    "mcp": "node bin/conductor.mjs mcp"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

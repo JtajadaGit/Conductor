@@ -1,0 +1,58 @@
+<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>conductor</title><link rel=manifest href="/manifest.json"><link rel=icon href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%236e56cf%22/><text x=%2216%22 y=%2223%22 font-size=%2220%22 font-weight=%22800%22 font-family=%22sans-serif%22 fill=%22white%22 text-anchor=%22middle%22>C</text></svg>">
+<style>/*__CSS__*/</style>
+<button id=sbtog title="ocultar/mostrar panel" aria-label="alternar panel lateral" onclick="toggleSb()">☰</button>
+<aside id=sb>
+ <a class=sb-logo href="/"><span class=logo>C</span> conductor</a>
+ <div class=sb-tag>Pipelines SDD verificados</div>
+ <a class=sb-run href="/">📋 Resumen del proyecto</a>
+ <div class=sb-h>Runs recientes</div>
+ <div id=sb-list><span style="font-size:.75rem;color:var(--tx3)">…</span></div>
+</aside>
+<main>
+
+<!-- ══ VISTA PANEL ══ -->
+<section id=v-panel hidden>
+<h1 class=apphdr><span class=projbadge>📁</span><span class=trunc id=proj></span><span class="pill G" style="text-transform:none">proyecto</span></h1>
+<div class=cards id=pmetrics></div>
+<form onsubmit="return launch(event)">
+  <label class=fl>¿Qué construimos?<textarea id=qreq rows=3 placeholder="Una frase corta o pega una especificación entera (100+ líneas)…" required oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,320)+'px'"></textarea></label>
+  <div class=frow>
+    <label class=fl id=qprojwrap style="min-width:12rem;display:none">Proyecto<select id=qproj></select></label>
+    <label class=fl style="flex:1;min-width:10rem">Nombre<input id=qname placeholder="nombre-kebab" required pattern="[a-z0-9-]+"></label>
+    <label class=fl style="min-width:11rem" title="micro = sin SDD: 1 sola llamada LLM, sin spec — máximo ahorro para tareas triviales">Complejidad<select id=qcx style="padding:.55rem .6rem;font-size:.92rem"><option value=micro>micro · sin SDD</option><option>simple</option><option selected>medium</option><option>complex</option></select></label>
+    <label class=fl style="min-width:8rem" title="sin pausas de revisión: el pipeline corre de principio a fin">Modo auto<label class=switch><input type=checkbox id=qauto><span></span></label></label>
+    <button class=btn style="align-self:end;height:2.45rem">▶ Lanzar run</button>
+  </div>
+  <details class=mdsel id=mdsel><summary id=mdsum>🤖 Modelo por fase (opcional — por defecto usa tu conductor.json)</summary>
+    <div class=frow style="margin-top:.5rem">
+      <label class=fl id=mwPlanner style="flex:1">Planner<select id=mPlanner class=mopt></select></label>
+      <label class=fl id=mwCoder style="flex:1"><span id=mlCoder>Coder</span><select id=mCoder class=mopt></select></label>
+      <label class=fl id=mwReviewer style="flex:1">Reviewer<select id=mReviewer class=mopt></select></label>
+    </div>
+    <div id=mnote style="font-size:.68rem;color:var(--tx3);margin-top:.3rem"></div>
+  </details>
+</form>
+<div id=plist>cargando…</div>
+</section>
+
+<!-- ══ VISTA RUN ══ -->
+<section id=v-run hidden>
+<h1 class=apphdr style="margin-top:.1rem;flex-wrap:wrap"><span class=trunc id=rproj style="max-width:60vw">—</span> <span class=badge id=branch style="font-size:.78rem"></span> <span class=pill id=v></span><button class=stopbtn id=stopb onclick="stopRun()" style="display:none">■ Detener</button></h1>
+<div id=actions class=actbar></div>
+<details class=req id=reqbox><summary><b>Prompt</b> · <span id=rcx></span><span id=res></span></summary><div id=req style="white-space:pre-wrap;margin-top:.4rem;color:var(--tx);font-size:.85rem;max-height:340px;overflow:auto"></div></details>
+<div id=pending></div>
+<div class=cards id=cards></div>
+<div class=cards id=models style="margin:-.4rem 0 .9rem;display:none"></div>
+<details class=files id=under style="margin:0 0 1rem"><summary>📤 Lo que dice el modelo y por qué conductor lo verifica</summary><div id=underc></div></details>
+<h2 class=sect>Pipeline</h2>
+<div id=list></div>
+<h2 class=sect>Registro</h2>
+<details class=files data-k="log" id=logsec open><summary>cronología completa del run</summary><pre class=logpre id=logp></pre></details>
+<p id=dash></p>
+</section>
+
+</main>
+<div id=vbback onclick="document.getElementById('viewbox').style.display='none';this.style.display='none'"></div>
+<div id=viewbox><header><span id=vb-t></span><button id=vb-e style="margin-left:auto;border:1px solid var(--bd);background:var(--bg2);border-radius:5px;padding:.2rem .6rem;cursor:pointer;font-size:.78rem">✏️ editar</button><button class=x onclick="document.getElementById('viewbox').style.display='none';document.getElementById('vbback').style.display='none'">✕</button></header><pre id=vb-c></pre><textarea id=vb-t2 style="flex:1;display:none;margin:0;padding:.8rem .9rem;font:.78rem/1.45 ui-monospace,monospace;border:0;outline:0;resize:none"></textarea></div>
+<script>/*__JS__*/</script></html>

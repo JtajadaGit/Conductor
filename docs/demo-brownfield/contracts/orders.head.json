@@ -1,0 +1,33 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Orders API", "version": "2.0.0" },
+  "paths": {
+    "/api/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "parameters": [
+          { "name": "status", "in": "query", "required": true, "schema": { "type": "string", "enum": ["pending", "paid"] } }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      },
+      "post": {
+        "operationId": "createOrder",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewOrder" } } } },
+        "responses": { "201": { "description": "created" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "NewOrder": {
+        "type": "object",
+        "required": ["items", "customerId"],
+        "properties": {
+          "items": { "type": "array", "items": { "type": "string" } },
+          "customerId": { "type": "string" },
+          "discountCode": { "type": "string" }
+        }
+      }
+    }
+  }
+}

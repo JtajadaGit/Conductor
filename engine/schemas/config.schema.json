@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conductor.local/schemas/config.schema.json",
+  "title": "conductor openspec/config.yaml",
+  "type": "object",
+  "required": ["schema", "x-conductor"],
+  "properties": {
+    "schema": { "const": "spec-driven" },
+    "context": { "type": "string" },
+    "rules": { "type": "object" },
+    "x-conductor": {
+      "type": "object",
+      "required": ["pipeline"],
+      "properties": {
+        "stack": { "type": "object" },
+        "pipeline": {
+          "type": "object",
+          "required": ["phases"],
+          "properties": {
+            "max_review_cycles": { "type": "integer", "minimum": 0 },
+            "phases": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["name", "agent"],
+                "properties": {
+                  "name": { "type": "string", "enum": ["explore", "propose", "clarify", "spec", "design", "tasks", "apply", "verify"] },
+                  "agent": { "type": "string", "enum": ["sdd-planner", "sdd-coder", "sdd-reviewer"] },
+                  "optional": { "type": "boolean" },
+                  "artifact": { "type": "string" },
+                  "max_words": { "type": "integer", "minimum": 1 },
+                  "gate_command": { "type": "string" },
+                  "test_command": { "type": "string" },
+                  "coverage_threshold": { "type": "integer", "minimum": 0, "maximum": 100 }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

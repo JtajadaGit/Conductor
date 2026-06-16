@@ -1,16 +1,16 @@
 # Conductor
 
-**Spec-Driven Development para GitHub Copilot — CLI y VS Code**
+**Spec-Driven Development verificado para GitHub Copilot — CLI y VS Code**
 
-Plugin sin dependencias que convierte la asistencia de IA en un proceso de ingeniería auditable. En lugar de generar código al vuelo, impone un pipeline: **especificar → implementar → verificar**. Cada decisión queda trazada, cada artefacto versionado en git, cada agente opera dentro de límites estrictos.
+Conductor convierte la asistencia de IA en un **proceso de ingeniería auditable**: primero la spec, luego el código, y al final **un gate determinista comprueba que lo construido cumple lo especificado** — y lo firma. Funciona con **cualquier modelo** (incluido BYOK gratuito): la secuencia del pipeline la garantiza código, no la buena voluntad del LLM.
 
-Sin instalación. Sin binario. Sin runtime. Copia el plugin a tu proyecto y listo.
+Una instalación. Cero dependencias. Cero servidores.
 
 ---
 
 ## Contenido
 
-[Migración](docs/migration.md) | [Por qué Conductor](#por-qué-conductor) | [Arquitectura](#arquitectura) | [Primeros pasos](#primeros-pasos) | [Documentación](docs/)
+[Por qué Conductor](#por-qué-conductor) | [Cómo funciona](#cómo-funciona) | [Primeros pasos](#primeros-pasos) | [La mini-web](#la-mini-web-del-run) | [Coste y modelos](#coste-y-modelos) | [Seguridad](#seguridad) | [Documentación](#documentación)
 
 ---
 
@@ -18,232 +18,142 @@ Sin instalación. Sin binario. Sin runtime. Copia el plugin a tu proyecto y list
 
 | Sin Conductor | Con Conductor |
 |---|---|
-| La IA genera código de inmediato | Redacta un spec primero, implementa después |
-| Sin trazabilidad | Cada cambio tiene spec, report y audit trail en `openspec/` |
-| Patrones inconsistentes | Los instruction files imponen las convenciones del equipo |
-| La IA ejecuta cualquier comando | Cada agente declara su scope: git, red y borrado destructivo están vetados en el frontmatter `tools` y la sección FORBIDDEN del agente |
-| Una conversación monolítica | El orchestrator despacha agentes especializados |
-
----
-
-## Arquitectura
-
-```
-plugin.json                         Manifiesto del plugin
-agents/
-  sdd-orchestrator.agent.md         Punto de entrada (sdd-orchestrator)
-  sdd-planner.agent.md              Subagente — crea artefactos OpenSpec
-  sdd-coder.agent.md                Subagente — implementa código
-  sdd-reviewer.agent.md             Subagente — valida y ejecuta tests
-skills/
-  sdd-init/                         /sdd-init — inicializa openspec/
-  sdd-instructions/                 /sdd-instructions — genera instruction files
-  sdd-status/                       /sdd-status — muestra progreso del pipeline
-  sdd-archive/                      /sdd-archive — archiva cambios completados
-```
+| La IA genera código al vuelo | Spec primero; el código se implementa contra ella |
+| "Hecho" significa "el modelo dice que está hecho" | **Gate determinista** (sin LLM) verifica coherencia spec↔código↔tests y **rompe el build** si no cumple |
+| Un modelo flojo se salta pasos | **El pipeline lo conduce código**: con cualquier modelo, las fases van en orden o no avanzan |
+| Sin evidencia | Cada run GREEN queda **sellado (firma Ed25519)** y encadenado a un **ledger de auditoría** |
+| El consumo de IA es una caja negra | **Tokens y coste por fase + tus AI Credits**, en vivo, en la app local |
+| Un solo modelo para todo | **Modelo y proveedor POR FASE** (incluso cambiándolo en caliente desde la web): planifica gratis con BYOK, codea con tu licencia premium — en el mismo run |
+| ¿Cumplimiento normativo? Suerte | **Informe AI Act por change** (modelos, aprobaciones humanas, verificación, firma) — la transparencia que la UE exige desde el 2-ago-2026, como subproducto del pipeline |
 
 ---
 
 ## Cómo funciona
 
+Dos formas de uso, mismo motor, mismo gate:
+
+### ⭐ `/sdd-run` — el pipeline garantizado (recomendado)
+Pides una feature en una frase. Un **driver determinista** (código, no LLM) recorre las fases — `propose → spec → apply → verify` — lanzando al agente de Copilot en cada una, **pausando para tu revisión** antes de implementar y verificar, y validando con el gate. Al terminar: código + spec + informe + sello firmado.
+
 ```
-sdd-orchestrator "mi feature"
-        │
-        ▼
-  ┌───────────┐
-  │  PLANNER  │  →  proposal.md, specs/{dominio}/spec.md (+ exploration/design/tasks según complejidad)
-  └───────────┘
-        │
-        ▼
-  ┌───────────┐
-  │   CODER   │  →  código fuente + apply-report.md
-  └───────────┘
-        │
-        ▼
-  ┌───────────┐
-  │ REVIEWER  │  →  verify-report.md (PASS / FAIL)
-  └───────────┘
-        │
-    ¿FAIL? → coder en modo fix (máx ciclos = `x-conductor.pipeline.max_review_cycles` en config.yaml)
-    ¿PASS? → /sdd-archive
+/conductor:sdd-run añade un componente Counter con botones +/- y un test
 ```
 
-El pipeline separa el **QUÉ** (specs, technology-agnostic) del **CÓMO** (instruction files, stack-aware). Los specs describen comportamiento de negocio sin mencionar frameworks. Los instruction files describen cómo escribir código para tu stack concreto.
+- 🌐 **Mini-web en vivo** (se abre sola): fases, progreso, archivos tocados, tokens, coste, botones **Aprobar** y **■ Detener**.
+- ⏸ **Pausas de revisión** por defecto antes de `apply` y `verify` (quítalas con `autoApprove: true`).
+- 🔁 **Resume**: si se corta (o lo detienes), relanzar el mismo comando continúa donde quedó **sin re-pagar** las fases hechas.
+- 🔏 Al cerrar GREEN: `provenance.json` firmado + entrada en el ledger + `dashboard.html`.
 
----
-
-## Los 4 agentes
-
-| Agente | Rol | Puede escribir | Invocable |
-|---|---|---|---|
-| **sdd-orchestrator** | Coordinador. Evalúa complejidad, despacha subagentes, verifica artefactos. Nunca implementa. | Nada | Sí: `sdd-orchestrator` |
-| **sdd-planner** | Produce artefactos OpenSpec. Define QUÉ construir en lenguaje de negocio. | Solo `openspec/changes/` | No (solo vía orchestrator) |
-| **sdd-coder** | Implementa código desde spec + instruction files. | Código fuente + `apply-report.md` | No (solo vía orchestrator) |
-| **sdd-reviewer** | Valida contra spec. Ejecuta tests y build. No edita código. | Solo `verify-report.md` | No (solo vía orchestrator) |
+### Forma conversacional
+Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) y los agentes SDD siguen disponibles para trabajar en chat. La garantía dura la da `/sdd-run`.
 
 ---
 
 ## Primeros pasos
 
-> **¿Vienes de la versión anterior?** Consulta la [guía de migración](docs/migration.md).
-
 ### 1. Instalar el plugin
 
-**Opción A — Copilot CLI:**
+**Copilot CLI:**
 ```bash
 /plugin install https://gitlabdes.hiberus.com/iasmartcommerce/conductor
 ```
 
-**Opción B — VS Code:**
+**VS Code:** activa `chat.plugins.enabled` y `chat.subagents.allowInvocationsFromSubagents` en settings, luego Command Palette → `Chat: Install Plugin from Source` → URL del repo.
 
-**Paso 1 — Habilitar settings requeridos:**
-
-Activa estos dos settings. Puedes hacerlo de forma global (para todos los proyectos) o por repositorio:
-
-- **Global:** abre VS Code Settings, busca `chat.plugins.enabled` y actívalo. Repite con `chat.subagents.allowInvocationsFromSubagents`.
-- **Por repositorio:** añade en `.vscode/settings.json` del proyecto:
-  ```json
-  {
-    "chat.plugins.enabled": true,
-    "chat.subagents.allowInvocationsFromSubagents": true
-  }
-  ```
-
-**Paso 2 — Instalar el plugin:**
-
-1. Abre la Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
-2. Ejecuta `Chat: Install Plugin from Source`
-3. Introduce `https://gitlabdes.hiberus.com/iasmartcommerce/conductor`
-
-**Opción C — Instalación manual (sin plugin system):**
-
-Si no tienes acceso al sistema de plugins, copia los ficheros directamente a tu proyecto:
-
-```bash
-# Copiar agentes y skills a .github/ de tu proyecto
-cp -r conductor/agents/    tu-proyecto/.github/agents/
-cp -r conductor/skills/    tu-proyecto/.github/skills/
-```
-
-**Verificación** — en Copilot CLI o VS Code, escribe `/sdd-` y comprueba que aparecen los skills: `/sdd-init`, `/sdd-instructions`, `/sdd-status`, `/sdd-archive`. Escribe `/agent` y comprueba que aparece `sdd-orchestrator`.
-
-> **Nota:** Al cargar el plugin por primera vez, VS Code puede mostrar el aviso "La llamada de herramienta recibió una advertencia". Es comportamiento estándar de seguridad para plugins externos — dale a permitir y marca **"Always allow"** para el workspace.
-
-**Actualización** — el plugin se versiona en `plugin.json` (campo `version`). Para que se detecte una nueva versión, hay que bumpar ese campo antes de hacer push.
-
-- **VS Code:** actualiza automáticamente cada 24h. Para forzar: Command Palette → `Extensions: Check for Extension Updates`.
-- **CLI:** no actualiza automáticamente. Ejecuta:
-  ```bash
-  /plugin update conductor
-  ```
+> En Windows, si la des/instalación da `EBUSY`: cierra todas las sesiones de Copilot y reintenta (cada sesión mantiene vivo el MCP del plugin).
 
 ### 2. Inicializar el proyecto
-
 ```
 /sdd-init
 ```
+Detecta stack/testing/arquitectura, genera `openspec/config.yaml` y deja el `.gitignore` preparado.
 
-Detecta stack, testing, arquitectura. Genera `openspec/config.yaml`.
-
-### 3. Generar instruction files
-
+### 3. (Opcional) Instruction files
 ```
 /sdd-instructions
 ```
 
-Genera ficheros en `.github/instructions/` con las convenciones de tu stack.
-
-### 4. Seleccionar el agente orchestrator
-
-Todo pasa por `sdd-orchestrator`. Es el punto de entrada único al pipeline.
-
-**En Copilot CLI:** escribe `/agent` y selecciona `sdd-orchestrator` de la lista. Una vez seleccionado, tu prompt va directamente al orchestrator.
-
-**En VS Code:** en el selector de agentes del chat de Copilot, elige `sdd-orchestrator`.
-
-### 5. Lanzar el pipeline
-
-Una vez seleccionado el agente, escribe tu petición:
-
+### 4. Construir
 ```
---auto crear listado de productos con fake API
+/conductor:sdd-run <tu petición>
 ```
+El chat te devuelve **una URL y termina**: todo (pausas, aprobaciones, edición de spec, diffs, stop/resume, informes) pasa en la app `http://127.0.0.1:4750`. También puedes lanzar runs sin chat: `node <plugin>/assets/conductor.mjs serve <proyecto>`.
 
-O sin `--auto` para modo interactivo (pausa entre fases para revisión humana):
-
-```
-crear listado de productos con fake API
-```
-
-| Flag | Efecto |
-|---|---|
-| `--auto` | Sin pausas. El pipeline se ejecuta completo. |
-| (sin flag) | Pausa después de planificar y después de implementar para revisión humana. |
-
-### 6. Monitorizar
-
-```
-/sdd-status     Ver progreso del cambio activo
-/tasks          Ver el subagente activo (Copilot CLI)
-```
-
-### 7. Archivar
-
+### 5. Archivar
 ```
 /sdd-archive
 ```
-
-Promueve los delta specs a `openspec/specs/` (fuente de verdad) y archiva el cambio.
-
----
-
-## Selección de fases por complejidad
-
-El orchestrator evalúa la complejidad al recibir la petición:
-
-| Complejidad | Fases activas |
-|---|---|
-| **simple** | propose → spec → apply → verify |
-| **medium** | propose → spec → design → tasks → apply → verify |
-| **complex** | explore → propose → clarify → spec → design → tasks → apply → verify |
-
-`explore` solo se ejecuta en complejidad **complex**.
+Promueve los specs a la fuente de verdad y encadena la provenance al ledger.
 
 ---
 
-## OpenSpec
+## La App de conductor (v3 — una sola URL)
 
-Conductor sigue el estándar [OpenSpec](https://github.com/Fission-AI/OpenSpec). Nuestra extensión `x-conductor` en `config.yaml` añade: pipeline declarativo, agentes y comandos de test/build.
+Todo vive en **una app local**: `http://127.0.0.1:4750` (127.0.0.1, solo tú, **0 tokens** — código leyendo estado, sin LLM). El panel lista todos los runs del proyecto; cada run es una ruta (`/run/<nombre>`). `/sdd-run` lanza el run en la app y el chat termina ahí — el modelo de sesión ya no espera, narra ni puede estorbar. Instalable como app de escritorio (PWA) desde Chrome.
 
+**El developer manda** (en cada pausa de revisión):
+- 📄 Lee la spec/proposal con un click — y **✏️ edítala inline**: se construye TU versión.
+- 📣 **Nota para la fase** ("usa signals, no BehaviorSubject") — viaja al prompt del agente.
+- 🎛 **Modelo en caliente** solo para esa fase (`byok:`/`copilot:`) — escala a premium solo cuando lo ves.
+- ✓ Aprobar · **■ Detener** (se conserva todo; **⏯ Reanudar** desde el panel sin re-pagar fases) · **↩ Deshacer una fase** (restaura los archivos al estado previo; tu rama git no se toca).
+
+**Visibilidad total**: archivos ±en vivo con **diff al click**, 📜 registro del run, modelo/tokens/duración por fase, reintentos con motivo, consumo LiteLLM real y **AIC de tu cuenta** (con `gh`).
+
+**Review multi-lente**: el verify corre lentes en paralelo (corrección, seguridad, tests) y funde un informe por secciones.
+
+Informes permanentes por change: `dashboard.html` (run) y **`🇪🇺 aiact-report.html`** — el informe de transparencia de contenido generado por IA (modelos usados, aprobaciones humanas, verificación, firma) alineado con las obligaciones del **EU AI Act (en vigor para contenido IA el 2-ago-2026)**. La fontanería JSON vive oculta en `.conductor/`.
+
+---
+
+## Coste y modelos
+
+Conductor es **token-first**: prompts mínimos, sin narración del LLM (la web informa gratis), resume sin re-pagar, anti-bucle, y telemetría de consumo por fase.
+
+**Configura modelos a tu gusto** en `openspec/conductor.json` (tuyo, en tu repo — sin secretos):
+```json
+{
+  "models": {
+    "planner":  "byok:qwen36-msc1",
+    "coder":    "copilot:claude-haiku-4.5",
+    "reviewer": "byok:qwen36-msc1"
+  },
+  "serve": true,
+  "autoApprove": false
+}
 ```
-openspec/
-├── config.yaml                        Configuración del proyecto + pipeline
-├── specs/{dominio}/spec.md            Fuente de verdad (promovida desde changes)
-├── changes/{nombre}/                  Cambio activo
-│   ├── exploration.md                 Exploración del codebase
-│   ├── proposal.md                    Propuesta tech-agnostic
-│   ├── specs/{dominio}/spec.md        Delta spec (ADDED/MODIFIED/REMOVED)
-│   ├── design.md                      Diseño técnico (complejidad media+)
-│   ├── tasks.md                       Desglose de tareas (complejidad media+)
-│   ├── apply-report.md                Reporte del coder
-│   ├── verify-report.md               Reporte del reviewer
-│   └── state.yaml                     Estado del pipeline
-└── changes/archive/                   Cambios completados (audit trail)
-```
+- `byok:<modelo>` → tu endpoint LiteLLM (≈ $0). Credenciales por env o en `~/.conductor/byok.json` (tu HOME).
+- `copilot:<modelo>` → catálogo de tu licencia Copilot Business (consume AI Credits).
+- Sin prefijo → el proveedor con el que lanzaste la sesión.
+
+> La plataforma no permite cambiar de modelo en una sesión; **Conductor lo hace por fase**, mezclando incluso proveedores en el mismo run.
 
 ---
 
 ## Seguridad
 
-Cada agente declara su scope en el frontmatter `tools` (allowlist) y en su sección `FORBIDDEN`/`Scope`. Quedan prohibidos para todos los agentes del pipeline:
+- **Gate determinista sin LLM**: coherencia, estructura, trazabilidad spec→task→código→test, breaking-changes de contrato (OpenAPI/SQL/TS). No obedece prompts: o cumple, o FAIL.
+- **Provenance Ed25519** + ledger hash-encadenado (manipular una entrada rompe la cadena) + firma del propio motor (`selfcheck --pub`).
+- Agentes con scope estricto: **sin git, sin red, sin comandos destructivos**; reviewer read-only. El contenido del repo se trata como **datos**, no como instrucciones.
+- El motor (0 dependencias, un solo fichero) viaja dentro del plugin como servidor MCP; confinamiento de rutas con `CONDUCTOR_ROOT`.
+- Tests/build del proyecto → CI (no bloquean el pipeline interactivo; tech-agnóstico por diseño).
 
-- **Todas** las operaciones git (commit, push, pull, merge, checkout). La gestión de git pertenece al usuario.
-- **Todas** las llamadas de red (curl, wget, Invoke-WebRequest).
-- **Todas** las operaciones destructivas (rm -rf, rmdir, Remove-Item -Recurse).
+---
 
-El reviewer ejecuta solo `test_command` y `build_command` de `config.yaml`; el coder solo `pre_hook`/`post_hook` configurados; el planner solo `mkdir` para preparar `openspec/changes/`.
+## Estructura OpenSpec
 
-Los agentes pueden **recomendar** acciones git pero **nunca** ejecutarlas.
+```
+openspec/
+├── config.yaml                   Configuración del proyecto + pipeline
+├── conductor.json                (opcional) tu configuración de modelos/web/pausas
+├── specs/{dominio}/spec.md       Fuente de verdad
+├── provenance.ledger.jsonl       Ledger de auditoría (hash-chain)
+└── changes/{nombre}/
+    ├── proposal.md · specs/ · design.md · tasks.md      Artefactos SDD (legibles)
+    ├── apply-report.md · verify-report.md               Reportes del run
+    ├── dashboard.html                                   📊 informe del run (ábrelo)
+    ├── provenance.json                                  Sello firmado (CI/auditoría)
+    └── .conductor/                                      Interno (estado/telemetría) — gitignoreado
+```
 
 ---
 
@@ -251,18 +161,15 @@ Los agentes pueden **recomendar** acciones git pero **nunca** ejecutarlas.
 
 | Documento | Contenido |
 |---|---|
-| [Guía de inicio](docs/getting-started.md) | Tutorial completo, primer uso, ejemplos |
-| [Migración](docs/migration.md) | Migrar desde la versión anterior (archivos en `.github/`) al plugin |
-| [Pipeline](docs/pipeline.md) | Referencia de fases, complejidad, fix loop |
-| [OpenSpec](docs/openspec.md) | Formato de artefactos, config.yaml, estructura |
-| [Integración de stacks](docs/stacks.md) | Cómo adoptar Conductor en cualquier proyecto |
-| [Avanzado](docs/advanced.md) | Optimización, buenas prácticas, troubleshooting |
-
----
+| [Cómo probar](docs/como-probar.md) | La prueba oficial paso a paso, configuración, glosario de ficheros, troubleshooting |
+| [Guía de inicio](docs/getting-started.md) | Tutorial completo |
+| [Pipeline](docs/pipeline.md) | Fases, complejidad, fix loop |
+| [OpenSpec](docs/openspec.md) | Formato de artefactos y config |
+| [Stacks](docs/stacks.md) | Adoptar Conductor en cualquier proyecto |
+| [Avanzado](docs/advanced.md) | Optimización y troubleshooting |
 
 ## Requisitos
 
-- GitHub Copilot (CLI v1.0.40+ o VS Code con Copilot Chat)
-- Licencia GitHub Copilot activa
-
-No requiere Node.js, Python, Docker, ni ningún runtime adicional. Los modelos por agente vienen fijados en el frontmatter de cada `.agent.md`; revisa el plan de Copilot para verificar la disponibilidad y consumo de cada modelo.
+- GitHub Copilot CLI (v1.0.60+) o VS Code con Copilot Chat, con licencia activa.
+- Node.js ≥ 18 (el mismo que requiere Copilot CLI; el motor de Conductor no añade nada más).
+- Opcional: API key de LiteLLM (BYOK ≈ coste cero) · `gh` CLI para ver tu uso de Copilot en la web.

@@ -1,0 +1,6 @@
+{
+  "pass": 100,
+  "gate": 40,
+  "trace": { "src": "src", "maxGaps": 0, "weight": 30 },
+  "requirements": { "ids": ["User Login"], "weight": 30 }
+}

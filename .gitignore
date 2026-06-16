@@ -1,0 +1,26 @@
+# conductor — qué NO se sube.
+node_modules/
+*.log
+.DS_Store
+
+# scratch / experimentos / notas — NO forma parte del producto
+# task/
+
+# proyecto de prueba local (no es del plugin)
+test-conductor/
+
+# salidas de build/ejecución del motor (la fuente es engine/, el artefacto es assets/conductor.mjs)
+engine/dist/
+engine/.runs/
+engine/test/.tmp*
+engine/eval/.tmp*
+engine/test/.tmp-e2e-proof.txt
+
+# artefactos de ejecución y secretos
+**/conductor.sarif
+**/conductor-junit.xml
+**/provenance.ledger.jsonl
+conductor.key
+conductor.pub
+eval/.bench/
+**/.conductor/

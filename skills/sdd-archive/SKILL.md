@@ -52,6 +52,18 @@ If `verify-report.md` contains a `## Suggested Instruction Updates` section, app
 
 Update the EXISTING state.yaml at `openspec/changes/{change-name}/state.yaml` (the change's own state file) — set `archive: done`, `current_phase: archive`, `updated: {ISO-8601 now}`. Preserve all previous keys (`change`, `status`, `phases`, etc.). NEVER create a new `openspec/state.yaml` at the root — that path is not part of the OpenSpec standard and will leave an orphan file after move-to-archive.
 
+### 4.5 Seal provenance + chain (if engine installed)
+
+If the `conductor` command is available (installed via `/sdd-verify`), produce signed, auditable
+evidence that this GREEN change passed the gates, and append it to the tamper-evident provenance chain
+(invoke by command name — never by a plugin path):
+1. `conductor seal openspec/changes/{change-name} --src <src or omit> --priv $CONDUCTOR_PRIV_KEY -o openspec/changes/{change-name}/provenance.json`
+   (Ed25519 signature; the seal moves with the change in step 5). `$CONDUCTOR_PRIV_KEY` is the org's
+   private key — from a vault, never hardcoded.
+2. `conductor ledger append openspec/changes/{change-name}/provenance.json --ledger openspec/provenance.ledger.jsonl`
+   (hash-chained: each entry binds to the previous → any later tampering breaks the chain).
+If `conductor` is not installed → skip and note `Provenance: skipped (run /sdd-verify)`.
+
 ### 5. Move to Archive
 
 Move `openspec/changes/{change-name}/` → `openspec/changes/archive/YYYY-MM-DD-{change-name}/`.

@@ -1,0 +1,54 @@
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BIN = resolve(HERE, '..', 'bin', 'conductor.mjs');
+const F1 = resolve(HERE, 'fixtures', 'changes');
+
+function client() {
+  const srv = spawn('node', [BIN, 'mcp'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  const rl = createInterface({ input: srv.stdout });
+  const pending = new Map(); let id = 1;
+  rl.on('line', (l) => { const s = l.trim(); if (!s) return; const m = JSON.parse(s); if (m.id !== undefined && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
+  const rpc = (method, params) => new Promise((res) => { const i = id++; pending.set(i, res); srv.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: i, method, params }) + '\n'); });
+  const callTool = async (name, args) => JSON.parse((await rpc('tools/call', { name, arguments: args })).result.content[0].text);
+  return { srv, rpc, callTool };
+}
+
+await test('mcp: handshake initialize 2025-11-25', async () => {
+  const c = client();
+  const init = await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  eq(init.result.protocolVersion, '2025-11-25');
+  eq(init.result.serverInfo.name, 'conductor');
+  assert(init.result.capabilities.tools);
+  c.srv.kill();
+});
+await test('mcp: tools/list expone el motor completo', async () => {
+  const c = client();
+  await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  const list = await c.rpc('tools/list', {});
+  const names = list.result.tools.map((t) => t.name);
+  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift'])
+    assert(names.includes(n), `falta ${n}`);
+  assert(list.result.tools.every((t) => t.inputSchema?.type === 'object'));
+  c.srv.kill();
+});
+await test('mcp: conductor_gate ejecuta el gate real', async () => {
+  const c = client();
+  await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  const pass = await c.callTool('conductor_gate', { changeDir: join(F1, 'change-pass') });
+  eq(pass.verdict, 'PASS');
+  const fail = await c.callTool('conductor_gate', { changeDir: join(F1, 'change-fail') });
+  eq(fail.verdict, 'FAIL');
+  c.srv.kill();
+});
+await test('mcp: ping y errores JSON-RPC', async () => {
+  const c = client();
+  await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  eq(JSON.stringify((await c.rpc('ping', {})).result), '{}');
+  eq((await c.rpc('tools/call', { name: 'nope', arguments: {} })).error.code, -32602);
+  eq((await c.rpc('frobnicate', {})).error.code, -32601);
+  c.srv.kill();
+});
