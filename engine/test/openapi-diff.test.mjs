@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { diffOpenApi, summarize } from '../lib/openapi-diff.mjs';
+import { diffOpenApi, summarize } from '../lib/contract/openapi-diff.mjs';
 
 const FX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'contract');
 const J = (p) => JSON.parse(readFileSync(join(FX, p), 'utf8'));

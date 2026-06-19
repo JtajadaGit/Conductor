@@ -1,7 +1,7 @@
 // Tests del driver determinista (Path X). Inyectamos un runAgent stub que simula al agente anfitrión
 // ESCRIBIENDO ficheros nativamente (como hace Copilot con Write/Edit). Demuestra la propiedad central:
 // la SECUENCIA la impone el CÓDIGO; el agente solo rellena. Captura por snapshot fs (sin git).
-import { drive, parseModelSpec, agentArgs, rollbackTo } from '../lib/drive.mjs';
+import { drive, parseModelSpec, agentArgs, rollbackTo, scrubSecrets } from '../lib/pipeline/drive.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
@@ -207,13 +207,29 @@ await test('drive(Path X): MCP passthrough por fase — defaults frugales + disa
   assert(agentArgs('coder', {}, '').includes('--allow-all-tools'), 'coder: completo (necesita mkdir/convenciones)');
   assert(agentArgs('planner', {}, '', { planner: 'all' }).includes('--allow-all-tools'), 'configurable vía conductor.json allowTools');
   assert(agentArgs('coder', {}, '--mis-flags').join(' ') === '--mis-flags', 'CONDUCTOR_AGENT_ARGS = override total');
-  const a = agentArgs('coder', { disable: ['ruidoso'], coder: { postgres: { command: 'npx', args: ['x'] } } }, '');
-  assert(a.join(' ').includes('--disable-mcp-server ruidoso'), 'disable global del usuario');
+  // RCE-safe (auditoría senior 2026-06-17): --additional-mcp-config inyecta JSON arbitrario como argv y,
+  // con shell:true, es un vector de RCE-por-config (openspec/conductor.json = entrada NO confiable) →
+  // requiere OPT-IN explícito (mcp.allowConfig / CONDUCTOR_ALLOW_MCP_CONFIG=1).
+  const aNoOptin = agentArgs('coder', { disable: ['ruidoso'], coder: { postgres: { command: 'npx', args: ['x'] } } }, '');
+  assert(aNoOptin.join(' ').includes('--disable-mcp-server ruidoso'), 'disable global del usuario');
+  assert(!aNoOptin.includes('--additional-mcp-config'), 'sin opt-in NO se inyecta MCP-config (RCE-por-config gateado)');
+  const a = agentArgs('coder', { allowConfig: true, disable: ['ruidoso'], coder: { postgres: { command: 'npx', args: ['x'] } } }, '');
   const i = a.indexOf('--additional-mcp-config');
-  assert(i > 0, 'el MCP del dev se enchufa a la fase coder');
+  assert(i > 0, 'con opt-in (allowConfig) el MCP del dev se enchufa a la fase coder');
   eq(JSON.parse(a[i + 1]).mcpServers.postgres.command, 'npx', 'config JSON bien formada');
-  const p = agentArgs('planner', { coder: { postgres: {} } }, '');
+  const p = agentArgs('planner', { allowConfig: true, coder: { postgres: {} } }, '');
   assert(!p.includes('--additional-mcp-config'), 'el planner NO recibe el MCP del coder (scoped por rol)');
+  // saneo anti-RCE: metacaracteres de shell en allowTools/disable NO llegan al argv (degradan/ignoran)
+  const hostile = agentArgs('coder', { disable: ['x" & calc & "'] }, '', { coder: 'all" & calc' });
+  assert(!hostile.join(' ').includes('calc'), 'metacaracteres de shell saneados (no RCE-por-config)');
+});
+
+await test('scrubSecrets: redacta env key, sk-/Bearer y secretos extra (fuga a /api/raw/events)', () => {
+  const out = scrubSecrets('usa sk-0YxiQ_6ivBE_x y Bearer abc.def y ENVKEY99 y BYOKDESCIFRADA', { COPILOT_PROVIDER_API_KEY: 'ENVKEY99' }, ['BYOKDESCIFRADA']);
+  assert(!out.includes('sk-0YxiQ_6ivBE_x'), 'redacta la virtual key sk-… (LiteLLM)');
+  assert(!out.includes('ENVKEY99'), 'redacta la key del env');
+  assert(!out.includes('BYOKDESCIFRADA'), 'redacta el secreto extra (key descifrada de byok.json)');
+  assert(out.includes('Bearer «REDACTED»'), 'redacta el header Bearer');
 });
 
 await test('drive(Path X): FIX DIRIGIDO — el humano elige qué hallazgos del gate van al fix', async () => {

@@ -55,7 +55,11 @@ try {
   // /api/models: forma estable {byok[],copilot[],byokSource,copilotSource,byokCreds} — sin red real (sin creds → observados)
   const mods = await apiJson('/api/models');
   if (!Array.isArray(mods.byok) || !Array.isArray(mods.copilot) || typeof mods.byokCreds !== 'boolean' || !mods.byokSource || !mods.copilotSource) fail('/api/models forma inesperada: ' + JSON.stringify(mods));
-  ok('/api/models responde con catálogo dinámico (byok+copilot+fuentes)');
+  // tiers: mapa id→nivel para los presets de coste — debe existir y contener solo valores válidos
+  if (!mods.tiers || typeof mods.tiers !== 'object') fail('/api/models sin mapa tiers');
+  const VALID_TIERS = ['economy', 'balanced', 'premium'];
+  for (const [id, t] of Object.entries(mods.tiers)) if (!VALID_TIERS.includes(t)) fail(`/api/models tiers[${id}]=${t} no es economy|balanced|premium`);
+  ok('/api/models responde con catálogo dinámico (byok+copilot+tiers+fuentes)');
 
   // launch
   const l = await apiJson('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'añade un componente header con título y test', name: 'header-e2e', complexity: 'simple', domain: 'header' }) });

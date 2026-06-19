@@ -1,11 +1,11 @@
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkCoherence } from '../lib/coherence.mjs';
-import { checkArtifacts } from '../lib/artifacts.mjs';
-import { buildTrace } from '../lib/trace.mjs';
-import { computeCost } from '../lib/cost.mjs';
-import { seal, verifySeal, generateKeypair } from '../lib/provenance.mjs';
-import { rdjson, sarif, junit, json, isBlocking } from '../lib/report.mjs';
+import { checkCoherence } from '../lib/gates/coherence.mjs';
+import { checkArtifacts } from '../lib/gates/artifacts.mjs';
+import { buildTrace } from '../lib/gates/trace.mjs';
+import { computeCost } from '../lib/core/cost.mjs';
+import { seal, verifySeal, generateKeypair } from '../lib/provenance/provenance.mjs';
+import { rdjson, sarif, junit, json, isBlocking } from '../lib/core/report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FX = resolve(HERE, 'fixtures');

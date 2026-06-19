@@ -1,4 +1,4 @@
-import { renderDashboard } from '../lib/dashboard.mjs';
+import { renderDashboard } from '../lib/serving/dashboard.mjs';
 
 await test('dashboard: renderiza el timeline del run (fase × modelo × duración)', () => {
   const html = renderDashboard({

@@ -1,4 +1,4 @@
-import { initConfig, CONFIG_SCHEMA } from '../lib/scaffold.mjs';
+import { initConfig, CONFIG_SCHEMA } from '../lib/analysis/scaffold.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -22,7 +22,7 @@ await test('scaffold: crea conductor.json + schema; NUNCA pisa la config del usu
 rmSync(TMP, { recursive: true, force: true });
 
 await test('aiact (P3): informe de transparencia — modelos, aprobaciones humanas, archivos IA, gate', async () => {
-  const { renderAiact } = await import('../lib/aiact.mjs');
+  const { renderAiact } = await import('../lib/serving/aiact.mjs');
   const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const { join, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');

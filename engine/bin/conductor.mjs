@@ -16,37 +16,42 @@
 //   conductor doctor                    (autotest del entorno + validador de config)
 //   conductor version | help
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, chmodSync } from 'node:fs';
+import { execSync, spawn } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 const createHashSync = (s) => createHash('sha256').update(s).digest('hex');
-import { checkCoherence } from '../lib/coherence.mjs';
-import { checkArtifacts } from '../lib/artifacts.mjs';
-import { checkContract } from '../lib/contract.mjs';
-import { buildTrace } from '../lib/trace.mjs';
-import { computeCost } from '../lib/cost.mjs';
-import { seal, verifySeal, generateKeypair, signFile, verifyFile } from '../lib/provenance.mjs';
-import { githubWorkflow, gitlabCi } from '../lib/ci.mjs';
-import { renderDashboard } from '../lib/dashboard.mjs';
-import { format, human, isBlocking, count } from '../lib/report.mjs';
-import * as R from '../lib/runner.mjs';
-import { validate } from '../lib/jsonschema.mjs';
-import { explain, renderSpec, renderTasks } from '../lib/explain.mjs';
-import { detectDrift } from '../lib/drift.mjs';
-import * as L from '../lib/ledger.mjs';
-import { lintMigrations } from '../lib/migration.mjs';
-import { scoreCandidate } from '../lib/eval.mjs';
-import { drive, readDriveConfig } from '../lib/drive.mjs';
-import { initConfig } from '../lib/scaffold.mjs';
-import { writeAiact } from '../lib/aiact.mjs';
-import { createSdkRunner } from '../lib/sdk-runner.mjs';
-import { createRunServer, createAppServer, writeModelsCache } from '../lib/serve.mjs';
-import { encryptSecret } from '../lib/secret.mjs';
+import { checkCoherence } from '../lib/gates/coherence.mjs';
+import { checkArtifacts } from '../lib/gates/artifacts.mjs';
+import { checkContract } from '../lib/contract/contract.mjs';
+import { buildTrace } from '../lib/gates/trace.mjs';
+import { computeCost } from '../lib/core/cost.mjs';
+import { estimateRun } from '../lib/core/estimate.mjs';
+import { loadSkills, buildSkillsIndex } from '../lib/analysis/skills.mjs';
+import { detectStack } from '../lib/analysis/stack.mjs';
+import { listArchive, searchChanges } from '../lib/analysis/archive.mjs';
+import { seal, verifySeal, generateKeypair, signFile, verifyFile } from '../lib/provenance/provenance.mjs';
+import { githubWorkflow, gitlabCi } from '../lib/sysops/ci.mjs';
+import { renderDashboard } from '../lib/serving/dashboard.mjs';
+import { format, human, isBlocking, count } from '../lib/core/report.mjs';
+import * as R from '../lib/pipeline/runner.mjs';
+import { validate } from '../lib/core/jsonschema.mjs';
+import { explain, renderSpec, renderTasks } from '../lib/analysis/explain.mjs';
+import { detectDrift } from '../lib/contract/drift.mjs';
+import * as L from '../lib/provenance/ledger.mjs';
+import { lintMigrations } from '../lib/contract/migration.mjs';
+import { scoreCandidate } from '../lib/gates/eval.mjs';
+import { drive, readDriveConfig } from '../lib/pipeline/drive.mjs';
+import { initConfig } from '../lib/analysis/scaffold.mjs';
+import { writeAiact } from '../lib/serving/aiact.mjs';
+import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
+import { createRunServer, createAppServer, writeModelsCache, loadRegistry } from '../lib/serving/serve.mjs';
+import { aggregateStats } from '../lib/core/stats.mjs';
+import { encryptSecret } from '../lib/provenance/secret.mjs';
 import { homedir } from 'node:os';
-import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/policy.mjs';
-import { toOtlp } from '../lib/otlp.mjs';
+import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
+import { toOtlp } from '../lib/sysops/otlp.mjs';
 
 // robustez: cualquier error no capturado → mensaje limpio + exit 2 (nunca stack trace al usuario)
 process.on('uncaughtException', (e) => { process.stderr.write(`conductor: error — ${e.message}\n`); process.exit(2); });
@@ -200,6 +205,32 @@ switch (cmd) {
     if (r.verdict === 'STOPPED') console.log('✅ TASK COMPLETE — run detenido por el usuario (decisión humana). NO relanzar: reanudar es decisión del usuario.');
     process.exit(r.verdict === 'GREEN' || r.verdict === 'STOPPED' || r.verdict === 'DUPLICATE' ? 0 : 1);
   }
+  case 'ping': case 'app-status': {
+    // estado rápido de la app única (sin levantar nada): versión, root servido y proyectos registrados.
+    const j = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
+    if (!j?.ok) { console.log('app conductor (:4750): APAGADA. Levántala con `conductor serve <proyecto>` o la skill /sdd-run.'); process.exit(1); }
+    console.log(`app conductor (:4750): EN MARCHA · v${j.version || '?'}${j.root ? ` · root ${j.root}` : ''}${Array.isArray(j.projects) ? ` · ${j.projects.length} proyecto(s) registrado(s)` : ''}`);
+    process.exit(0);
+  }
+  case 'stop': {
+    // detiene la app única (POST /api/shutdown). El servidor responde 409 si hay runs EN CURSO: NO se
+    // mata trabajo vivo (decisión de producto). Sin app viva = nada que hacer (no es error de uso).
+    const r = await fetch('http://127.0.0.1:4750/api/shutdown', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(3000) }).catch(() => null);
+    if (!r) { console.log('app conductor: no responde en :4750 (ya estaba apagada).'); process.exit(0); }
+    if (r.status === 409) { console.log('⚠ NO detengo la app: hay runs EN CURSO. Detén/espera esos runs (o hazlo desde la web) y reintenta.'); process.exit(1); }
+    console.log('🛑 app conductor detenida.'); process.exit(0);
+  }
+  case 'restart': {
+    // stop + relanzar serve (detached) en el root indicado (o cwd). Respeta el guard 409: si hay runs
+    // vivos, NO reinicia (no se pisa trabajo en curso). Reusa el case 'serve' vía un proceso nuevo.
+    const root = resolve(pos[0] || '.');
+    const r = await fetch('http://127.0.0.1:4750/api/shutdown', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(3000) }).catch(() => null);
+    if (r && r.status === 409) { console.log('⚠ NO reinicio: hay runs EN CURSO en la app actual. Espera/detén esos runs y reintenta.'); process.exit(1); }
+    for (let i = 0; i < 12; i++) { await new Promise((res) => setTimeout(res, 300)); const up = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r2) => r2.json()).catch(() => null); if (!up?.ok) break; }
+    spawn(process.execPath, [resolve(process.argv[1]), 'serve', root], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
+    console.log(`♻ app reiniciada sirviendo ${root} (tarda 1-2s en responder en :4750). Comprueba con \`conductor ping\`.`);
+    process.exit(0);
+  }
   case 'serve': {
     // PANEL DE PROYECTO: lista los runs y permite lanzar/reanudar desde el navegador — sin LLM de
     // sesión por medio (0 tokens de orquestación). El proceso queda vivo sirviendo hasta Ctrl-C.
@@ -207,7 +238,18 @@ switch (cmd) {
     let srv2; // APP ÚNICA (v3): puerto fijo → URL estable; si está ocupado (otra app), uno efímero
     const appOpts = { root, engine: resolve(process.argv[1]), version: VERSION, onShutdown: () => setTimeout(() => process.exit(0), 150) };
     try { srv2 = await createAppServer({ ...appOpts, port: 4750 }); }
-    catch { srv2 = await createAppServer(appOpts); }
+    catch (e) {
+      const isAddr = /EADDRINUSE/i.test(e?.code || e?.message || '');
+      if (isAddr) {
+        // anti "varios encendidos": si :4750 lo ocupa OTRA conductor VIVA, NO levanto una 2ª app (efímera y
+        // confusa) — uso esa. Solo caigo a efímero si el puerto lo ocupa algo AJENO a conductor.
+        const j = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(900) }).then((r) => r.json()).catch(() => null);
+        if (j?.ok) { console.log(`✅ Ya hay una app conductor EN MARCHA en http://127.0.0.1:4750 (v${j.version || '?'}) — úsala (no levanto otra). Reinícala con \`conductor restart\` si quieres.`); process.exit(0); }
+      }
+      const why = isAddr ? 'el puerto 4750 lo ocupa algo AJENO a conductor' : `no pude usar el puerto 4750 (${e.message})`;
+      srv2 = await createAppServer(appOpts);
+      console.log(`⚠ ${why} → sirviendo en un puerto efímero. Cierra lo que ocupe :4750 y reinicia para la app única.`);
+    }
     console.log(`🌐 conductor · panel del proyecto: ${srv2.url}\n   (Ctrl-C para cerrar)`);
     if (process.env.CONDUCTOR_SERVE_OPEN !== '0') {
       try { const opener = process.platform === 'win32' ? `start "" "${srv2.url}"` : process.platform === 'darwin' ? `open "${srv2.url}"` : `xdg-open "${srv2.url}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch {}
@@ -237,7 +279,8 @@ switch (cmd) {
       // la KEY se cifra con DPAPI (Windows): el fichero es inútil copiado a otra cuenta/equipo. Fuera de
       // win32 no hay DPAPI → se guarda en claro con aviso. baseUrl/model NO son secretos (quedan legibles).
       const enc = encryptSecret(apiKey);
-      writeFileSync(file, JSON.stringify(enc ? { type, baseUrl, apiKeyEnc: enc, model } : { type, baseUrl, apiKey, model }, null, 2));
+      writeFileSync(file, JSON.stringify(enc ? { type, baseUrl, apiKeyEnc: enc, model } : { type, baseUrl, apiKey, model }, null, 2), { mode: 0o600 });
+      if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // la key no queda legible por otros usuarios de la máquina
       console.log(`✓ credenciales BYOK guardadas en ${file} ${enc ? '(KEY cifrada con DPAPI — inútil en otra cuenta/equipo)' : '(⚠ KEY en claro: DPAPI solo existe en Windows)'}. NUNCA en el repo. La mezcla byok:/copilot: ya funciona arranque quien arranque la app.`);
       // sembrar la cache de NOMBRES de modelo (no la key) → el picker mostrará qwen SIEMPRE, con o sin env
       try {
@@ -308,7 +351,66 @@ switch (cmd) {
     mkdirSync(dirname(resolve(o)), { recursive: true }); writeFileSync(o, content);
     console.log(`CI generado → ${o}`); process.exit(0);
   }
-  case 'mcp': { await import('../lib/mcp.mjs').then((m) => m.serve()); break; }
+  case 'estimate': {
+    // estimador estático de tokens por fase (preflight, sin API) — pilar "ahorro de tokens first"
+    const dir = pos[0]; if (!dir) bad('estimate <changeDir> [--complexity micro|simple|medium|complex] [--domain n] [--request "..."]');
+    const reqI = argv.indexOf('--request'); let request = '';
+    if (reqI >= 0) { const w = []; for (let j = reqI + 1; j < argv.length && !argv[j].startsWith('--'); j++) w.push(argv[j]); request = w.join(' '); }
+    const est = estimateRun({ changeDir: resolve(dir), complexity: flag('--complexity', 'medium'), domain: flag('--domain', 'core'), request });
+    if (has('--json')) { console.log(JSON.stringify(est, null, 2)); process.exit(0); }
+    console.log(`\nconductor estimate · ${est.complexity}  (tokens estimados, preflight SIN API)\n`);
+    for (const r of est.phases) console.log(`  ${r.phase.padEnd(10)} in ~${String(r.estIn).padStart(6)}  out ~${String(r.estOut).padStart(6)}`);
+    console.log(`\n  TOTAL ~${est.total} tokens (in ~${est.totalIn} · out ~${est.totalOut}). Con BYOK/qwen ≈ $0; con catálogo premium, × tarifa del modelo.\n`);
+    process.exit(0);
+  }
+  case 'skills': {
+    // catálogo de patrones de equipo (.conductor/skills/*.md) — inyectados en el prompt de fases de código
+    const sub = pos[0]; const root = resolve(flag('--src', '.'));
+    if (sub === 'index') { const sk = buildSkillsIndex(root); console.log(`✓ INDEX regenerado · ${sk.length} patrón(es) en .conductor/skills/`); process.exit(0); }
+    const sk = loadSkills(root);
+    console.log(`\nconductor skills · ${sk.length} patrón(es) de equipo en ${root}/.conductor/skills/`);
+    for (const s of sk) console.log(`  ${s.name.padEnd(20)} ${s.match.length ? 'match: ' + s.match.join(',') : 'global'}${s.title ? '  — ' + s.title : ''}`);
+    if (!sk.length) console.log('  (vacío — crea .conductor/skills/<nombre>.md con frontmatter opcional "match: dominio,fase")');
+    console.log('');
+    process.exit(0);
+  }
+  case 'stack': {
+    // detección de stack del repo (file-based) — contexto para verificación
+    const root = resolve(pos[0] || flag('--src', '.'));
+    const s = detectStack(root);
+    if (has('--json')) { console.log(JSON.stringify(s, null, 2)); process.exit(0); }
+    console.log(`\nconductor stack · ${root}\n  lenguajes:  ${s.languages.join(', ') || '—'}\n  frameworks: ${s.frameworks.join(', ') || '—'}\n  test:       ${s.testCmd || '—'}\n  entrypoints:${s.entrypoints.length ? ' ' + s.entrypoints.join(', ') : ' —'}\n`);
+    process.exit(0);
+  }
+  case 'search': {
+    const q = pos[0]; if (!q) bad('search <texto> [--src dir]');
+    const hits = searchChanges(resolve(flag('--src', '.')), q);
+    console.log(`\nconductor search · "${q}" · ${hits.length} resultado(s)`);
+    for (const h of hits) console.log(`  ${h.archived ? '📦' : '•'} ${h.name.padEnd(22)} [${h.verdict}]  …${h.snippet}…`);
+    console.log('');
+    process.exit(0);
+  }
+  case 'archive': {
+    const root = resolve(pos[0] || flag('--src', '.'));
+    const a = listArchive(root);
+    console.log(`\nconductor archive · ${a.length} cambio(s) archivado(s) en ${root}`);
+    for (const c of a) console.log(`  ${c.date || '—'}  ${c.name.padEnd(24)} [${c.verdict}] · ${c.phases} fases`);
+    console.log('');
+    process.exit(0);
+  }
+  case 'stats': {
+    // INFORME DE USO (la mezcla qwen + Copilot, "como app"): agrega TODOS los timelines y hace VISIBLE el
+    // ahorro (pilar nº1). Sin --project: todos los proyectos registrados (~/.conductor/projects.json).
+    // Con --project <ruta>: solo ese root. Cero API, cero LLM — lee los .conductor/timeline.json del FS.
+    const projFlag = flag('--project') || flag('--src');
+    const reg = projFlag ? [{ root: resolve(projFlag) }] : loadRegistry();
+    const projects = reg.length ? reg : [{ root: process.cwd() }];
+    const r = aggregateStats(projects);
+    if (has('--json')) { console.log(JSON.stringify(r, null, 2)); process.exit(0); }
+    printStats(r, projFlag ? resolve(projFlag) : null);
+    process.exit(0);
+  }
+  case 'mcp': { await import('../lib/sysops/mcp.mjs').then((m) => m.serve()); break; }
   case 'doctor': {
     // valida un config de ejemplo contra el schema EMBEBIDO (bundle autocontenido, sin rutas)
     const schema = {
@@ -337,6 +439,20 @@ switch (cmd) {
     console.log(`  runner sdk empaquetado: ${sdkB ? 'disponible (actívalo con "runner":"sdk")' : 'no incluido (spawn)'}`);
     const appUp = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r3) => r3.json()).catch(() => null);
     console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con /sdd-run o `conductor serve`)'}`);
+    // bundle-staleness-guard: desde el repo, recomputa el fingerprint de lib/ y compáralo con el embebido
+    // en el bundle en ejecución → caza "edité lib/ pero el assets/ sigue viejo" (y el cp dist→assets olvidado).
+    try {
+      const selfP = resolve(process.argv[1]);
+      const dir = dirname(selfP);
+      const libDir = [join(dir, '..', 'engine', 'lib'), join(dir, '..', 'lib')].find((p) => existsSync(p));
+      const embedded = (readFileSync(selfP, 'utf8').match(/\/\/ build-inputs-sha256: ([a-f0-9]{64})/) || [])[1];
+      if (libDir && embedded) {
+        const files = readdirSync(libDir).filter((f) => f.endsWith('.mjs')).sort().map((f) => join(libDir, f));
+        files.push(join(libDir, '..', 'bin', 'conductor.mjs'));
+        const cur = createHashSync(files.map((f) => readFileSync(f, 'utf8')).join(' '));
+        console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);
+      } else { console.log('  bundle vs lib/: (no comprobable fuera del repo)'); }
+    } catch { console.log('  bundle vs lib/: (no comprobable)'); }
     console.log('');
     process.exit(r1.valid && !r2.valid ? 0 : 1);
   }
@@ -466,6 +582,9 @@ function printHelp() {
   dashboard <changeDir> --src <d> [--usage j] [-o html]
   eval <changeDir> --src <dir> [--json]        # puntúa la calidad de un cambio del pipeline
   selfcheck [--expect-version v] [--expect-sha h] [--pub key.pem [--sig f]]   # drift + firma del motor
+  serve <root>                                 # app única (panel) en :4750
+  ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
+  stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
   process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
 }
@@ -480,6 +599,33 @@ function printCost(r) {
   console.log(`\nconductor cost · ledger por fase\n`);
   for (const p of r.phases) console.log(`  ${p.phase.padEnd(12)} ${String(p.calls).padStart(3)}  ${p.models.join(',').padEnd(20)} in ${String(p.in).padStart(6)} out ${String(p.out).padStart(6)}  $${p.cost_usd.toFixed(4)}`);
   console.log(`\n  TOTAL $${r.cost_usd} · naive(all-Opus) $${r.naive_all_opus_usd} · AHORRO ${r.saved_pct}%\n`);
+}
+function printStats(r, single) {
+  const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n || 0));
+  const dur = (ms) => { if (!ms) return '—'; const s = Math.round(ms / 1000); if (s < 60) return s + 's'; return Math.floor(s / 60) + 'm ' + (s % 60) + 's'; };
+  const money = (n) => '$' + Number(n || 0).toFixed(2);
+  const trunc = (s, n) => { s = String(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }; // evita desalinear con ids/rutas largas
+  console.log(`\nconductor stats · uso real · ${single || r.projects_scanned + ' proyecto(s) registrado(s)'}\n`);
+  if (!r.runs) { console.log('  (sin runs con timeline todavía — lanza uno con `/sdd-run` o `conductor drive`)\n'); return; }
+  console.log(`  RUNS     ${r.runs} total · ${r.green} GREEN · ${r.failed} fallido(s)${r.stopped ? ` · ${r.stopped} detenido(s)` : ''}${r.running ? ` · ${r.running} en curso` : ''}`);
+  console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
+  console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
+  console.log(`\n  POR PROVEEDOR`);
+  for (const p of r.byProvider) {
+    const label = p.provider === 'byok' ? 'byok (qwen-class · $0)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
+    console.log(`    ${trunc(label, 24).padEnd(24)} ${String(p.calls).padStart(4)} fase(s) · ↓${k(p.in)} ↑${k(p.out)}`);
+  }
+  console.log(`\n  POR MODELO`);
+  for (const m of r.byModel) console.log(`    ${trunc(m.model, 22).padEnd(22)} ${String(m.calls).padStart(4)} fase(s) · ↓${k(m.in)} ↑${k(m.out)}  [${m.provider}]`);
+  const cop = r.byProvider.find((p) => p.provider === 'copilot'); const byk = r.byProvider.find((p) => p.provider === 'byok');
+  const copPh = cop ? cop.calls : 0, byokPh = byk ? byk.calls : 0, totPh = copPh + byokPh;
+  console.log(`\n  AI CREDITS  ${copPh} fase(s) Copilot (premium · consumen AIC) · ${byokPh} fase(s) qwen a 0 AIC (LiteLLM)`);
+  if (byokPh) console.log(`  AHORRO      qwen evitó ~${byokPh} petición(es) premium → ${totPh ? Math.round((byokPh / totPh) * 100) : 0}% del trabajo a 0 AIC  (coste estimado ≈${money(r.cost_usd)} · sin mezcla ≈${money(r.naive_all_premium_usd)})`);
+  if (r.perProject.length > 1) {
+    console.log(`\n  POR PROYECTO`);
+    for (const p of r.perProject) console.log(`    ${trunc(p.id || p.root.split(/[\\/]/).pop(), 24).padEnd(24)} ${p.runs} run(s) (${p.green}✓) · ${p.byok_phases} qwen(0 AIC) / ${p.copilot_phases} Copilot`);
+  }
+  console.log('');
 }
 function printRun(s) {
   console.log(`\nconductor run · ${s.runId} [${s.status.toUpperCase()}] (${s.complexity})`);

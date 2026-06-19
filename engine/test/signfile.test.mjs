@@ -1,4 +1,4 @@
-import { signFile, verifyFile, generateKeypair } from '../lib/provenance.mjs';
+import { signFile, verifyFile, generateKeypair } from '../lib/provenance/provenance.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';

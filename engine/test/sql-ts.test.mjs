@@ -1,6 +1,6 @@
-import { diffSchema, parseSchema } from '../lib/sqldiff.mjs';
-import { lintMigrations } from '../lib/migration.mjs';
-import { diffPublic } from '../lib/tsdiff.mjs';
+import { diffSchema, parseSchema } from '../lib/contract/sqldiff.mjs';
+import { lintMigrations } from '../lib/contract/migration.mjs';
+import { diffPublic } from '../lib/contract/tsdiff.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -96,5 +96,5 @@ await test('tsdiff: contrato idéntico → 0 findings', () => {
   eq(diffPublic(TS_V1, TS_V1).length, 0);
 });
 
-import { parsePublic } from '../lib/tsdiff.mjs';
+import { parsePublic } from '../lib/contract/tsdiff.mjs';
 function require_parse(s) { return parsePublic(s); }

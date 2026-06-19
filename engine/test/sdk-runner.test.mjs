@@ -1,5 +1,5 @@
 // Tests del sdk-runner con el SDK MOCKEADO (offline). El e2e real vive en el sandbox sdk-spike.
-import { createSdkRunner } from '../lib/sdk-runner.mjs';
+import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 
 function mockSdk(record) {
   class MockSession {

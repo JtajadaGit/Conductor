@@ -1,7 +1,0 @@
-CREATE TABLE orders (
-  id VARCHAR(36) NOT NULL PRIMARY KEY,
-  customer_id VARCHAR(36) NOT NULL,
-  status SMALLINT NOT NULL,
-  total_cents BIGINT NOT NULL,
-  created_at TIMESTAMP NOT NULL
-);

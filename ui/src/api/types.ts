@@ -1,0 +1,157 @@
+// Tipos del contrato HTTP REAL del motor (serve.mjs). Fieles a runState()/listChanges()/availableModels().
+// TS estricto: modelar opcionales/nullables como son (no no-null asserts) para no ocultar estados reales.
+
+export type Verdict = string | null; // 'GREEN' | 'NOT-GREEN' | 'ABORTED' | 'STOPPED' | 'BLOCKED' | 'EN CURSO' | ...
+
+export type FileKind = 'create' | 'edit' | 'delete';
+export interface FileChange { p: string; k: FileKind; }
+export interface Tokens { in: number; out: number; }
+
+export interface Phase {
+  phase: string;
+  role: string;
+  model: string | null;
+  modelRequested?: string | null;
+  modelReported?: string | null;
+  modelMismatch?: boolean;
+  provider?: string | null;
+  attempts: number;
+  ms: number;
+  tokens: Tokens | null;
+  files: FileChange[];
+  ok: boolean;
+  lastError?: string | null;
+  lenses?: string[];
+  resumed?: boolean;
+  hasRaw?: boolean;
+  context?: { instructions: string[]; contextFiles: string[] };
+}
+
+export interface CurrentPhase {
+  phase: string;
+  role: string;
+  model: string | null;
+  provider?: string | null;
+  attempt: number;
+  maxAttempts: number;
+  startedAt: number;
+  timeoutMs: number;
+  lastError?: string | null;
+}
+
+export interface PendingDecision { before: string; role: string; findings?: string[]; }
+export interface Approval { phase: string; at: string; via: string; note?: boolean; }
+
+export interface CostEntry { in: number; out: number; phases: number; }
+export interface Cost { byModel: Record<string, CostEntry>; }
+
+export interface Savings {
+  copilot_phases: number; byok_phases: number; // fases Copilot (consumen AIC) vs qwen/BYOK (0 AIC)
+  byok_in: number; byok_out: number; copilot_in: number; copilot_out: number; // tokens por lado (qwen → LiteLLM)
+}
+export interface Usage { spend: number; budget: number; runDelta: number; }
+export interface GhUsage { plan: string; used: number; entitlement: number; percentUsed: number; reset: string; overage?: boolean; }
+
+export interface RunState {
+  project: string;
+  branch: string | null;
+  cost: Cost | null;
+  savings: Savings | null;
+  live: FileChange[];
+  logTail: string[];
+  modelOptions: string[];
+  verifyExcerpt: string | null;
+  verdict: Verdict;
+  request: string;
+  complexity: string;
+  resumed: boolean;
+  total_ms: number | null;
+  phases: Phase[];
+  plan: string[];
+  current: CurrentPhase | null;
+  now: number;
+  done: boolean;
+  hasDashboard: boolean;
+  alive?: boolean;
+  pending: PendingDecision | null;
+  approvals?: Approval[];
+  usage: Usage | null;
+  ghUsage: GhUsage | null;
+  stopRequested: boolean;
+}
+
+export interface ChangeSummary {
+  name: string;
+  request: string;
+  verdict: Verdict;
+  phases: number;
+  complexity: string;
+  tokens: Tokens;
+  url: string | null;
+  hasDashboard: boolean;
+  resumable: boolean;
+  mtime: number;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  root: string;
+  openspec?: boolean;
+  changes: ChangeSummary[];
+}
+
+export interface ChangesResponse {
+  project: string;
+  changes: ChangeSummary[];
+  projects: ProjectSummary[];
+  ghUsage: GhUsage | null;
+  usage?: Usage | null;
+}
+
+export interface ModelsResponse {
+  byok: string[];
+  copilot: string[];
+  tiers?: Record<string, string>; // id de modelo → 'economy' | 'balanced' | 'premium' (presets de coste)
+  byokSource: string;
+  copilotSource: string;
+  byokCreds: boolean;
+  byokUrl: string; // URL base guardada (sin key) → el panel muestra "conectado a …" y no re-pide la URL
+  byokCachedAt: number | null;
+  byokReason: string | null;
+}
+
+export interface PhaseEstimate { phase: string; estIn: number; estOut: number; }
+export interface EstimateResponse { complexity: string; phases: PhaseEstimate[]; totalIn: number; totalOut: number; total: number; noRescanSaved: number; }
+
+export interface SearchHit { name: string; verdict: Verdict; archived: boolean; snippet: string; project?: string; projectId?: string; }
+export interface SearchResponse { hits: SearchHit[]; }
+export interface ArchiveEntry { name: string; archivedDir: string; date: string | null; verdict: Verdict; request: string; phases: number; project?: string; projectId?: string; }
+export interface ArchiveResponse { archive: ArchiveEntry[]; }
+
+// visor de sesión (events.jsonl del CLI de Copilot)
+export interface SessionEvent {
+  id: string | null; type: string; category: string; ts: string | null;
+  depth: number; agentId: string | null; durationMs: number | null; label: string; detail: string;
+}
+export interface SessionSummary {
+  total: number; byCategory: Record<string, number>; models: string[]; agents: string[];
+  tools: Record<string, number>; durationMs: number;
+  start: { cwd: string | null; branch: string | null; copilotVersion: string | null } | null;
+  reconstructed?: boolean; // true si la traza se reconstruyó desde OTel (qwen/LiteLLM), no del events.jsonl del CLI
+}
+export interface SessionEvents { total: number; offset: number; limit: number; summary: SessionSummary; events: SessionEvent[]; }
+
+export interface ModelsByRole { planner?: string; coder?: string; reviewer?: string; all?: string; }
+export interface LaunchBody {
+  request: string;
+  name: string;
+  complexity?: string;
+  domain?: string;
+  projectId?: string;
+  project?: string;
+  models?: ModelsByRole;
+  auto?: boolean;
+}
+export interface ContinueBody { selected?: number[]; note?: string; model?: string; }
+export interface ApiResult { ok: boolean; url?: string; error?: string; restored?: number; removed?: number; }

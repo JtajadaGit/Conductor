@@ -1,0 +1,17 @@
+{
+  "name": "conductor-ui",
+  "version": "3.12.0",
+  "private": true,
+  "type": "module",
+  "description": "Cockpit web de conductor — Vite + Lit + TypeScript. Proyecto autocontenido; compila a estáticos (../assets/ui) que sirve el motor 0-dependencias. El usuario final NO instala nada.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "lit": "^3.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
+  }
+}

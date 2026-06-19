@@ -1,4 +1,4 @@
-import { enforce, loadPolicy, validatePolicy, modelAllowed, DEFAULT_POLICY } from '../lib/policy.mjs';
+import { enforce, loadPolicy, validatePolicy, modelAllowed, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
 
 const errFinding = { rule: 'x', severity: 'error', message: 'boom' };
 const warnFinding = { rule: 'y', severity: 'warning', message: 'meh' };

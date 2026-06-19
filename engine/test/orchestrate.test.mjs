@@ -1,4 +1,4 @@
-import { start, next } from '../lib/orchestrate.mjs';
+import { start, next } from '../lib/pipeline/orchestrate.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';

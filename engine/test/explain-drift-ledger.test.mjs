@@ -1,10 +1,10 @@
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
-import { explain, renderSpec, renderTasks } from '../lib/explain.mjs';
-import { detectDrift } from '../lib/drift.mjs';
-import * as L from '../lib/ledger.mjs';
-import { seal } from '../lib/provenance.mjs';
+import { explain, renderSpec, renderTasks } from '../lib/analysis/explain.mjs';
+import { detectDrift } from '../lib/contract/drift.mjs';
+import * as L from '../lib/provenance/ledger.mjs';
+import { seal } from '../lib/provenance/provenance.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const XS = join(HERE, 'fixtures', 'xstack');

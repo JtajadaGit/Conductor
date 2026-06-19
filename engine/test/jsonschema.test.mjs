@@ -1,4 +1,4 @@
-import { validate } from '../lib/jsonschema.mjs';
+import { validate } from '../lib/core/jsonschema.mjs';
 
 await test('type: integer vs number', () => {
   assert(validate({ type: 'integer' }, 3).valid);

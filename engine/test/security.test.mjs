@@ -1,5 +1,5 @@
-import { buildTrace } from '../lib/trace.mjs';
-import { explain } from '../lib/explain.mjs';
+import { buildTrace } from '../lib/gates/trace.mjs';
+import { explain } from '../lib/analysis/explain.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, symlinkSync, rmSync, existsSync } from 'node:fs';

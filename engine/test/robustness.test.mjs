@@ -1,12 +1,12 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { checkContract } from '../lib/contract.mjs';
-import { computeCost } from '../lib/cost.mjs';
-import { checkCoherence } from '../lib/coherence.mjs';
-import { diffOpenApi } from '../lib/openapi-diff.mjs';
-import { diffSchema } from '../lib/sqldiff.mjs';
-import { diffPublic } from '../lib/tsdiff.mjs';
+import { checkContract } from '../lib/contract/contract.mjs';
+import { computeCost } from '../lib/core/cost.mjs';
+import { checkCoherence } from '../lib/gates/coherence.mjs';
+import { diffOpenApi } from '../lib/contract/openapi-diff.mjs';
+import { diffSchema } from '../lib/contract/sqldiff.mjs';
+import { diffPublic } from '../lib/contract/tsdiff.mjs';
 
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-rob');
 rmSync(TMP, { recursive: true, force: true }); mkdirSync(TMP, { recursive: true });

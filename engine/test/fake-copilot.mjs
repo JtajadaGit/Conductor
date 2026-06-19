@@ -3,7 +3,7 @@
 // Imita el contrato del copilot one-shot: lee el prompt por STDIN, escribe artefactos/código con
 // "sus tools nativas" (fs) y sale. Infiere la fase del prompt real del driver:
 //  - fases de planning: "Write ONLY the artifact file at this absolute path ...: <path>"
-//  - apply/fix: "Implement now: write ALL source and test files ..." + "Project root: <root>"
+//  - apply/fix: "Project root: <root>" + la directiva "Write the files NOW" (writeNow del driver)
 // Soporta verificar la NOTA del humano (USER NOTE) escribiéndola en el código generado.
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -41,7 +41,10 @@ if (m) {
 }
 
 const rootM = prompt.match(/Project root: (.+)\n/);
-if (rootM && /Implement now/.test(prompt)) {
+// fase de código = lleva "Project root:" + la directiva writeNow del driver ("Write the files NOW").
+// (Las fases de planning/lentes ya retornaron arriba por "absolute path".) Antes se buscaba "Implement now",
+// frase que el prompt dejó de usar en el endurecimiento qwen-green → el e2e abortaba en apply (drift de fixture).
+if (rootM && (/Write the files NOW/i.test(prompt) || /\bCODER\b/.test(prompt))) {
   // fase de código → escribir fuente + test con la marca @conductor (y la nota del humano si llegó)
   const root = rootM[1].trim();
   const note = (prompt.match(/USER NOTE \(from the human reviewer — MUST honor\): (.+)/) || [])[1];

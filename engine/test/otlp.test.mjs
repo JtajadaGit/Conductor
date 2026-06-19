@@ -1,4 +1,4 @@
-import { toOtlp } from '../lib/otlp.mjs';
+import { toOtlp } from '../lib/sysops/otlp.mjs';
 
 const spans = [
   { name: 'chat qwen36-msc1', attributes: { 'gen_ai.request.model': 'qwen36-msc1', 'gen_ai.usage.input_tokens': 3200, 'gen_ai.usage.output_tokens': 420, 'conductor.cost_usd': 0, 'conductor.phase': null }, duration_ms: 1800 },

@@ -2,8 +2,8 @@
 import { rmSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encryptSecret, decryptSecret, canEncrypt } from '../lib/secret.mjs';
-import { writeModelsCache, readModelsCache } from '../lib/serve.mjs';
+import { encryptSecret, decryptSecret, canEncrypt } from '../lib/provenance/secret.mjs';
+import { writeModelsCache, readModelsCache } from '../lib/serving/serve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOME = join(HERE, '.tmp-secret-home');
@@ -22,14 +22,14 @@ await test('models-cache: guarda solo NOMBRES (nunca la key) y se relee siempre'
   rmSync(HOME, { recursive: true, force: true }); mkdirSync(HOME, { recursive: true });
   const prev = process.env.CONDUCTOR_HOME; process.env.CONDUCTOR_HOME = HOME;
   try {
-    writeModelsCache(['qwen36-msc1', 'qwen36-msc2', 'deepseek-v4-flash', 'qwen36-msc1'], 'https://litellm.apps.hiberus.tech/');
+    writeModelsCache(['qwen36-msc1', 'qwen36-msc2', 'deepseek-v4-flash', 'qwen36-msc1'], 'https://litellm.interno/');
     const c = readModelsCache();
     assert(c && c.version === 1 && c.byok, 'la cache debe existir con version y bloque byok');
     eq(c.byok.models, ['deepseek-v4-flash', 'qwen36-msc1', 'qwen36-msc2'], 'nombres deduplicados y ordenados');
     assert(typeof c.byok.baseUrlHash === 'string' && c.byok.baseUrlHash.length === 6, 'hash6 del baseUrl');
     assert(typeof c.byok.at === 'number' && c.byok.at > 0, 'timestamp');
     const raw = readFileSync(join(HOME, 'models-cache.json'), 'utf8');
-    assert(!/sk-/.test(raw) && !/litellm\.apps\.hiberus\.tech/.test(raw), 'la cache NO debe contener key ni baseUrl en claro (solo hash + ids)');
+    assert(!/sk-/.test(raw) && !/litellm\.interno/.test(raw), 'la cache NO debe contener key ni baseUrl en claro (solo hash + ids)');
   } finally {
     if (prev === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = prev;
     rmSync(HOME, { recursive: true, force: true });

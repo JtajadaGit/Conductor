@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scoreCandidate } from '../lib/eval.mjs';
+import { scoreCandidate } from '../lib/gates/eval.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CASES = join(HERE, 'cases');

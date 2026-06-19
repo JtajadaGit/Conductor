@@ -1,5 +1,5 @@
 // Tests de la mini-web del run (serve.mjs). Offline: server en 127.0.0.1 con puerto efímero.
-import { createRunServer, createProjectServer, listChanges, runState } from '../lib/serve.mjs';
+import { createRunServer, createProjectServer, listChanges, runState } from '../lib/serving/serve.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -111,7 +111,7 @@ await test('serve: PANEL de proyecto — lista runs, lanza y reanuda por HTTP (s
   eq(spawned[1].request, 'add feature x', 'resume con el MISMO request (clave del resume)');
   eq((await fetch(srv.url + 'api/launch', { method: 'POST', body: '{"request":"x","name":"MAL NOMBRE"}' })).status, 400, 'nombre no-kebab rechazado');
   const html = await (await fetch(srv.url)).text();
-  assert(/Lanzar run/.test(html), 'página del panel servida');
+  assert(/<!doctype html>/i.test(html), 'el panel responde una página HTML (la UI Vite vive en assets/ui)');
   await srv.close();
   rmSync(ROOT, { recursive: true, force: true });
 });
@@ -131,7 +131,7 @@ await test('serve: el JS de AMBAS páginas (run + panel) compila — nunca más 
 });
 
 await test('serve(v3-P0): APP ÚNICA — launch IPC, pausa→continue con nota/modelo, stop, rutas y PWA', async () => {
-  const { createAppServer } = await import('../lib/serve.mjs');
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
   const { EventEmitter } = await import('node:events');
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '.tmp-app');
   rmSync(ROOT, { recursive: true, force: true });
@@ -159,11 +159,9 @@ await test('serve(v3-P0): APP ÚNICA — launch IPC, pausa→continue con nota/m
   // stop
   await fetch(srv.url + 'api/run/header-x/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   eq(spawned[0].sent[1], { t: 'stop' }, 'stop por IPC');
-  // página del run con API parametrizada + JS compila
+  // la ruta de run responde una página HTML (la UI Vite vive en assets/ui, ya no inline)
   const runHtml = await (await fetch(srv.url + 'run/header-x')).text();
-  assert(runHtml.includes('v-run') && runHtml.includes('v-panel'), 'el shell SPA contiene ambas vistas');
-  let err = null; try { new Function(runHtml.match(/<script>([\s\S]*?)<\/script>/)[1]); } catch (e) { err = e; }
-  assert(!err, 'JS de /run/<name> compila: ' + (err && err.message));
+  assert(/<!doctype html>/i.test(runHtml), 'la ruta de run responde una página HTML');
   // tras exit del hijo → relanzable (resume usa el request del timeline)
   spawned[0].emit('exit', 0);
   mkdirSync(join(ROOT, 'openspec', 'changes', 'header-x', '.conductor'), { recursive: true });
@@ -175,8 +173,24 @@ await test('serve(v3-P0): APP ÚNICA — launch IPC, pausa→continue con nota/m
   rmSync(ROOT, { recursive: true, force: true });
 });
 
+await test('serve(seguridad): /api/launch rechaza ruta ARBITRARIA del FS (no ejecuta donde sea)', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '.tmp-sec');
+  const ARB = join(dirname(fileURLToPath(import.meta.url)), '.tmp-arbitrary'); // dir SIN openspec/ ni .git
+  for (const d of [ROOT, ARB]) rmSync(d, { recursive: true, force: true });
+  mkdirSync(join(ROOT, 'openspec', 'changes'), { recursive: true });
+  mkdirSync(ARB, { recursive: true });
+  const spawned = [];
+  const srv = await createAppServer({ root: ROOT, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const r = await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'x', name: 'sec-x', project: ARB }) });
+  eq(r.status, 400, 'ruta sin openspec/.git → 400 (RCE/FS-arbitrario cerrado)');
+  eq(spawned.length, 0, 'NO se spawneó ningún driver en la ruta arbitraria');
+  await srv.close();
+  for (const d of [ROOT, ARB]) rmSync(d, { recursive: true, force: true });
+});
+
 await test('serve(v3-P1): editar artefacto por POST — confinado (.md, nunca .conductor)', async () => {
-  const { createAppServer } = await import('../lib/serve.mjs');
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '.tmp-app2');
   rmSync(ROOT, { recursive: true, force: true });
   const ch = join(ROOT, 'openspec', 'changes', 'e-x');
@@ -194,7 +208,7 @@ await test('serve(v3-P1): editar artefacto por POST — confinado (.md, nunca .c
 });
 
 await test('seguridad: POST cross-site ciego (sin Content-Type JSON / Host ajeno) → 403 en TODA la API', async () => {
-  const { createAppServer } = await import('../lib/serve.mjs');
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
   const srv = await createAppServer({ root: TMP, engine: 'x', spawnRun: () => ({ on: () => {}, send: () => {}, kill: () => {} }) });
   // un <form>/fetch malicioso desde una web llega como text/plain → bloqueado
   const evil = await fetch(srv.url + 'api/launch', { method: 'POST', body: '{"request":"pwn","name":"pwn"}' });
@@ -216,7 +230,7 @@ await test('seguridad: POST cross-site ciego (sin Content-Type JSON / Host ajeno
 });
 
 await test('seguridad: nombre de archivo hostil en /api/diff no ejecuta nada (sin shell)', async () => {
-  const { createAppServer } = await import('../lib/serve.mjs');
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
   const srv = await createAppServer({ root: TMP, engine: 'x', spawnRun: () => ({ on: () => {}, send: () => {}, kill: () => {} }) });
   const r = await fetch(srv.url + 'api/run/x/diff?p=' + encodeURIComponent('a$(rm -rf x)`touch pwned`.js'));
   assert([200, 404].includes(r.status), 'responde sin reventar');
@@ -226,7 +240,7 @@ await test('seguridad: nombre de archivo hostil en /api/diff no ejecuta nada (si
 });
 
 await test('serve(v4-P2): APP GLOBAL — segundo proyecto vía launch {project}, rutas scoped y registro', async () => {
-  const { createAppServer } = await import('../lib/serve.mjs');
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
   const R1 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-multi-a');
   const R2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-multi-b');
   for (const r of [R1, R2]) { rmSync(r, { recursive: true, force: true }); mkdirSync(join(r, 'openspec', 'changes'), { recursive: true }); }
@@ -254,7 +268,7 @@ await test('serve(v4-P2): APP GLOBAL — segundo proyecto vía launch {project},
 });
 
 await test('serve(v3.12): RESUME por ruta scoped /api/run/<pid>/<change>/resume usa la firma correcta de launch(proj,name,…)', async () => {
-  const { createAppServer } = await import('../lib/serve.mjs');
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
   const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-resume-scoped');
   rmSync(R, { recursive: true, force: true });
   mkdirSync(join(R, 'openspec', 'changes', 'feat-r', '.conductor'), { recursive: true });

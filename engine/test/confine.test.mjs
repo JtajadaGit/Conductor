@@ -1,4 +1,4 @@
-import { isOutside, assertConfined } from '../lib/confine.mjs';
+import { isOutside, assertConfined } from '../lib/sysops/confine.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
