@@ -1,8 +1,8 @@
 // conductor/lib/archive.mjs — BOARD de cambios archivados + BÚSQUEDA ligera (Ola 3). Sin SQLite ni FTS
 // (regla 0-dep): walk del FS + lectura de timeline/spec, búsqueda por substring sobre título/request/spec.
 // Cubre la brecha vs herramientas de referencia (índice de conocimiento) acotada a la identidad de conductor.
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync, existsSync, statSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { join, basename, resolve, relative } from 'node:path';
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const changesDir = (root) => join(root, 'openspec', 'changes');
@@ -44,4 +44,68 @@ export function searchChanges(root, q, limit = 50) {
   try { for (const d of readdirSync(changesDir(root), { withFileTypes: true })) { if (!d.isDirectory() || d.name === 'archive') continue; scan(join(changesDir(root), d.name), d.name, false); } } catch {}
   for (const a of listArchive(root)) scan(join(changesDir(root), 'archive', a.archivedDir), a.name, true);
   return hits.slice(0, limit);
+}
+
+// aísla el CUERPO bajo "## ADDED Requirements" (hasta la próxima cabecera nivel-2 o EOF), conservando los
+// comentarios de id (<!-- id: REQ-… -->, ancla de trazabilidad) y los #### Scenario. `## MODIFIED|REMOVED|RENAMED`
+// NO se tocan (los hace la skill/humano) — esto es el subconjunto ADITIVO seguro.
+function extractAddedBody(raw) {
+  const lines = String(raw).split(/\r?\n/);
+  let inAdded = false; const buf = [];
+  for (const line of lines) {
+    if (/^##\s+ADDED\s+Requirements\s*$/i.test(line)) { inAdded = true; continue; }
+    if (inAdded && /^##\s+\S/.test(line)) { inAdded = false; continue; } // otra sección nivel-2 → fin de ADDED
+    if (inAdded) buf.push(line);
+  }
+  return buf.join('\n').trim();
+}
+
+// Promueve los delta specs de un change a openspec/specs/ — SUBCONJUNTO SEGURO (solo ADDED, aditivo, no
+// destructivo). Replica el algoritmo de sdd-archive/SKILL.md de forma determinista (sin LLM). Si hay
+// MODIFIED/REMOVED/RENAMED, los DEJA intactos para la skill/humano y marca needsManualMerge=true.
+export function promoteSpec(changeDir, specsRoot) {
+  const specsSrc = join(changeDir, 'specs');
+  let domains = [];
+  try { domains = readdirSync(specsSrc, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch { return { promoted: [], needsManualMerge: false }; }
+  const promoted = []; let needsManualMerge = false;
+  for (const domain of domains) {
+    const srcSpec = join(specsSrc, domain, 'spec.md');
+    if (!existsSync(srcSpec)) continue;
+    const raw = readFileSync(srcSpec, 'utf8');
+    if (/^##\s+(MODIFIED|REMOVED|RENAMED)\s+Requirements\s*$/im.test(raw)) needsManualMerge = true; // delta no-aditivo → manual
+    const body = extractAddedBody(raw);
+    if (!body || !/###\s+Requirement:/i.test(body)) continue; // nada aditivo que promover
+    const targetDir = join(specsRoot, domain);
+    const targetSpec = join(targetDir, 'spec.md');
+    mkdirSync(targetDir, { recursive: true });
+    let created = false;
+    if (!existsSync(targetSpec)) {
+      created = true;
+      const title = domain.charAt(0).toUpperCase() + domain.slice(1);
+      writeFileSync(targetSpec, `# ${title} Specification\n\n## Purpose\n\nTODO: describe the ${domain} domain.\n\n` + body + '\n');
+    } else {
+      const cur = readFileSync(targetSpec, 'utf8').replace(/\s+$/, '');
+      writeFileSync(targetSpec, cur + '\n\n' + body + '\n'); // preserva # Title / ## Purpose existentes
+    }
+    promoted.push({ domain, created });
+  }
+  return { promoted, needsManualMerge };
+}
+
+// Mueve un change a openspec/changes/archive/<YYYY-MM-DD-name>/ con renameSync (MOVER, no borrado recursivo).
+// Confinamiento: el change debe colgar de openspec/changes/ y NO ser el propio archive/. Idempotente: si el
+// destino ya existe → "Already archived" (no se re-archiva). `date` se inyecta desde el llamador (ISO yyyy-mm-dd).
+export function archiveChange(changeDir, archiveBaseDir, date) {
+  const src = resolve(changeDir);
+  const changesRoot = resolve(archiveBaseDir, '..'); // .../openspec/changes
+  const rel = relative(changesRoot, src);
+  const seg0 = rel.split(/[\\/]/)[0];
+  if (!rel || rel.startsWith('..') || seg0 === 'archive' || seg0 === '..') throw new Error('changeDir fuera de openspec/changes/ — archivado rechazado');
+  if (!existsSync(src)) throw new Error('el change no existe');
+  const archivedDir = `${date}-${basename(src)}`;
+  const dest = join(archiveBaseDir, archivedDir);
+  if (existsSync(dest)) throw new Error('Already archived');
+  mkdirSync(archiveBaseDir, { recursive: true });
+  renameSync(src, dest); // move atómico (mismo FS) — sin Remove-Item recursivo
+  return { archivedDir, dest };
 }

@@ -200,7 +200,6 @@ Use the format for the detected platform ONLY:
 ---
 description: "When to use this file"
 applyTo: "pattern"
-excludeAgent: ["sdd-reviewer"]  # Add when content is coding-only
 ---
 ```
 
@@ -209,18 +208,8 @@ excludeAgent: ["sdd-reviewer"]  # Add when content is coding-only
 ---
 description: "When to use this file"
 paths: ["pattern"]
-excludeAgent: ["sdd-reviewer"]  # Add when content is coding-only
 ---
 ```
-
-### excludeAgent usage
-
-| File type | excludeAgent |
-|-----------|-------------|
-| Testing instructions | `["sdd-reviewer"]` — reviewer runs tests, doesn't write them |
-| Formatting instructions | `["sdd-reviewer"]` — reviewer doesn't format code |
-| Architecture / layer instructions | — (reviewer needs these to validate patterns) |
-| Styling instructions | `["sdd-reviewer"]` — reviewer doesn't write styles |
 
 All files: include auto-update marker `_Auto-updated by /sdd-instructions on {date}._`
 

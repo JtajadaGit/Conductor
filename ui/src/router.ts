@@ -21,7 +21,8 @@ export function parseRoute(pathname: string, search = ''): Route {
     const segs = rest.split('/');
     const apiBase = `/api/run/${rest}/`;
     if (segs.length >= 2) return { name: 'run', apiBase, projId: segs[0], change: segs.slice(1).join('/'), query };
-    return { name: 'run', apiBase, change: rest, query };
+    // Solo projId sin change name → no hay run que mostrar; volver al panel (B2)
+    return { name: 'panel', apiBase: '/api/', query };
   }
   if (p.startsWith('/session/') && p.length > 9) {
     const rest = p.slice(9);

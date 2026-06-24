@@ -9,8 +9,9 @@ argument-hint: "<source dir to reverse-engineer>"
 
 Bring existing code under Spec-Driven Development without writing the spec by hand. The conductor
 engine extracts structure **deterministically** (capabilities, HTTP endpoints, classes/services,
-an OpenAPI skeleton) across stacks (JS/TS, Java, PHP, Python); then the **sdd-planner** refines the
-draft into a real spec. Deterministic skeleton + LLM nuance = fast, accurate brownfield on-ramp.
+an OpenAPI skeleton) across stacks (JS/TS, Java, PHP, Python); then **the model** (this session, or
+the planner phase of a run) refines the draft into a real spec. Deterministic skeleton + LLM nuance =
+fast, accurate brownfield on-ramp.
 
 ## Steps
 
@@ -21,8 +22,8 @@ Use the conductor engine by **MCP tool name** (`conductor_explain`) — the serv
 is `conductor explain <dir> --out openspec/changes/{change-name}`.) This produces a draft `spec.md` (delta with `### Requirement:` + `#### Scenario:` stubs + `<!-- id: REQ-… -->`),
 a `tasks.md`, and `openapi.extracted.json` (if HTTP routes were found).
 
-### 2. Refine with the planner (LLM)
-Dispatch `sdd-planner` (or review manually) to:
+### 2. Refine the draft (LLM)
+Refine in this session (or by hand) to:
 - Replace the `(reverse-engineered draft — refine)` / `TODO: confirm` stubs with real intent.
 - Merge/rename capabilities that the heuristic split or over-grouped.
 - Keep the `<!-- id: REQ-… -->` ids stable — code/tests reference them via `@conductor REQ-…`.
@@ -40,7 +41,7 @@ traceability matrix (`conductor trace`) and `drift` gate light up green over tim
 ## Output (terse)
 ```
 Capabilities: {n} | Endpoints: {m} | Draft: openspec/changes/{change}/ (spec.md, tasks.md, openapi.extracted.json)
-Next: refine with sdd-planner; set the OpenAPI baseline; run /sdd-status.
+Next: refine the draft; set the OpenAPI baseline; run /sdd-status.
 ```
 
 ## Hard rules

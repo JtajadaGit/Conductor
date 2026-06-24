@@ -6,16 +6,21 @@ import { rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-scaffold');
 rmSync(TMP, { recursive: true, force: true });
 
-await test('scaffold: crea conductor.json + schema; NUNCA pisa la config del usuario', () => {
-  const r = initConfig(TMP);
-  assert(r.created && existsSync(r.cfgPath) && existsSync(r.schemaPath), 'ambos ficheros creados');
+await test('scaffold: crea conductor.json + schema + .copilotignore; NUNCA pisa lo del usuario', () => {
+  const OS = join(TMP, 'openspec'); // openspecDir realista → .copilotignore va al root (padre de openspec/)
+  const r = initConfig(OS);
+  assert(r.created && existsSync(r.cfgPath) && existsSync(r.schemaPath), 'config + schema creados');
+  assert(r.copilotignore && existsSync(join(TMP, '.copilotignore')), '.copilotignore creado en el root del proyecto');
+  assert(/node_modules\//.test(readFileSync(join(TMP, '.copilotignore'), 'utf8')), '.copilotignore excluye node_modules (token-first)');
   const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
   eq(cfg.$schema, './conductor.schema.json', 'config apunta al schema (autocomplete editor)');
-  // el usuario edita su config → re-init NO la pisa (el schema sí se refresca)
+  // el usuario edita su config y su .copilotignore → re-init NO los pisa (el schema sí se refresca)
   writeFileSync(r.cfgPath, JSON.stringify({ serve: false }));
-  const r2 = initConfig(TMP);
-  eq(r2.created, false);
+  writeFileSync(join(TMP, '.copilotignore'), 'custom\n');
+  const r2 = initConfig(OS);
+  eq(r2.created, false); eq(r2.copilotignore, false, 'no re-crea .copilotignore');
   eq(JSON.parse(readFileSync(r.cfgPath, 'utf8')).serve, false, 'config del usuario intacta');
+  eq(readFileSync(join(TMP, '.copilotignore'), 'utf8'), 'custom\n', '.copilotignore del usuario intacto');
   assert(CONFIG_SCHEMA.properties.models && CONFIG_SCHEMA.properties.mcp, 'schema cubre models/mcp');
 });
 

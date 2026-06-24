@@ -1,0 +1,12 @@
+# Files excluded from git archive (plugin distribution packaging).
+# If the marketplace uses git archive, these files stay on the server — devs never see them.
+# For a fully clean dist, run: node engine/build-dist.mjs → dist-plugin/
+
+CLAUDE.md           export-ignore
+task/               export-ignore
+engine/             export-ignore
+ui/                 export-ignore
+eval/               export-ignore
+.github/            export-ignore
+.gitignore          export-ignore
+.gitattributes      export-ignore

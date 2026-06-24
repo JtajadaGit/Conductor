@@ -4,7 +4,7 @@ import { checkCoherence } from '../lib/gates/coherence.mjs';
 import { checkArtifacts } from '../lib/gates/artifacts.mjs';
 import { buildTrace } from '../lib/gates/trace.mjs';
 import { computeCost } from '../lib/core/cost.mjs';
-import { seal, verifySeal, generateKeypair } from '../lib/provenance/provenance.mjs';
+import { seal, verifySeal, generateKeypair, hashSpecs } from '../lib/provenance/provenance.mjs';
 import { rdjson, sarif, junit, json, isBlocking } from '../lib/core/report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -64,6 +64,24 @@ await test('provenance Ed25519: firma asimétrica (no-repudio)', () => {
   // otra clave pública no valida
   const other = generateKeypair();
   assert(!verifySeal(seal({ change: 'x', gates: [{ name: 'g', findings: [] }], at: 'T', privateKeyPem }), { publicKeyPem: other.publicKeyPem }).sigOk, 'otra pública no valida');
+});
+await test('provenance (#84): spec-freeze — hashSpecs determinista, cambia con la spec; el sello embebe spec_sha256', async () => {
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const TMP = join(HERE, '.tmp-specfreeze');
+  rmSync(TMP, { recursive: true, force: true });
+  const ch = join(TMP, 'changes', 'feat');
+  mkdirSync(join(ch, 'specs', 'auth'), { recursive: true });
+  writeFileSync(join(ch, 'specs', 'auth', 'spec.md'), '## ADDED Requirements\n### Requirement: A\nThe system SHALL a.');
+  const h1 = hashSpecs(ch);
+  assert(typeof h1 === 'string' && h1.length === 64, 'hashSpecs devuelve sha256 hex');
+  eq(hashSpecs(ch), h1, 'mismo contenido → mismo hash (determinista)');
+  writeFileSync(join(ch, 'specs', 'auth', 'spec.md'), '## ADDED Requirements\n### Requirement: A\nThe system SHALL a (modificado).');
+  assert(hashSpecs(ch) !== h1, 'mutar la spec cambia el hash (spec-freeze lo detecta)');
+  eq(hashSpecs(join(TMP, 'changes', 'vacio')), null, 'change sin specs → null');
+  const doc = seal({ change: 'x', gates: [{ name: 'g', findings: [] }], at: 'T', key: 'k', specHash: h1 });
+  eq(doc.spec_sha256, h1, 'el sello fija spec_sha256');
+  const v = verifySeal(doc, { key: 'k' }); assert(v.shaOk && v.sigOk, 'el sello con spec_sha256 verifica (retro-compatible)');
+  rmSync(TMP, { recursive: true, force: true });
 });
 await test('report: rdjson/sarif/junit válidos', () => {
   const F = checkCoherence(join(F1, 'change-fail'));

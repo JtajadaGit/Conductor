@@ -51,3 +51,26 @@ export function scoreCandidate(dir, rubric) {
 
 function readMaybe(p) { return existsSync(p) ? readFileSync(p, 'utf8') : null; }
 function resolveRel(dir, p) { return p && !p.startsWith('/') && !/^[A-Za-z]:/.test(p) ? join(dir, p) : p; }
+
+// Síntesis de CONSENSO multi-lente (métrica de evals / verificación). Agrupa hallazgos por
+// (rule+severity+message), cuenta lentes distintas que coinciden y clasifica: Confirmed (≥2 lentes),
+// Suspect (1 lente), INFO (severidad info o hallazgo TEÓRICO). Regla real-vs-teórico: un warning de camino
+// imposible/improbable → INFO. Determinista, sin LLM. SOLO marca blocks un Confirmed+error+real — el juez
+// LLM aporta señal, NUNCA es terminal por sí solo (el gate determinista decide el GREEN).
+export function buildConsensusTable(findings = []) {
+  const entries = new Map(); const lenses = new Set();
+  for (const f of findings) {
+    const k = `${f.rule}|${f.severity}|${f.message}`;
+    if (!entries.has(k)) entries.set(k, { sample: f, lensIds: new Set(), count: 0 });
+    const e = entries.get(k); e.count++; if (f.lensId) { e.lensIds.add(f.lensId); lenses.add(f.lensId); }
+  }
+  const THEORETICAL = /unlikely|theoretical|would require|impossible/i;
+  const consensus = [...entries.values()].map((e) => {
+    const agree = e.lensIds.size || e.count;
+    let severity = String(e.sample.severity || 'info').toLowerCase();
+    if (severity === 'warning' && THEORETICAL.test(e.sample.message || '')) severity = 'info'; // teórico → no bloquea
+    const verdict = agree >= 2 ? 'Confirmed' : agree === 1 ? 'Suspect' : 'INFO';
+    return { verdict, agree, numLenses: lenses.size, rule: e.sample.rule, severity, message: e.sample.message, lensIds: [...e.lensIds], blocks: verdict === 'Confirmed' && severity === 'error' };
+  });
+  return { consensus, numLenses: lenses.size, blockers: consensus.filter((c) => c.blocks).length };
+}

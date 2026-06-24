@@ -31,7 +31,7 @@ import { estimateRun } from '../lib/core/estimate.mjs';
 import { loadSkills, buildSkillsIndex } from '../lib/analysis/skills.mjs';
 import { detectStack } from '../lib/analysis/stack.mjs';
 import { listArchive, searchChanges } from '../lib/analysis/archive.mjs';
-import { seal, verifySeal, generateKeypair, signFile, verifyFile } from '../lib/provenance/provenance.mjs';
+import { seal, verifySeal, generateKeypair, signFile, verifyFile, hashSpecs } from '../lib/provenance/provenance.mjs';
 import { githubWorkflow, gitlabCi } from '../lib/sysops/ci.mjs';
 import { renderDashboard } from '../lib/serving/dashboard.mjs';
 import { format, human, isBlocking, count } from '../lib/core/report.mjs';
@@ -319,7 +319,7 @@ switch (cmd) {
     const gates = [{ name: 'coherence', findings: checkCoherence(dir) }, { name: 'artifacts', findings: checkArtifacts(dir) }];
     const trace = src && existsSync(src) ? buildTrace(dir, src) : null;
     const cost = usage && existsSync(usage) ? computeCost(usage) : null;
-    const doc = seal({ change: resolve(dir), gates, trace, cost, at, key, privateKeyPem, engineVersion: VERSION });
+    const doc = seal({ change: resolve(dir), gates, trace, cost, at, key, privateKeyPem, engineVersion: VERSION, specHash: hashSpecs(dir) });
     writeFileSync(o, JSON.stringify(doc, null, 2));
     console.log(`\nconductor seal · ${doc.verdict}\n  gates: ${doc.gates.map((g) => g.name + '=' + g.verdict).join(', ')}`);
     if (doc.traceability) console.log(`  traza: ${doc.traceability.requirements} req, ${doc.traceability.gaps.length} hueco(s)`);
@@ -439,6 +439,13 @@ switch (cmd) {
     console.log(`  runner sdk empaquetado: ${sdkB ? 'disponible (actívalo con "runner":"sdk")' : 'no incluido (spawn)'}`);
     const appUp = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r3) => r3.json()).catch(() => null);
     console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con /sdd-run o `conductor serve`)'}`);
+    // .copilotignore (token-first): exclusiones de contexto del proyecto. Sin él cada request del modelo
+    // arrastra node_modules/lockfiles/binarios. `conductor init` lo genera; aquí avisamos si falta o está vacío.
+    try {
+      const ig = join(process.cwd(), '.copilotignore');
+      const body = existsSync(ig) ? readFileSync(ig, 'utf8').split('\n').filter((l) => l.trim() && !l.trim().startsWith('#')).length : -1;
+      console.log(`  .copilotignore (token-first): ${body > 0 ? `OK (${body} patrones)` : body === 0 ? 'VACÍO → añade exclusiones o regenéralo con `conductor init`' : 'AUSENTE → genera con `conductor init` (ahorra tokens de contexto)'}`);
+    } catch { console.log('  .copilotignore: (no comprobable)'); }
     // bundle-staleness-guard: desde el repo, recomputa el fingerprint de lib/ y compáralo con el embebido
     // en el bundle en ejecución → caza "edité lib/ pero el assets/ sigue viejo" (y el cp dist→assets olvidado).
     try {
@@ -447,7 +454,10 @@ switch (cmd) {
       const libDir = [join(dir, '..', 'engine', 'lib'), join(dir, '..', 'lib')].find((p) => existsSync(p));
       const embedded = (readFileSync(selfP, 'utf8').match(/\/\/ build-inputs-sha256: ([a-f0-9]{64})/) || [])[1];
       if (libDir && embedded) {
-        const files = readdirSync(libDir).filter((f) => f.endsWith('.mjs')).sort().map((f) => join(libDir, f));
+        // walk RECURSIVO (lib/ vive en subcarpetas por concern desde el reorg v6) — debe coincidir EXACTO con
+        // el walkLib de build.mjs (mismo conjunto + mismo orden por ruta absoluta) o el hash nunca cuadraría.
+        const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : (e.name.endsWith('.mjs') ? [join(d, e.name)] : []));
+        const files = walk(libDir).sort();
         files.push(join(libDir, '..', 'bin', 'conductor.mjs'));
         const cur = createHashSync(files.map((f) => readFileSync(f, 'utf8')).join(' '));
         console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);

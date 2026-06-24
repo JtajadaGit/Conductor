@@ -39,8 +39,8 @@ export class RunScreen extends CElement {
     this.api = new ConductorApi(this.apiBase);
     this.poller = new RunPoller(this.apiBase, (s) => { this.s = s; }, (e) => { this.err = (e as Error).message; });
     this.poller.start();
-    // catálogo para el select "Cambiar modelo" del panel de decisión (opcional; si falla, el panel se omite)
-    void this.api.models().then((m) => { this.models = m; }).catch(() => {});
+    // catálogo para el select "Cambiar modelo" — los modelos son globales, siempre desde /api/ (B3)
+    void new ConductorApi('/api/').models().then((m) => { this.models = m; }).catch(() => {});
   }
 
   // select de modelo en caliente (sustituye al input libre): Copilot + qwen disponibles, como en el panel.

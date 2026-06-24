@@ -1,5 +1,5 @@
 // Estimador estático de tokens por fase (Ola 1: preflight sin API).
-import { estimateRun, tokensOf } from '../lib/core/estimate.mjs';
+import { estimateRun, tokensOf, budgetContextFiles, summarizeArtifact } from '../lib/core/estimate.mjs';
 
 await test('estimate: tokensOf ≈ chars/4', () => {
   eq(tokensOf('abcd'.repeat(4)), 4); // 16 chars / 4
@@ -30,4 +30,45 @@ await test('estimate: noRescanSaved estima el ahorro de entrada del no-rescan (f
   assert(cx.noRescanSaved > 0, 'complex tiene fases de planner → ahorro estimado > 0');
   const simple = estimateRun({ complexity: 'simple', request: 'x' });
   assert(cx.noRescanSaved > simple.noRescanSaved, 'más fases derivadas → más ahorro estimado');
+});
+
+await test('budgetContextFiles: artefactos dentro del presupuesto se incluyen; los que exceden se resumen', () => {
+  const small = 'x'.repeat(100); // ~25 tokens
+  const big = 'x'.repeat(60000); // ~15000 tokens — excede presupuesto de 12000
+  const artifacts = { 'spec.md': small, 'tasks.md': big, 'design.md': small };
+  const b = budgetContextFiles(artifacts, 12000);
+  assert(b.included.includes('spec.md'), 'spec (pequeño) incluido');
+  assert(b.summarized.includes('tasks.md'), 'tasks (grande) resumido');
+  assert(b.included.includes('design.md'), 'design (pequeño) incluido');
+  assert(b.exceeds === true, 'flag exceeds = true cuando hay resumidos');
+  assert(b.tokensUsed <= 12000, 'tokens respetan el presupuesto');
+});
+
+await test('budgetContextFiles: artefactos faltantes se ignoran; todos caben → exceeds false', () => {
+  const b = budgetContextFiles({ 'spec.md': 'tiny', 'tasks.md': 'also tiny' });
+  assert(b.included.length >= 1, 'al menos spec.md incluido');
+  assert(b.exceeds === false, 'sin resumidos → exceeds false');
+  assert(b.summarized.length === 0, 'sin resumidos');
+});
+
+await test('budgetContextFiles: artefactos desconocidos (fuera de la lista de prioridad) se ignoran', () => {
+  const b = budgetContextFiles({ 'unknown.md': 'content', 'spec.md': 'spec' });
+  assert(b.included.includes('spec.md'), 'spec conocido incluido');
+  assert(!b.included.includes('unknown.md'), 'desconocido ignorado');
+});
+
+await test('summarizeArtifact: extrae solo H2/H3 y comentarios HTML, ignora prosa', () => {
+  const content = `# Title\n## Section 1\nProsa que NO debe salir.\n### Sub-sección\nMás prosa.\n<!-- id: REQ-X -->\nNo prosa.\n## Section 2\nTexto ignorado.`;
+  const summary = summarizeArtifact(content);
+  assert(summary.includes('## Section 1'), 'H2 incluido');
+  assert(summary.includes('### Sub-sección'), 'H3 incluido');
+  assert(summary.includes('<!-- id: REQ-X -->'), 'comentario HTML incluido');
+  assert(!summary.includes('Prosa que NO debe salir'), 'prosa excluida');
+  assert(!summary.includes('Texto ignorado'), 'prosa excluida');
+  assert(summary.length < content.length, 'resumen más corto que original');
+});
+
+await test('summarizeArtifact: contenido vacío o null → cadena vacía o solo vacíos', () => {
+  assert(typeof summarizeArtifact(null) === 'string', 'null → string');
+  assert(typeof summarizeArtifact('') === 'string', 'vacío → string');
 });

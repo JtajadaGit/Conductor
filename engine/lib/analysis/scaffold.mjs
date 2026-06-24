@@ -2,7 +2,7 @@
 // (autocompletado/validación en el editor — developer power). Lo invoca el CLI (`conductor init-config`)
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 
 export const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
@@ -10,6 +10,9 @@ export const CONFIG_SCHEMA = {
   type: 'object',
   properties: {
     $schema: { type: 'string' },
+    preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
+    strictTrace: { type: 'boolean', description: 'Trazabilidad CONTRACTUAL: un requisito sin código/test BLOQUEA el GREEN (no warning). Lo fija el preset; ponlo aquí para forzarlo.' },
+    strictId: { type: 'boolean', description: 'Exige id estable "<!-- id: REQ-... -->" en cada requisito (error si falta). Lo fija el preset.' },
     models: {
       type: 'object',
       description: 'Modelo por fase. Prefijos: "byok:<m>" (tu LiteLLM, $0) · "copilot:<m>" (catálogo Business, AI Credits) · sin prefijo = proveedor de la sesión.',
@@ -62,6 +65,21 @@ export const CONFIG_SCHEMA = {
     },
     timeoutSeconds: { type: 'integer', minimum: 30, default: 600, description: 'Timeout duro por fase.' },
     maxRetries: { type: 'integer', minimum: 0, maximum: 3, default: 1 },
+    budget: {
+      type: 'object',
+      description: 'Presupuesto DURO por run (freno real, token-first). Al superarlo, el run se DETIENE. maxTokens/maxCostUsd = techos; onExceed = "block" (default, BLOCKED) | "pause" (pide decisión humana si hay revisor).',
+      properties: {
+        maxTokens: { type: 'integer', minimum: 0 },
+        maxCostUsd: { type: 'number', minimum: 0 },
+        onExceed: { type: 'string', enum: ['block', 'pause'], default: 'block' },
+      },
+      additionalProperties: false,
+    },
+    reviewTimeoutMs: { type: 'integer', minimum: 0, default: 0, description: 'Timeout (ms) de la revisión humana en una pausa. 0 = espera indefinida (default). Combínalo con onReviewTimeout para headless/CI.' },
+    onReviewTimeout: { type: 'string', enum: ['wait', 'continue', 'abort'], default: 'wait', description: 'Qué hacer si una pausa de revisión no se atiende en reviewTimeoutMs: wait (espera, default) | continue (sigue como aprobado) | abort (detiene el run).' },
+    secretScan: { type: 'boolean', default: true, description: 'Escanea los ficheros escritos en busca de secretos/PII hardcodeados; un hallazgo tumba el GREEN. Desactívalo (false) solo en repos con fixtures de secreto a propósito.' },
+    specFreeze: { type: 'boolean', default: false, description: 'Congela el hash de la spec al completarse y bloquea el GREEN si la spec muta después (gobierno estricto/migración). Opt-in: en modo laxo "fix" puede editar la spec.' },
+    dataGate: { type: 'boolean', default: false, description: 'Gate de DATOS: el SQL escrito pasa el linter de seguridad de migraciones (DDL destructivo/irreversible + PII en columnas). Lo activa el preset "migration"; ponlo aquí para forzarlo en otros flujos.' },
     serve: { type: 'boolean', default: true, description: 'Mini-web del run en vivo.' },
     serveOpen: { type: 'boolean', default: true, description: 'Abrir el navegador automáticamente.' },
     autoApprove: { type: 'boolean', default: false, description: 'true = sin pausas de revisión.' },
@@ -93,7 +111,17 @@ const DEFAULT_CONFIG = {
   autoApprove: false,
 };
 
+// .copilotignore DETERMINISTA (token-first): exclusiones de contexto que, si no, inflan cada request del
+// modelo. Lo genera el MOTOR (no el LLM del SKILL → fiable). El host Copilot lo honra de forma nativa.
+const COPILOTIGNORE = [
+  'node_modules/', 'dist/', 'build/', 'out/', 'target/', 'coverage/', '.angular/',
+  '*.log', '*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+  '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
+  'openspec/changes/**/.conductor/',
+].join('\n') + '\n';
+
 // escribe schema (siempre, idempotente) + conductor.json (solo si no existe — nunca pisa la config del usuario)
+// + .copilotignore en el ROOT del proyecto (padre de openspec/, idempotente — nunca pisa el del usuario).
 export function initConfig(openspecDir) {
   mkdirSync(openspecDir, { recursive: true });
   const schemaPath = join(openspecDir, 'conductor.schema.json');
@@ -101,5 +129,9 @@ export function initConfig(openspecDir) {
   const cfgPath = join(openspecDir, 'conductor.json');
   let created = false;
   if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
-  return { schemaPath, cfgPath, created };
+  // .copilotignore al root del proyecto (token-first determinista)
+  const ignorePath = join(dirname(resolve(openspecDir)), '.copilotignore');
+  let copilotignore = false;
+  if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
+  return { schemaPath, cfgPath, created, ignorePath, copilotignore };
 }

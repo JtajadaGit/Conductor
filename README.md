@@ -161,12 +161,7 @@ openspec/
 
 | Documento | Contenido |
 |---|---|
-| [Cómo probar](docs/como-probar.md) | La prueba oficial paso a paso, configuración, glosario de ficheros, troubleshooting |
-| [Guía de inicio](docs/getting-started.md) | Tutorial completo |
-| [Pipeline](docs/pipeline.md) | Fases, complejidad, fix loop |
-| [OpenSpec](docs/openspec.md) | Formato de artefactos y config |
-| [Stacks](docs/stacks.md) | Adoptar Conductor en cualquier proyecto |
-| [Avanzado](docs/advanced.md) | Optimización y troubleshooting |
+| [Cómo probar](docs/como-probar.md) | Guía única: prueba paso a paso, adopción por proyecto/stack, configuración (`openspec/conductor.json`), BYOK, review multi-lente, glosario y troubleshooting |
 
 ## Requisitos
 

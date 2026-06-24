@@ -16,13 +16,16 @@ export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
     : (isBlocking(gates) || (trace && trace.gaps.length) ? 'NOT-GREEN' : 'GREEN');
   const approvals = (timeline && timeline.approvals) || [];
   const lensesUsed = tl ? (tl.find((p) => p.lenses)?.lenses || null) : null;
+  // CACHÉ DE PREFIJO (R-T3): tokens de entrada servidos desde caché (precio reducido) sumados sobre todas las
+  // fases → hace VISIBLE el ahorro del prefijo invariante. El driver ya los captura por fase (tokens.cached).
+  const cachedTotal = tl ? tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.cached) || 0), 0) : 0;
   const tick = (x) => `<span class="tick ${x ? 'y' : 'n'}">${x ? '✓' : '✗'}</span>`;
 
   const findRows = gates.length
     ? gates.map((f) => `<tr class="${['breaking', 'error'].includes(f.severity) ? 'gap' : ''}"><td><span class="pill ${['breaking', 'error'].includes(f.severity) ? 'bad' : 'neutral'}" style="text-transform:none">${esc(f.severity)}</span></td><td><code>${esc(f.rule)}</code></td><td>${esc(f.message)}</td><td style="color:var(--tx3)">${esc(f.file || f.pointer || '')}</td></tr>`).join('')
     : '<tr><td colspan=4 style="color:var(--ok)">✓ sin findings — el gate pasa limpio</td></tr>';
   const traceRows = trace ? trace.matrix.map((m) => `<tr class="${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><td><code>${esc(m.id)}</code></td><td>${esc(m.name)}</td><td>${tick(m.cov.task)}</td><td>${tick(m.cov.code)}</td><td>${tick(m.cov.test)}</td><td>${m.scenarios.length}</td></tr>`).join('') : '';
-  const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
+  const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}${p.tokens.cached ? ` ↺${fmt(p.tokens.cached)}` : ''}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
 
   return `<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <script>(function(){try{var t=localStorage.getItem('conductorTheme');if(!t)t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t;}catch(e){}})()</script>
@@ -44,6 +47,7 @@ export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
  ${approvals.length ? `<div class="card ok"><small>Aprobaciones humanas</small><span>🧑‍⚖️ ${approvals.length}</span></div>` : ''}
  ${lensesUsed ? `<div class="card"><small>Lentes de review</small><span>🔍 ${lensesUsed.length}</span></div>` : ''}
  ${cost ? `<div class="card ok"><small>Ahorro vs all-Opus</small><span>${cost.saved_pct}%</span></div>` : ''}
+ ${cachedTotal ? `<div class="card ok"><small>Caché de prefijo</small><span>↺ ${fmt(cachedTotal)} tok</span></div>` : ''}
 </div>
 <h2 class=sect>Gate determinista <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— coherencia spec↔código↔artefactos, sin LLM</span></h2>
 <table><tr><th>severidad</th><th>regla</th><th>mensaje</th><th>ubicación</th></tr>${findRows}</table>

@@ -12,7 +12,8 @@
     "./plugin/skills/sdd-run"
   ],
   "assets": [
-    "./assets/conductor.mjs"
+    "./assets/conductor.mjs",
+    "./assets/ui"
   ],
   "mcpServers": "./.mcp.json"
 }

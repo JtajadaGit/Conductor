@@ -3,7 +3,8 @@
 // y HMAC-SHA256 (legacy, secreto compartido). SHA-256 siempre como hash de integridad.
 // node:crypto puro, sin dependencias.
 import { createHash, createHmac, sign as edSign, verify as edVerify, generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const sha256hex = (s) => createHash('sha256').update(s).digest('hex');
 
@@ -58,8 +59,19 @@ export function verifySignature(payload, signature, opts = {}) {
   return { shaOk, sigOk: false, reason: sig.algo ? `algoritmo "${sig.algo}" no aporta autenticidad (integridad ≠ firma)` : 'sello sin firma (solo SHA-256 de integridad)' };
 }
 
+// spec-freeze: hash determinista de TODOS los delta specs del change (specs/<domain>/spec.md, ordenados).
+// El sello GREEN lo embebe (spec_sha256) → fija CONTRA QUÉ spec se obtuvo el verde; mutarla después se detecta.
+export function hashSpecs(changeDir) {
+  const specsDir = join(changeDir, 'specs');
+  let domains = [];
+  try { domains = readdirSync(specsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort(); } catch { return null; }
+  const parts = [];
+  for (const dom of domains) { const p = join(specsDir, dom, 'spec.md'); if (existsSync(p)) { try { parts.push(`# ${dom}\n` + readFileSync(p, 'utf8')); } catch {} } }
+  return parts.length ? sha256hex(parts.join('\n')) : null;
+}
+
 // gates: [{name, findings}]
-export function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersion, traceAffectsVerdict = true }) {
+export function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersion, traceAffectsVerdict = true, specHash = null }) {
   // traceAffectsVerdict=true (def): huecos de traza → NOT-GREEN (estándar estricto de `conductor seal`).
   // false: la traza es informativa y el verdict = solo gates (lo usa el driver, cuyo gate trata los
   // huecos como warning → así el sello coincide con el verdict del pipeline).
@@ -68,6 +80,7 @@ export function seal({ change, gates, trace, cost, at, key, privateKeyPem, engin
   const payload = {
     spec_version: 'conductor-provenance/2', engine: engineVersion || null, change, sealed_at: at,
     verdict: allGreen ? 'GREEN' : 'NOT-GREEN', gates: gateSummary,
+    spec_sha256: specHash || null, // spec-freeze: fija CONTRA QUÉ spec se logró el verde (mutarla después se detecta)
     traceability: trace ? { requirements: trace.matrix?.length ?? 0, gaps: trace.gaps || [] } : null,
     cost: cost ? { real_usd: cost.cost_usd, naive_usd: cost.naive_all_opus_usd, saved_pct: cost.saved_pct } : null,
   };

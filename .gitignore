@@ -1,5 +1,8 @@
 # conductor — qué NO se sube.
 node_modules/
+
+# build-dist output — run node engine/build-dist.mjs to create; not committed (Jorge flips marketplace.json when ready)
+dist-plugin/
 *.log
 .DS_Store
 
@@ -16,7 +19,14 @@ engine/test/.tmp*
 engine/eval/.tmp*
 engine/test/.tmp-e2e-proof.txt
 
+# output de auto-runs del propio repo (la herramienta crea openspec/changes/<x>/ al correr sobre sí misma;
+# en ESTE repo es salida de prueba, no fuente — los specs reales viven en docs/ y en los proyectos de usuario)
+openspec/
+
 # artefactos de ejecución y secretos
+task/
+CHANGELOG.md
+**/*.key.md
 **/conductor.sarif
 **/conductor-junit.xml
 **/provenance.ledger.jsonl
@@ -24,3 +34,25 @@ conductor.key
 conductor.pub
 eval/.bench/
 **/.conductor/
+
+# ── local de la máquina / Claude Code (estado de runtime, nunca compartir) ──
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+.claude/settings.local.json
+.claude/*.local.json
+
+# ── secretos / entorno local (defensa: jamás commitear credenciales) ──
+.env
+.env.*
+*.env
+byok.json
+
+# ── OS / editor ──
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.idea/
+*.swp
+
+# ── output de cobertura de tests ──
+coverage/

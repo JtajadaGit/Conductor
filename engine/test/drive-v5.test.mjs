@@ -2,7 +2,7 @@
 import { drive, defaultRunAgent, stripAnsi } from '../lib/pipeline/drive.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-drive-v5');
 process.env.CONDUCTOR_CAPTURE = 'fs'; // aislar de git del repo
@@ -122,6 +122,44 @@ await test('drive(v5): los patrones de equipo (.conductor/skills) se inyectan en
   const rec = (a) => { if (a.phase === 'apply') applyPrompt = a.prompt; return goodAgent(a); };
   await drive({ changeDir: join(TMP, 'openspec', 'changes', 'sk'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: rec });
   assert(/TEAM PATTERNS/.test(applyPrompt) && /patrón XYZ/.test(applyPrompt), 'el prompt de apply incluye el patrón del equipo');
+});
+
+await test('drive(#68): BYOK inyecta AGENTS.md en el prompt de apply; Copilot NO (auto-apply del host → token-first)', async () => {
+  fresh();
+  writeFileSync(join(TMP, 'AGENTS.md'), '# Reglas\nUsa siempre la convención ACME-123 del equipo.');
+  mkdirSync(join(TMP, 'openspec'), { recursive: true });
+  const ENVK = ['CONDUCTOR_MODEL', 'COPILOT_MODEL', 'CONDUCTOR_MODEL_CODER', 'CONDUCTOR_MODEL_PLANNER', 'CONDUCTOR_MODEL_REVIEWER'];
+  const saved = Object.fromEntries(ENVK.map((k) => [k, process.env[k]]));
+  for (const k of ENVK) delete process.env[k];
+  let byokPrompt = '', copilotPrompt = '';
+  try {
+    // BYOK: el coder usa un modelo byok: → apply inyecta las reglas (qwen no las auto-aplica por glob).
+    // El fake runAgent (≠ defaultRunAgent) desactiva el hard-fail-no-creds, así probamos la inyección.
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ models: { coder: 'byok:qwen-test' }, maxRetries: 0, lenses: false }));
+    await drive({ changeDir: join(TMP, 'openspec', 'changes', 'b1'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP,
+      runAgent: (a) => { if (a.phase === 'apply') byokPrompt = a.prompt; return goodAgent(a); } });
+    // Copilot: NO se inyecta el contenido (el host lo auto-aplica por glob → 0 tokens, token-first).
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ models: { coder: 'copilot:gpt-x' }, maxRetries: 0, lenses: false }));
+    await drive({ changeDir: join(TMP, 'openspec', 'changes', 'c1'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP,
+      runAgent: (a) => { if (a.phase === 'apply') copilotPrompt = a.prompt; return goodAgent(a); } });
+  } finally {
+    for (const k of ENVK) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+  assert(/PROJECT RULES/.test(byokPrompt) && /ACME-123/.test(byokPrompt), 'BYOK: el prompt de apply inyecta el contenido de AGENTS.md');
+  assert(!/ACME-123/.test(copilotPrompt), 'Copilot: el contenido NO se inyecta (auto-apply del host)');
+});
+
+await test('drive(post-apply): preset feature → revisor FRESCO tras apply escribe post-apply-review.md', async () => {
+  fresh();
+  mkdirSync(join(TMP, 'openspec'), { recursive: true });
+  writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ preset: 'feature', maxRetries: 0 }));
+  const ch = join(TMP, 'openspec', 'changes', 'par');
+  // agente: para las lentes post-apply escribe una reseña; el resto, el agente bueno de siempre
+  const rec = (a) => { if (a.phase.startsWith('post-apply:')) { w(a.writeTo, 'El codigo satisface el requisito REQ-C.'); return Promise.resolve({ code: 0 }); } return goodAgent(a); };
+  await drive({ changeDir: ch, request: 'x', complexity: 'medium', domain: 'c', srcDir: TMP, runAgent: rec });
+  assert(existsSync(join(ch, '.conductor', 'post-apply-review.md')), 'se creó post-apply-review.md tras apply');
+  const rv = readFileSync(join(ch, '.conductor', 'post-apply-review.md'), 'utf8');
+  assert(/Post-Apply Review/.test(rv) && /Lens: correctness/.test(rv), 'incluye la lente correctness (revisor fresco)');
 });
 
 await test('drive(v5): tiers enrutan el modelo por fase cuando no hay modelo explícito', async () => {

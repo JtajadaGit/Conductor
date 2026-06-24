@@ -15,6 +15,7 @@
         "stack": { "type": "object" },
         "pipeline": {
           "type": "object",
+          "description": "DESCRIPTIVO solo: documenta el flujo de fases por defecto. El pipeline EJECUTABLE (reordenar/omitir fases, modelos por fase, lentes, pausas, checks) vive en openspec/conductor.json. El motor NO lee config.yaml.",
           "required": ["phases"],
           "properties": {
             "max_review_cycles": { "type": "integer", "minimum": 0 },
@@ -23,16 +24,11 @@
               "minItems": 1,
               "items": {
                 "type": "object",
-                "required": ["name", "agent"],
+                "required": ["name"],
                 "properties": {
                   "name": { "type": "string", "enum": ["explore", "propose", "clarify", "spec", "design", "tasks", "apply", "verify"] },
-                  "agent": { "type": "string", "enum": ["sdd-planner", "sdd-coder", "sdd-reviewer"] },
                   "optional": { "type": "boolean" },
-                  "artifact": { "type": "string" },
-                  "max_words": { "type": "integer", "minimum": 1 },
-                  "gate_command": { "type": "string" },
-                  "test_command": { "type": "string" },
-                  "coverage_threshold": { "type": "integer", "minimum": 0, "maximum": 100 }
+                  "artifact": { "type": "string" }
                 },
                 "additionalProperties": true
               }

@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { checkCoherence, readSpec } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { buildTrace } from '../gates/trace.mjs';
+import { loadPolicy, enforce, DEFAULT_POLICY } from '../gates/policy.mjs';
 
 const PHASES = {
   micro: ['apply'], // "No SDD": 1 sola llamada LLM, sin spec POR DECISIÓN del usuario — máximo ahorro
@@ -114,14 +115,55 @@ export function start({ changeDir, request, complexity = 'medium', domain = 'cor
   return stepFor(changeDir, s);
 }
 
-// gate determinista usado en la fase verify
-function runGate(dir, srcDir) {
-  const F = [...checkCoherence(dir), ...checkArtifacts(dir)];
-  if (srcDir && existsSync(srcDir)) F.push(...buildTrace(dir, srcDir).findings);
+// gate determinista usado en la fase verify. `strict` (del preset) endurece SIN relajar nunca: strict.id →
+// exige id estable en cada requisito; strict.trace → un hueco de cobertura (sin código/test) BLOQUEA.
+function runGate(dir, srcDir, strict = {}) {
+  const cohOpts = { strictId: !!strict.id };
+  const trace = (srcDir && existsSync(srcDir)) ? buildTrace(dir, srcDir) : null;
+  // R-S6 (preset migration): MODIFIED debe existir en la spec VIVA; REMOVED no debe dejar código trazado.
+  // Seguro por defecto: sin specs vivas (liveSpecIds=[]) la comprobación de MODIFIED NO dispara.
+  if (strict.semanticDelta) {
+    cohOpts.semanticDelta = true;
+    cohOpts.liveSpecIds = liveSpecIds(srcDir);
+    cohOpts.tracedReqIds = trace ? trace.matrix.filter((m) => m.cov && m.cov.code).map((m) => m.id) : [];
+  }
+  const F = [...checkCoherence(dir, cohOpts), ...checkArtifacts(dir)];
+  if (trace) {
+    for (const f of trace.findings) {
+      if (strict.trace && f.rule === 'trace.coverage-gap') f.severity = 'error'; // trazabilidad contractual
+      F.push(f);
+    }
+  }
   // severidad canónica (minúsculas/trim): un 'Error'/'BREAKING' de un gate externo no debe escaparse del filtro
   const sev = (f) => String(f && f.severity || '').toLowerCase().trim();
   const errors = F.filter((f) => sev(f) === 'breaking' || sev(f) === 'error');
   return { verdict: errors.length ? 'FAIL' : 'PASS', errors, findings: F };
+}
+
+// IDs de la spec VIVA del proyecto (openspec/specs/*/spec.md, FUERA del change) para R-S6. srcDir = raíz
+// del proyecto. Vacío → la validación de MODIFIED no dispara (fail-safe: no bloquea por falta de datos).
+export function liveSpecIds(srcDir) {
+  if (!srcDir) return [];
+  let domains = []; try { domains = readdirSync(join(srcDir, 'openspec', 'specs')); } catch { return []; }
+  const ids = [];
+  for (const d of domains) {
+    const p = join(srcDir, 'openspec', 'specs', d, 'spec.md');
+    try { if (existsSync(p)) for (const m of readFileSync(p, 'utf8').matchAll(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->/gi)) ids.push(m[1].toUpperCase()); } catch {}
+  }
+  return ids;
+}
+
+// Resuelve la política de gobierno del change: policy.json del change primero, luego openspec/policy.json del
+// proyecto (changeDir = openspec/changes/<name> → raíz = ../..). Sin fichero → DEFAULT_POLICY (mismo veredicto
+// que el gate de hoy). Una policy.json presente pero INVÁLIDA es fail-CLOSED: se reporta como finding error.
+function resolvePolicyFor(changeDir) {
+  for (const p of [join(changeDir, 'policy.json'), join(changeDir, '..', '..', 'policy.json')]) {
+    if (existsSync(p)) {
+      try { const r = loadPolicy(p); return { policy: r.policy, source: r.source, error: null }; }
+      catch (e) { return { policy: DEFAULT_POLICY, source: p, error: e.message }; }
+    }
+  }
+  return { policy: DEFAULT_POLICY, source: 'default', error: null };
 }
 
 // verdict EXPLÍCITO del reviewer en verify-report.md ("## Verdict … PASS/RISK/FAIL" o "Verdict: FAIL").
@@ -140,7 +182,7 @@ function reviewerVerdict(dir) {
   } catch { return null; }
 }
 
-export function next({ changeDir, srcDir }) {
+export function next({ changeDir, srcDir, override = null, overrideBy = null, strict = null }) {
   if (!existsSync(statePath(changeDir))) return { error: 'no hay run activo; llama a conductor_start primero.' };
   const s = loadState(changeDir);
   if (s.status === 'done') return { done: true, verdict: s.verdict || 'GREEN' };
@@ -150,6 +192,16 @@ export function next({ changeDir, srcDir }) {
   const writeTo = artifactOf(phase, s.domain);
   const artifactExists = phase === 'spec' ? !!readSpec(changeDir) : existsSync(join(changeDir, writeTo));
   if (!artifactExists) return { advanced: false, error: `el paso "${phase}" no está hecho: falta ${writeTo}. Escríbelo con \`edit\` y vuelve a llamar conductor_next.`, ...stepFor(changeDir, s) };
+
+  // CLARIFY-GATE (R-S5, opt-in strict.clarify): no avanzar de clarify mientras queden preguntas SIN responder
+  // (convención determinista en questions.md: "- [ ]" pendiente / "- [x]" resuelta). El run termina BLOCKED
+  // (resume tras responderlas); NUNCA re-lanza el agente en bucle. Solo presets medio/alto lo activan → cero
+  // fricción en el flujo trivial (que ni tiene fase clarify). El estado queda 'running' para que el resume retome.
+  if (phase === 'clarify' && strict?.clarify) {
+    let q = ''; try { q = readFileSync(join(changeDir, 'questions.md'), 'utf8'); } catch {}
+    const pending = (q.match(/^\s*-\s*\[ \]/gim) || []).length;
+    if (pending > 0) return { done: true, verdict: 'BLOCKED', phase, reason: `clarify: ${pending} pregunta(s) sin responder en questions.md — márcalas "- [x]" tras resolverlas y reanuda` };
+  }
 
   // 2) si es verify → corre el gate determinista + EL VERDICT DEL REVIEWER GATEA (auditoría senior: antes el
   // review era decorativo; ahora un "Verdict: FAIL" explícito del reviewer impide GREEN aunque el gate
@@ -163,22 +215,34 @@ export function next({ changeDir, srcDir }) {
       s.status = 'done'; s.verdict = 'NOT-GREEN'; saveState(changeDir, s);
       return { done: true, verdict: 'NOT-GREEN', reason: 'verify sin fase de implementación previa en el plan (estado inválido o pipeline sin apply)' };
     }
-    const g = runGate(changeDir, srcDir);
+    const g = runGate(changeDir, srcDir, strict || {});
     const rev = reviewerVerdict(changeDir);
-    const errors = rev === 'FAIL' ? [...g.errors, { rule: 'review.verdict-fail', severity: 'error', message: 'el reviewer declaró Verdict: FAIL (revisa verify-report.md)', file: 'verify-report.md' }] : g.errors;
-    if (g.verdict === 'FAIL' || rev === 'FAIL') {
+    // findings COMPLETOS para la política: gate + (el Verdict:FAIL del reviewer como finding error).
+    const revFinding = rev === 'FAIL' ? { rule: 'review.verdict-fail', severity: 'error', message: 'el reviewer declaró Verdict: FAIL (revisa verify-report.md)', file: 'verify-report.md' } : null;
+    const allFindings = revFinding ? [...g.findings, revFinding] : g.findings;
+    // policy.enforce() = control plane de gobierno cableado al run vivo. Con DEFAULT_POLICY
+    // (blockSeverity=error · mandatoryGates=coherence+artifacts, que SIEMPRE corren aquí) el veredicto es
+    // IDÉNTICO al gate de hoy → wiring behavior-preserving. Un openspec/policy.json real solo ENDURECE
+    // (blockSeverity:warning, mandatoryGates extra) o audita un override justificado. verify NUNCA se relaja.
+    const ranGates = ['coherence', 'artifacts', ...(srcDir && existsSync(srcDir) ? ['trace'] : [])];
+    const pol = resolvePolicyFor(changeDir);
+    const polFindings = pol.error ? [...allFindings, { rule: 'policy.invalid', severity: 'error', message: `policy.json inválida (${pol.error}) — fail-closed`, file: 'policy.json' }] : allFindings;
+    const pe = enforce(polFindings, pol.policy, { ranGates, override, overrideBy, at: new Date().toISOString() });
+    const blocking = (pe.blocking && pe.blocking.length) ? pe.blocking : (revFinding ? [revFinding, ...g.errors] : g.errors);
+    if (pe.verdict === 'FAIL') {
       // insertar el ciclo fix JUSTO ANTES de la verify terminal, CONSERVANDO el resto del plan. (Antes se
       // truncaba todo lo posterior a apply: un pipeline ["spec","apply","design","verify"] perdía "design".)
       const vi = s.idx;
       s.phases = [...s.phases.slice(0, vi), 'fix', ...s.phases.slice(vi)];
       s.idx = vi; // apunta al "fix" recién insertado
       s.fixCycles = (s.fixCycles || 0) + 1;
-      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'NOT-GREEN'; saveState(changeDir, s); return { done: true, verdict: 'NOT-GREEN', reason: 'gate/reviewer sigue fallando tras 2 ciclos; escalar a humano', findings: errors }; }
+      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'verify', reason: 'gate sigue fallando tras 2 ciclos de fix — escalar a humano (revisa los hallazgos, corrige manualmente y reanuda)', findings: blocking, policy: { source: pol.source, verdict: pe.verdict } }; }
       saveState(changeDir, s);
-      return { ...stepFor(changeDir, s), gate: 'FAIL', findings: errors, instruction: `${INSTRUCTION.fix} Hallazgos: ${errors.map((f) => f.message).join(' | ')}` };
+      return { ...stepFor(changeDir, s), gate: 'FAIL', findings: blocking, instruction: `${INSTRUCTION.fix} Hallazgos: ${blocking.map((f) => f.message).join(' | ')}`, policy: { source: pol.source, verdict: pe.verdict } };
     }
-    s.status = 'done'; s.verdict = 'GREEN'; saveState(changeDir, s);
-    return { done: true, verdict: 'GREEN', gate: 'PASS' };
+    // PASS u OVERRIDDEN (override justificado y permitido) → GREEN; el audit del override queda en el estado.
+    s.status = 'done'; s.verdict = 'GREEN'; if (pe.audit) s.override = pe.audit; saveState(changeDir, s);
+    return { done: true, verdict: 'GREEN', gate: 'PASS', policy: { source: pol.source, verdict: pe.verdict, ...(pe.audit ? { audit: pe.audit } : {}) } };
   }
 
   // 3) avanzar a la siguiente fase

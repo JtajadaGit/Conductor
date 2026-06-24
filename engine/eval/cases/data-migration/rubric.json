@@ -1,0 +1,6 @@
+{
+  "pass": 100,
+  "gate": 40,
+  "trace": { "src": "migrations", "maxGaps": 1, "weight": 30 },
+  "requirements": { "ids": ["Email Verified"], "weight": 30 }
+}

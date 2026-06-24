@@ -1,0 +1,5 @@
+{
+  "pass": 100,
+  "gate": 60,
+  "requirements": { "ids": ["Validator"], "weight": 40 }
+}

@@ -43,9 +43,11 @@ export function aggregateStats(projects) {
   const list = (projects || []).map((p) => (typeof p === 'string' ? { root: p } : p)).filter((p) => p && p.root);
   const byProvider = Object.create(null); // provider -> acumulado (sin prototipo: un modelo "toString" no colisiona)
   const byModel = Object.create(null); // model -> acumulado
+  const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
   const perProject = [];
   let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0;
   let msTotal = 0, msRuns = 0, tin = 0, tout = 0, cost = 0, naive = 0;
+  let fixRuns = 0, recoveredRuns = 0; // self-repair: runs que tuvieron ≥1 ciclo fix y cuántos acabaron GREEN
 
   for (const proj of list) {
     let pRuns = 0, pGreen = 0, pFailed = 0, pPhases = 0, pIn = 0, pOut = 0, pCost = 0, pNaive = 0, pByok = 0, pCop = 0;
@@ -60,6 +62,10 @@ export function aggregateStats(projects) {
       else if (v === 'RUNNING') running++;
       else { failed++; pFailed++; } // RED / desconocido cuentan como no-verde
       if (Number.isFinite(tl.total_ms) && tl.total_ms > 0) { msTotal += tl.total_ms; msRuns++; }
+      // self-repair: el ciclo fix→verify recuperó el run sin humano (mide los "dientes" del gate). Timelines
+      // antiguos sin selfRepair: fallback a contar las fases 'fix' presentes (recovered ≈ acabó GREEN).
+      const sr = tl.selfRepair || (Array.isArray(tl.phases) ? { fixCycles: tl.phases.filter((p) => p && p.phase === 'fix').length, recovered: v === 'GREEN' && tl.phases.some((p) => p && p.phase === 'fix') } : {});
+      if (Number(sr.fixCycles) > 0) { fixRuns++; if (sr.recovered) recoveredRuns++; }
       for (const ph of tl.phases) {
         if (!ph || typeof ph !== 'object') continue; // M8: un elemento null en phases reventaba la agregación (500 global)
         phasesTotal++; pPhases++;
@@ -75,6 +81,7 @@ export function aggregateStats(projects) {
         bp.calls++; bp.in += i; bp.out += o; bp.cost += c; bp.naive += nc; if (ph.model || ph.modelReported) bp.models.add(m);
         const bm = (byModel[m] ||= { model: m, providers: new Set(), calls: 0, in: 0, out: 0, cost: 0, naive: 0 });
         bm.calls++; bm.in += i; bm.out += o; bm.cost += c; bm.naive += nc; bm.providers.add(prov);
+        if (ph.phase) { const mpk = `${m}|${ph.phase}`; const mp = (byModelPhase.has(mpk) ? byModelPhase.get(mpk) : byModelPhase.set(mpk, { model: m, phase: ph.phase, calls: 0, green: 0, in: 0, out: 0 }).get(mpk)); mp.calls++; mp.in += i; mp.out += o; if (v === 'GREEN') mp.green++; }
       }
     }
     if (pRuns) perProject.push({
@@ -91,6 +98,7 @@ export function aggregateStats(projects) {
     runs, green, failed, stopped, aborted, running, phases: phasesTotal,
     mean_ms: msRuns ? Math.round(msTotal / msRuns) : 0,
     tokens: { in: tin, out: tout },
+    selfRepair: { runs_with_fix: fixRuns, recovered: recoveredRuns, rate_pct: fixRuns > 0 ? +((recoveredRuns / fixRuns) * 100).toFixed(1) : 0 },
     cost_usd: +cost.toFixed(4), naive_all_premium_usd: +naive.toFixed(4),
     saved_usd: +saved.toFixed(4), saved_pct: naive > 0 ? +((saved / naive) * 100).toFixed(1) : 0,
     byProvider: Object.values(byProvider)
@@ -101,6 +109,7 @@ export function aggregateStats(projects) {
       // puede correr vía byok Y vía copilot en runs distintos → "byok+copilot" en vez de bloquear al 1º.
       .map((v) => ({ model: v.model, provider: [...v.providers].join('+'), calls: v.calls, in: v.in, out: v.out, cost_usd: +v.cost.toFixed(4), naive_usd: +v.naive.toFixed(4) }))
       .sort((a, b) => b.calls - a.calls),
+    byModelPhase: [...byModelPhase.values()].sort((a, b) => a.model.localeCompare(b.model) || a.phase.localeCompare(b.phase)),
     perProject: perProject.sort((a, b) => b.runs - a.runs),
   };
 }

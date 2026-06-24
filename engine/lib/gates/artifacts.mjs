@@ -3,8 +3,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const RULES = {
-  'proposal.md': [[/^##\s+Why/im, 'falta sección ## Why'], [/^##\s+What Changes/im, 'falta ## What Changes'], [/^##\s+Impact/im, 'falta ## Impact']],
-  'design.md': [[/^##\s+Context/im, 'falta ## Context'], [/^##\s+Decisions/im, 'falta ## Decisions']],
+  'proposal.md': [[/^##\s+(Why|Por qu[eé]|Motivaci[oó]n)/im, 'falta sección ## Why'], [/^##\s+(What Changes|Qu[eé] cambia|Cambios)/im, 'falta ## What Changes'], [/^##\s+(Impact|Impacto)/im, 'falta ## Impact']],
+  'design.md': [[/^##\s+(Context|Contexto)/im, 'falta ## Context'], [/^##\s+(Decisions|Decisiones)/im, 'falta ## Decisions']],
   'tasks.md': [[/^\s*-\s*\[( |x|X)\]/im, 'sin checkboxes de tarea']],
 };
 

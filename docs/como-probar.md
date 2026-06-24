@@ -72,6 +72,36 @@ del reviewer y funde un solo informe por secciones. Configurable en `openspec/co
 ```
 Credenciales BYOK: por env o `~/.conductor/byok.json` — **nunca en el repo**.
 
+## Adoptar conductor en un proyecto existente
+El flujo es el mismo sea cual sea el stack:
+1. **`/sdd-init`** (una vez): detecta stack, test runner y arquitectura leyendo los manifiestos (`package.json`, `pom.xml`, `composer.json`, `angular.json`, `sfdx-project.json`…) y deja la config base.
+2. **`/sdd-instructions`**: genera `.github/instructions/*.instructions.md` (con `applyTo:`) a partir de tu configuración real. Revísalos y **añade a mano** lo que la IA no deduce (convenciones del equipo, zonas frágiles). Re-ejecutar solo actualiza los autogenerados; tus ediciones manuales se conservan.
+3. Lanza features con **`/sdd-run …`**.
+
+Por escenario: **greenfield** → los instruction files saldrán escuetos, itéralos al definir convenciones · **legacy** → empieza por refactors pequeños con pausas (sin auto-aprobar), documenta a mano las reglas legacy, no exijas checks de test si no hay cobertura · **monorepo** → un instruction file por app delimitado con `applyTo` (`apps/frontend/**`, `apps/api/**`).
+
+Dos vías complementarias para fijar convenciones:
+- **`.github/instructions/*.md`** (`applyTo`): las auto-aplica Copilot por glob.
+- **`.conductor/skills/*.md`** (patrones de equipo): conductor los **inyecta en el prompt de la fase** → funcionan también con qwen/BYOK (sin auto-apply por glob). `conductor skills index` regenera el índice.
+
+## Por stack — convenciones que conviene fijar
+`/sdd-init` detecta el stack; estas son las reglas/anti-patrones de más valor como instruction file o patrón de equipo:
+
+| Stack | Conviene fijar |
+|---|---|
+| **Angular 19+** | Standalone (sin NgModules), `@if`/`@for` (no `*ngIf`), `signal()` (no `BehaviorSubject`), `inject()` (no DI por constructor); capas `features/` · `shared/` · `core/`. |
+| **React + Next.js** | Server Components por defecto (`use client` solo si hace falta); estado con Zustand; funcional (no class); `useMemo` para derivado (no `useEffect`). |
+| **Java / Spring Boot** | Inyección por constructor (no `@Autowired` en campo); DTOs con Records (no exponer Entities en controllers); Flyway para migraciones (no `ddl-auto` en prod). |
+| **PHP / Laravel** | Controllers ligeros (Form Requests + Services); route model binding; Resource classes para JSON. |
+| **Salesforce (Apex + LWC)** | Trigger→Handler→Service→Selector; **nunca SOQL/DML en bucles** (bulkificar); `USER_MODE` en SOQL; `lwc:if` (no `if:true`); cobertura ≥75%. |
+| **SFCC (B2C Commerce)** | MVC por cartridge; **nunca tocar `app_storefront_base`** (overlay en cartridge custom); CommonJS; controllers SFRA; sin lógica de negocio en ISML. |
+| **SAP Spartacus** | **Nunca modificar `@spartacus/*`** (extender con custom components / `provideConfig()`); composición por outlets (`cxOutletRef`); `CommandService`/`QueryService` para OCC (no `HttpClient`); i18n en `assets/translations/`. |
+| **Magento 2** | DI por `di.xml`+constructor (no `ObjectManager`); plugins before/after/around (no tocar core); Resource Models + Collections (no SQL crudo); escapado de output obligatorio. |
+| **Vue / Nuxt** | Composition API `<script setup>` (no Options API); Pinia (no Vuex); `defineProps<T>()`; `useFetch` SSR / `$fetch` cliente. |
+| **Hybris (legacy)** | Capas Controller/Facade/Service/DAO; nunca modificar clases core (extender + override en `spring.xml`). |
+
+> Pega estas reglas como anti-patrones en el instruction file del stack (o como `.conductor/skills/<stack>.md`). El gate de conductor verifica coherencia/artefactos/traza **sin LLM**; la calidad del *contenido* la guían estas convenciones.
+
 ## Qué mirar si algo falla
 - La app muestra el **motivo** en la fase (rojo) y el 📜 registro completo.
 - `ABORTED` = una fase no produjo artefacto (modelo caído/timeout): ⏯ Reanudar repaga solo esa fase.

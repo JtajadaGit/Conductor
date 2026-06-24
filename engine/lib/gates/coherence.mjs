@@ -23,10 +23,14 @@ export function readSpec(dir) {
 
 export function parseSpec(text) {
   const deltaHeaders = [...text.matchAll(/^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements/gim)].map((m) => m[1].toUpperCase());
-  const reqs = []; let cur = null;
+  const reqs = []; let cur = null, pendingId = null, currentDelta = 'ADDED';
   for (const line of text.split(/\r?\n/)) {
+    const dm = line.match(/^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements/i);
+    if (dm) { currentDelta = dm[1].toUpperCase(); continue; } // rastrea la sección delta actual (R-S6)
+    const idm = line.match(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->/i);
+    if (idm) { pendingId = idm[1].toUpperCase(); continue; }
     const r = line.match(/^###\s+Requirement:\s*(.+?)\s*$/i);
-    if (r) { cur = { name: r[1], scenarios: [] }; reqs.push(cur); continue; }
+    if (r) { cur = { name: r[1], id: pendingId, scenarios: [], deltaType: currentDelta }; reqs.push(cur); pendingId = null; continue; }
     const s = line.match(/^####\s+Scenario:\s*(.+?)\s*$/i);
     if (s && cur) cur.scenarios.push(s[1]);
   }
@@ -54,7 +58,7 @@ export function parseReport(text) {
   return { status, tasksCompleted: tc ? { x: +tc[1], y: +tc[2] } : null, filesCreated: fileList('Files created'), filesModified: fileList('Files modified') };
 }
 
-export function checkCoherence(dir) {
+export function checkCoherence(dir, opts = {}) {
   const F = [];
   const E = (rule, message, file) => F.push({ rule, severity: 'error', message, file });
   const W = (rule, message, file) => F.push({ rule, severity: 'warning', message, file });
@@ -73,6 +77,25 @@ export function checkCoherence(dir) {
     if (!spec.deltaHeaders.length) E('spec.no-delta', 'spec.md sin cabecera delta (## ADDED|MODIFIED|REMOVED|RENAMED Requirements)', 'spec.md');
     if (!spec.requirements.length) E('spec.no-requirement', 'spec.md sin "### Requirement:"', 'spec.md');
     for (const r of spec.requirements) if (!r.scenarios.length) E('spec.requirement-no-scenario', `requisito "${r.name}" sin "#### Scenario:"`, 'spec.md');
+    // ID estable (R-S2): el id explícito `<!-- id: REQ-{SLUG} -->` desacopla la trazabilidad de la redacción.
+    // Sin él, renombrar el requisito ROMPE la traza en silencio. En preset estricto/migración (opts.strictId)
+    // su ausencia es error (bloquea); en modo laxo no se emite (cero regresión — antes no había finding de id).
+    if (opts.strictId) for (const r of spec.requirements) if (!r.id) E('spec.requirement-no-id', `requisito "${r.name}" sin id estable "<!-- id: REQ-... -->" (exigido por el preset)`, 'spec.md');
+    // VALIDACIÓN SEMÁNTICA DEL DELTA (R-S6, preset migration): MODIFIED/REMOVED coherentes con la spec VIVA
+    // (opts.liveSpecIds) y el código TRAZADO (opts.tracedReqIds). Opt-in (solo si opts.semanticDelta) → cero
+    // regresión cuando no se pasa. Determinista, sin LLM.
+    if (opts.semanticDelta) {
+      const liveIds = new Set(opts.liveSpecIds || []);
+      const tracedIds = new Set(opts.tracedReqIds || []);
+      for (const r of spec.requirements) {
+        if (r.deltaType === 'MODIFIED') {
+          if (!r.id) E('delta.modified-no-id', `requisito MODIFIED "${r.name}" sin id estable — no se puede rastrear en la spec viva`, 'spec.md');
+          else if (liveIds.size && !liveIds.has(r.id)) E('delta.modified-not-in-live', `MODIFIED ${r.id} no existe en la spec viva (no se puede modificar lo inexistente)`, 'spec.md');
+        } else if (r.deltaType === 'REMOVED' && r.id && tracedIds.has(r.id)) {
+          E('delta.removed-code-exists', `REMOVED ${r.id} aún tiene código trazado en el árbol (debe desaparecer antes de cerrar la migración)`, 'spec.md');
+        }
+      }
+    }
   }
   if (tasks && !tasks.length) E('tasks.empty', 'tasks.md sin tareas', 'tasks.md');
   if (tasks && report) {

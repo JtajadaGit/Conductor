@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 ## Purpose
 
-Bootstrap `openspec/` — the persistence layer for the SDD pipeline. Detects stack, testing, architecture and stores it as executable config in `openspec/config.yaml`. This file drives agent behavior — which agents run, what test/build commands they invoke, in what order.
+Bootstrap `openspec/` — the persistence layer for the SDD pipeline. Detects stack, testing and architecture and stores them in `openspec/config.yaml` (OpenSpec rules + detected stack/testing metadata). The **executable** pipeline config (models per phase, lenses, pauses, custom pipeline, checks) lives in `openspec/conductor.json` and is run by the **deterministic driver** — the code drives the phases in order; there are no agents to dispatch.
 
 **Does NOT generate instruction files.** This skill ONLY creates `openspec/`. It must NOT invoke `/sdd-instructions` or any other skill — the user decides what to run next.
 
@@ -47,31 +47,9 @@ Priority chain (first match wins):
       └── archive/
   ```
 
-### 5b. Generate `.copilotignore` (if not exists)
+### 5b. `.copilotignore` (lo genera el MOTOR — no lo escribas a mano)
 
-If `.copilotignore` does not exist, create it with this exact content (context exclusion = direct token savings: everything listed here would otherwise inflate every model request):
-
-```
-node_modules/
-dist/
-build/
-out/
-target/
-coverage/
-.angular/
-*.log
-*.lock
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-.env
-.env.*
-*.pem
-*.key
-*.min.js
-*.map
-openspec/changes/**/.conductor/
-```
+**No escribas `.copilotignore` manualmente.** El paso **5b2** (`conductor_init_config`) lo genera de forma **DETERMINISTA** desde el motor, en el root del proyecto (exclusión de contexto = ahorro directo de tokens; idempotente, **nunca pisa** el del usuario). El host Copilot lo honra de forma nativa. (Contenido: `node_modules/`, `dist/`, `build/`, `out/`, `target/`, `coverage/`, `.angular/`, `*.log`, `*.lock`, lockfiles, `.env*`, `*.pem`, `*.key`, `*.min.js`, `*.map`, `openspec/changes/**/.conductor/`.)
 
 ### 5b2. Scaffold the user config (editor autocomplete)
 
@@ -125,68 +103,37 @@ x-conductor:
     coverage: { available: false, command: "" }
     quality: { linter: "", type_checker: "", formatter: "" }
 
-  # DECLARATIVE PIPELINE — the orchestrator reads this and dispatches agents in order
+  # PIPELINE — DESCRIPTIVO solo: documenta el flujo de fases por defecto. El motor NO lee config.yaml.
+  # El pipeline EJECUTABLE (reordenar/omitir fases, modelos por fase, lentes, pausas, checks, comandos de
+  # test/build in-loop, post_hook) vive en openspec/conductor.json (su propio JSON Schema). El driver
+  # DETERMINISTA recorre las fases por complejidad y asigna el rol en código — no hay agentes que despachar.
   pipeline:
     max_review_cycles: 2
-    agent_timeout_seconds: 300
     phases:
       - name: explore
-        agent: sdd-planner
         optional: true
         artifact: exploration.md
-        max_words: 400
-
       - name: propose
-        agent: sdd-planner
         optional: false
         artifact: proposal.md
-        max_words: 400
-
       - name: clarify
-        agent: sdd-planner
         optional: true
         artifact: questions.md
-        max_words: 300
-
       - name: spec
-        agent: sdd-planner
         optional: false
         artifact: specs/{domain}/spec.md
-        max_words: 650
-
       - name: design
-        agent: sdd-planner
         optional: true
         artifact: design.md
-        max_words: 800
-
       - name: tasks
-        agent: sdd-planner
         optional: true
         artifact: tasks.md
-        max_words: 530
-
       - name: apply
-        agent: sdd-coder
         optional: false
         artifact: apply-report.md
-        pre_hook: ""
-        post_hook: ""
-        post_hook_on_fail: retry
-        post_hook_max_retries: 3
-
       - name: verify
-        agent: sdd-reviewer
         optional: false
         artifact: verify-report.md
-        gate: { changeDir: "openspec/changes/{change}" }   # deterministic non-LLM gate (conductor_gate MCP tool)
-        test_command: ""
-        build_command: ""
-        coverage_threshold: 0
-
-      - name: archive
-        agent: orchestrator
-        optional: true
 ```
 
 ### 7. Return Summary
@@ -212,7 +159,7 @@ Always end with this exact text (print it, do NOT execute it):
 - NEVER create placeholder spec files.
 - ALWAYS detect real stack from project files, don't guess.
 - `/sdd-init` owns `openspec/` ONLY — does NOT write to `.github/instructions/`.
-- **Default `test_command: ""` and `build_command: ""` in the `verify` phase.** conductor's in-loop verification is the **deterministic gate** (tech-agnostic, instant) plus the apply phase's fast `post_hook` check — NOT the project's full test suite. The full test/build is delegated to **CI** (generate it with the CI workflow), where latency/quirks are acceptable. This keeps the plugin agnostic and prevents any slow or non-terminating test runner from blocking the pipeline. Store the detected commands under `x-conductor.testing` (metadata, for the CI generator) — do NOT wire them as in-loop verify commands by default.
+- **In-loop test/build commands are OFF by default.** (If you ever want them, set them in `openspec/conductor.json`'s `verify` phase — never in `config.yaml`, which the engine does not read.) conductor's in-loop verification is the **deterministic gate** (tech-agnostic, instant) plus the apply phase's fast `post_hook` check — NOT the project's full test suite. The full test/build is delegated to **CI** (generate it with the CI workflow), where latency/quirks are acceptable. This keeps the plugin agnostic and prevents any slow or non-terminating test runner from blocking the pipeline. Store the detected commands under `x-conductor.testing` (metadata, for the CI generator) — do NOT wire them as in-loop verify commands by default.
 - If the user explicitly wants in-loop tests, the configured command MUST be the runner's **single-run / non-watch** invocation, called via the runner's own binary (not via a package-manager script wrapper, which often fails to pass flags and leaves the process in watch mode → hangs). Use only real, documented flags of that runner; never invent flags. It MUST be a command you are confident terminates on its own.
 - For `verify`, never use a production/optimized build — it is slow and redundant (the tests, or the apply `post_hook`, already compile the code). A verify build, if any, is a fast check only.
 - Fill the apply-phase `post_hook` with the stack's FAST static/type check if one exists — the cheap in-loop "does it compile" signal.

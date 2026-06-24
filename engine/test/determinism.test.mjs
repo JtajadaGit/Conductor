@@ -208,3 +208,22 @@ await test('gate: 3 lentes marcando ❌ NO pasan a GREEN (el reviewer multi-lent
   const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'teeth'), request: 'do x', complexity: 'simple', domain: 'core', srcDir: TMP, runAgent: agent });
   assert(r.verdict !== 'GREEN', `verificación con escenarios en ❌ NO puede ser GREEN (fue ${r.verdict})`);
 });
+
+// ── 7) BLOCKED-NEEDS-HUMAN: gate falla >2 ciclos de fix → BLOCKED (no NOT-GREEN), resumable ──
+await test('gate: >2 ciclos de fix sin converger → BLOCKED (escalar a humano, resumable)', async () => {
+  fresh({ maxRetries: 0 });
+  const agentAlwaysFails = ({ phase, writeTo, cwd }) => {
+    if (phase === 'apply' || phase === 'fix') {
+      mkdirSync(join(cwd, 'src'), { recursive: true });
+      writeFileSync(join(cwd, 'src', 'x.js'), '// @conductor REQ-X\nexport const x = (n) => n + 1;\n');
+      writeFileSync(join(cwd, 'src', 'x.test.js'), '// @conductor REQ-X\nimport { x } from "./x.js";\nif (x(1) !== 2) throw new Error("f");\n');
+    } else if (writeTo) {
+      mkdirSync(dirname(writeTo), { recursive: true });
+      writeFileSync(writeTo, /spec\.md$/.test(writeTo) ? REQSPEC : '❌ Scenario: NOT IMPLEMENTED');
+    }
+    return Promise.resolve({ code: 0 });
+  };
+  const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'blocked-fix'), request: 'do x', complexity: 'simple', domain: 'core', srcDir: TMP, runAgent: agentAlwaysFails });
+  eq(r.verdict, 'BLOCKED', 'tras >2 fix sin converger → BLOCKED (escalable a humano, no NOT-GREEN irreversible)');
+  assert(r.reason && r.reason.includes('escalar a humano'), 'el motivo indica que hay que escalar a humano');
+});

@@ -48,11 +48,7 @@ Warn and ask confirmation if merge would be destructive (removing large sections
 
 If `verify-report.md` contains a `## Suggested Instruction Updates` section, apply those updates to the relevant platform instruction files.
 
-### 4. Update state.yaml
-
-Update the EXISTING state.yaml at `openspec/changes/{change-name}/state.yaml` (the change's own state file) — set `archive: done`, `current_phase: archive`, `updated: {ISO-8601 now}`. Preserve all previous keys (`change`, `status`, `phases`, etc.). NEVER create a new `openspec/state.yaml` at the root — that path is not part of the OpenSpec standard and will leave an orphan file after move-to-archive.
-
-### 4.5 Seal provenance + chain (if engine installed)
+### 4. Seal provenance + chain (if engine installed)
 
 If the `conductor` command is available (installed via `/sdd-verify`), produce signed, auditable
 evidence that this GREEN change passed the gates, and append it to the tamper-evident provenance chain

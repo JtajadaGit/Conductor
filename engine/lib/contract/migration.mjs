@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, basename } from 'node:path';
 
-const RULES = [
+export const RULES = [
   // destructivas / pérdida de datos
   { re: /\bdrop\s+table\b/i, rule: 'migration.drop-table', sev: 'breaking', msg: 'DROP TABLE (pérdida de datos; usa expand-contract y borra en una fase posterior)' },
   { re: /\b(alter\s+table\s+\S+\s+)?drop\s+column\b/i, rule: 'migration.drop-column', sev: 'breaking', msg: 'DROP COLUMN (rompe lectores del esquema viejo durante el rolling deploy)' },

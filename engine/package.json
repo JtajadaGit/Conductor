@@ -16,8 +16,5 @@
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT",
-  "devDependencies": {
-    "esbuild": "^0.28.0"
-  }
+  "license": "MIT"
 }

@@ -62,6 +62,26 @@ function splitTopLevel(s) {
   return out;
 }
 
+// sinónimos de tipo por dialecto: INT/INTEGER, DECIMAL/NUMERIC, BOOL/BOOLEAN, "timestamp with time zone"… son
+// el MISMO tipo. Normalizamos el NOMBRE base (preservando longitud/precisión, que sí es un cambio real) para no
+// marcar un rename de dialecto como "tipo cambiado" (falso positivo que entrena al equipo a ignorar el gate).
+const TYPE_SYNONYM = {
+  integer: 'int', int4: 'int', int2: 'smallint', int8: 'bigint',
+  numeric: 'decimal', dec: 'decimal',
+  boolean: 'bool',
+  'character varying': 'varchar', varchar2: 'varchar',
+  character: 'char',
+  'double precision': 'double', float8: 'double', float4: 'real',
+  'timestamp without time zone': 'timestamp', 'timestamp with time zone': 'timestamptz',
+  'time without time zone': 'time',
+};
+function normType(t) {
+  const s = String(t == null ? '' : t).toLowerCase().replace(/\s+/g, ' ').trim();
+  const m = s.match(/^([a-z][a-z ]*?)\s*(\([^)]*\))?$/); // nombre base + (longitud/precisión) opcional
+  if (!m) return s;
+  return (TYPE_SYNONYM[m[1].trim()] || m[1].trim()) + (m[2] ? m[2].replace(/\s+/g, '') : '');
+}
+
 export function diffSchema(baseSql, headSql) {
   const b = parseSchema(baseSql).tables, h = parseSchema(headSql).tables;
   const out = [];
@@ -72,7 +92,7 @@ export function diffSchema(baseSql, headSql) {
       const p = `${name}.${col}`;
       const hc = ht.columns[col];
       if (!hc) { out.push({ rule: 'sql.column-dropped', severity: SEV.BREAKING, pointer: p, message: `columna eliminada: ${p} (rompe lecturas/escrituras existentes)` }); continue; }
-      if (bc.type !== hc.type) out.push({ rule: 'sql.type-changed', severity: SEV.BREAKING, pointer: p, message: `tipo cambiado en ${p}: ${bc.type} → ${hc.type}`, was: bc.type, now: hc.type });
+      if (normType(bc.type) !== normType(hc.type)) out.push({ rule: 'sql.type-changed', severity: SEV.BREAKING, pointer: p, message: `tipo cambiado en ${p}: ${bc.type} → ${hc.type}`, was: bc.type, now: hc.type });
       if (bc.nullable && !hc.nullable && !hc.hasDefault) out.push({ rule: 'sql.not-null-added', severity: SEV.BREAKING, pointer: p, message: `NOT NULL añadido sin DEFAULT en ${p} (filas existentes fallan)` });
     }
     for (const [col, hc] of Object.entries(ht.columns)) {

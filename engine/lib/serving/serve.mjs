@@ -20,7 +20,9 @@ const NO_UI = '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta 
 const RUN_PAGE = NO_UI, PANEL_PAGE = NO_UI;
 import { uiStaticDir, hasStaticUi, serveStatic } from './ui-static.mjs';
 import { estimateRun } from '../core/estimate.mjs';
-import { listArchive, searchChanges } from '../analysis/archive.mjs';
+import { listArchive, searchChanges, promoteSpec, archiveChange } from '../analysis/archive.mjs';
+import { explain, renderSpec, renderTasks } from '../analysis/explain.mjs';
+import { initConfig } from '../analysis/scaffold.mjs';
 import { aggregateStats } from '../core/stats.mjs';
 import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
@@ -89,6 +91,15 @@ function liveFiles(srcDir, cur) {
 // /usage del proveedor BYOK (LiteLLM): gasto y presupuesto de TU key vía GET /key/info (la misma key,
 // solo lectura, cada 60s, best-effort — sin datos la tarjeta no aparece). Opt-out: CONDUCTOR_USAGE=0.
 let _usage = { at: 0, data: null, startSpend: null };
+// extra a redactar en egress: la key de byok.json NO está en el env del server, así que el patrón sk-/Bearer
+// no la cubre si tiene otro formato (virtual key LiteLLM). Se resuelve UNA vez y se memoiza (byokCredsLocal
+// puede descifrar DPAPI → no llamarlo por poll). Defensa en profundidad: si el modelo ecoa la key, se redacta.
+let _scrubExtra = null;
+function scrubExtra() {
+  if (_scrubExtra) return _scrubExtra;
+  try { const c = byokCredsLocal(); _scrubExtra = c?.apiKey ? [c.apiKey] : []; } catch { _scrubExtra = []; }
+  return _scrubExtra;
+}
 async function litellmUsage(env = process.env) {
   if (env.CONDUCTOR_USAGE === '0') return null;
   const base = (env.COPILOT_PROVIDER_BASE_URL || '').replace(/\/+$/, ''), key = env.COPILOT_PROVIDER_API_KEY;
@@ -204,11 +215,11 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     cost: { byModel },
     savings,
     live: isCode ? liveFiles(srcDir, cur) : [],
-    logTail: (readHead(join(changeDir, '.conductor', 'log.txt'), 1e6) || '').split('\n').filter(Boolean).slice(-30),
+    logTail: (readHead(join(changeDir, '.conductor', 'log.txt'), 1e6) || '').split('\n').filter(Boolean).slice(-30).map((l) => scrubSecrets(l, process.env, scrubExtra())),
     modelOptions: modelOptions(srcDir, tl),
-    verifyExcerpt: readHead(join(changeDir, 'verify-report.md')),
+    verifyExcerpt: scrubSecrets(readHead(join(changeDir, 'verify-report.md')), process.env, scrubExtra()),
     verdict: tl?.verdict && tl.verdict !== 'running' ? tl.verdict : (st?.status === 'done' ? st.verdict : (alive === false && tl ? 'INTERRUMPIDO' : null)),
-    request: String(tl?.request ?? st?.request ?? '').slice(0, 8000), // L19: acota el request servido (re-render por poll)
+    request: scrubSecrets(String(tl?.request ?? st?.request ?? '').slice(0, 8000), process.env, scrubExtra()), // L19: acota el request servido (re-render por poll)
     complexity: tl?.complexity ?? st?.complexity ?? '',
     resumed: tl?.resumed ?? false,
     total_ms: tl?.total_ms ?? null,
@@ -676,9 +687,32 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       }
       if (u.pathname === '/api/models') return json(200, await availableModels(registry));
       // uso/ahorro agregado (mismo cálculo que `conductor stats`) — multi-proyecto o por ?projectId=
-      if (u.pathname === '/api/stats') { const pid = u.searchParams.get('projectId'); const scope = pid ? [projOf(pid)].filter(Boolean) : [...registry.values()]; return json(200, aggregateStats(scope)); }
+      if (u.pathname === '/api/stats') { const pid = u.searchParams.get('projectId'); const scope = pid ? [projOf(pid)].filter(Boolean) : [...registry.values()]; const st = aggregateStats(scope); const realRunning = [...runs.values()].filter((r2) => !r2.exited).length; return json(200, { ...st, running: realRunning }); }
       // estimador de tokens preflight (coste visible en el punto de decisión, sin API)
       if (u.pathname === '/api/estimate') return json(200, estimateRun({ complexity: u.searchParams.get('complexity') || 'medium', request: u.searchParams.get('request') || '' }));
+      // explain app-native: borrador de spec por ingeniería inversa del código (motor determinista, 0 LLM,
+      // 0 red). Por ?projectId= o el default; ?src= opcional (subdir confinado). Devuelve CONTEOS + borradores
+      // (no vuelca files[] → token-first). El walk salta node_modules/.git/dist/... y topa en MAX_FILES.
+      if (u.pathname === '/api/explain') {
+        const pid = u.searchParams.get('projectId');
+        const proj = pid ? projOf(pid) : DEFAULT;
+        if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
+        const srcRel = u.searchParams.get('src') || '';
+        const srcDir = srcRel ? resolve(proj.root, srcRel) : proj.root;
+        if (relative(resolve(proj.root), srcDir).startsWith('..')) return json(400, { ok: false, error: 'src fuera del proyecto' });
+        const { capabilities, openapi } = explain(srcDir);
+        return json(200, { ok: true, capabilities: capabilities.map((c) => ({ id: c.id, name: c.name, endpoints: c.endpoints.length, units: c.units.length, files: c.files.length })), specDraft: renderSpec(capabilities), tasksDraft: renderTasks(capabilities), hasOpenapi: !!openapi });
+      }
+      // init app-native (#74): scaffold SDD del proyecto (openspec/conductor.json + conductor.schema.json +
+      // .copilotignore) vía el motor DETERMINISTA — la app arranca SDD sin depender de la skill. POST (escribe);
+      // idempotente (initConfig NUNCA pisa la config del usuario). Proyecto = el registrado (projectId) o el default.
+      if (req.method === 'POST' && u.pathname === '/api/init') {
+        const b = await readBody(req);
+        const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
+        if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
+        try { const r = initConfig(join(proj.root, 'openspec')); return json(200, { ok: true, created: r.created, copilotignore: r.copilotignore }); }
+        catch (e) { return json(500, { ok: false, error: String(e.message) }); }
+      }
       // board de archive + búsqueda ligera (sin SQLite). Sin projectId → AGREGA sobre todos los
       // proyectos registrados (coherente con la lista de runs del panel, que es multi-proyecto).
       if (u.pathname === '/api/archive') {
@@ -719,8 +753,10 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         } catch (e) { return json(500, { ok: false, error: String(e.message) }); }
       }
       if (u.pathname === '/api/changes') {
-        // openspec=true ⇔ el proyecto pasó por /sdd-init (tiene openspec/config.yaml) — el form lo señala
-        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: existsSync(join(p.root, 'openspec', 'config.yaml')), changes: listChanges(p.root) }));
+        // openspec=true ⇔ el proyecto pasó por /sdd-init: tiene openspec/config.yaml (metadata OpenSpec) O
+        // openspec/conductor.json (la config EJECUTABLE, fuente de verdad única del pipeline). Cualquiera basta.
+        const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || existsSync(join(root, 'openspec', 'conductor.json'));
+        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
         const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         return json(200, { project: def.name, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
@@ -878,6 +914,20 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (action === 'aiact') {
           try { return html(renderAiact(changeDir)); }
           catch (e) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('aiact: ' + e.message); }
+        }
+        if (req.method === 'POST' && action === 'archive') {
+          // archive app-native: promueve delta specs (ADDED, aditivo-seguro) + mueve el change a archive/ (renameSync).
+          // Pre-vuelo: GREEN y NO en curso. El merge no-aditivo (MODIFIED/REMOVED/RENAMED) se deja a /sdd-archive.
+          if (reg && !reg.exited) return json(409, { ok: false, error: 'run en curso — pausa o detén antes de archivar' });
+          const tlA = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          if (tlA?.verdict !== 'GREEN') return json(409, { ok: false, error: 'solo se archiva un change con veredicto GREEN' });
+          try {
+            const { promoted, needsManualMerge } = promoteSpec(changeDir, join(proj.root, 'openspec', 'specs'));
+            const isoDate = new Date().toISOString().slice(0, 10);
+            const { archivedDir } = archiveChange(changeDir, join(proj.root, 'openspec', 'changes', 'archive'), isoDate);
+            runs.delete(runKey(proj.id, name)); // el change ya no vive en changes/ → limpia el registro de runs
+            return json(200, { ok: true, promoted, needsManualMerge, archivedDir });
+          } catch (e) { return json(500, { ok: false, error: e.message }); }
         }
         return json(404, { ok: false });
       }

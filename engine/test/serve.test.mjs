@@ -2,7 +2,7 @@
 import { createRunServer, createProjectServer, listChanges, runState } from '../lib/serving/serve.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 
 process.env.CONDUCTOR_HOME = join(dirname(fileURLToPath(import.meta.url)), '.tmp-home');
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-serve');
@@ -282,6 +282,77 @@ await test('serve(v3.12): RESUME por ruta scoped /api/run/<pid>/<change>/resume 
   eq(spawned[0].root, R, 'el driver corre con el ROOT del proyecto (no undefined → confirma launch(proj,name,…))');
   eq(spawned[0].name, 'feat-r', 'con el nombre del change');
   eq(spawned[0].request, 'reanuda esto', 'con el request heredado del timeline');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(#63): proyecto con SOLO openspec/conductor.json (sin config.yaml) cuenta como SDD (openspec:true)', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-sdd-detect');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
+  writeFileSync(join(R, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0 })); // conductor.json, SIN config.yaml
+  assert(!existsSync(join(R, 'openspec', 'config.yaml')), 'precondición: el proyecto NO tiene config.yaml');
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: () => ({ on: () => {}, send: () => {}, kill: () => {} }) });
+  const d = await (await fetch(srv.url + 'api/changes')).json();
+  assert(d.projects.some((p) => /[\\/]\.tmp-sdd-detect$/.test(p.root) && p.openspec === true), 'conductor.json basta para marcar el proyecto como SDD (fuente de verdad ejecutable única)');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(#69): GET /api/explain devuelve borrador de spec por ingeniería inversa (0 LLM, 0 red)', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-explain');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, 'src'), { recursive: true });
+  writeFileSync(join(R, 'src', 'api.js'), "app.get('/users', (req,res)=>res.json([]));\napp.post('/users', (req,res)=>{});");
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: () => ({ on() {}, send() {}, kill() {} }) });
+  const d = await (await fetch(srv.url + 'api/explain')).json(); // sin projectId → proyecto default = R
+  eq(d.ok, true);
+  assert(d.capabilities.length >= 1, 'extrae al menos una capacidad');
+  assert(typeof d.capabilities[0].files === 'number', 'devuelve CONTEOS, no el array files[] (token-first)');
+  assert(/## ADDED Requirements/.test(d.specDraft), 'el borrador es un delta spec');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(#69): POST archive — GREEN promueve+mueve; no-GREEN → 409', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-arch-ep');
+  rmSync(R, { recursive: true, force: true });
+  const ch = join(R, 'openspec', 'changes', 'feat-x');
+  mkdirSync(join(ch, '.conductor'), { recursive: true });
+  writeFileSync(join(ch, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'x', phases: [] }));
+  mkdirSync(join(ch, 'specs', 'auth'), { recursive: true });
+  writeFileSync(join(ch, 'specs', 'auth', 'spec.md'), '## ADDED Requirements\n\n### Requirement: Login\nThe system SHALL log in.\n#### Scenario: s\n- **GIVEN** a\n- **WHEN** b\n- **THEN** c\n');
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: () => ({ on() {}, send() {}, kill() {} }) });
+  const pid = (await (await fetch(srv.url + 'api/ping')).json()).projects.find((p) => /[\\/]\.tmp-arch-ep$/.test(p.root)).id;
+  const r = await (await fetch(srv.url + 'api/run/' + pid + '/feat-x/archive', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
+  eq(r.ok, true, 'archiva un change GREEN');
+  assert(/-feat-x$/.test(r.archivedDir), 'mueve a archive/<fecha>-feat-x');
+  assert(!existsSync(ch), 'el change se movió fuera de changes/');
+  assert(existsSync(join(R, 'openspec', 'specs', 'auth', 'spec.md')), 'promovió el delta spec a openspec/specs/');
+  const ch2 = join(R, 'openspec', 'changes', 'feat-y');
+  mkdirSync(join(ch2, '.conductor'), { recursive: true });
+  writeFileSync(join(ch2, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'NOT_GREEN', request: 'y', phases: [] }));
+  const r2 = await fetch(srv.url + 'api/run/' + pid + '/feat-y/archive', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  eq(r2.status, 409, 'un change no-GREEN no se archiva (409)');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(#74): POST /api/init scaffold SDD nativo (conductor.json + .copilotignore), idempotente', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-init-ep');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(R, { recursive: true }); // proyecto SIN openspec
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: () => ({ on() {}, send() {}, kill() {} }) });
+  const r = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
+  eq(r.ok, true); eq(r.created, true, 'crea conductor.json la 1ª vez');
+  assert(existsSync(join(R, 'openspec', 'conductor.json')), 'conductor.json creado');
+  assert(existsSync(join(R, '.copilotignore')), '.copilotignore creado en el root del proyecto');
+  const r2 = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
+  eq(r2.created, false, 'idempotente: no recrea conductor.json del usuario');
   await srv.close();
   rmSync(R, { recursive: true, force: true });
 });

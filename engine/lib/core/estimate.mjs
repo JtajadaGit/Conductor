@@ -48,3 +48,39 @@ export function estimateRun({ changeDir, complexity = 'medium', domain = 'core',
   const noRescanSaved = phases.filter((p) => DERIVED.has(p)).length * RESCAN_EST;
   return { complexity, phases: rows, totalIn, totalOut, total: totalIn + totalOut, noRescanSaved };
 }
+
+// CONTEXTO PRESUPUESTADO (R-T2, token-first): dado un mapa nombre→contenido de artefactos del change,
+// decide cuáles caben en el presupuesto (token-first) y cuáles deben resumirse. Preserva el no-rescan:
+// solo artefactos del change, nunca código fuente. La spec NUNCA se omite (se comprime si excede).
+// Retorna: { included, summarized, tokensUsed, exceeds }
+const DEFAULT_CTX_BUDGET = 12000; // tokens razonables para contexto del change; puede sobreescribirse
+const CTX_PRIORITY = ['spec.md', 'tasks.md', 'design.md', 'apply-report.md', 'verify-report.md'];
+export function budgetContextFiles(artifacts = {}, budget = DEFAULT_CTX_BUDGET) {
+  const result = { included: [], summarized: [], tokensUsed: 0, exceeds: false };
+  for (const fname of CTX_PRIORITY) {
+    const content = artifacts[fname];
+    if (content === undefined || content === null) continue;
+    const tokens = tokensOf(content);
+    if (result.tokensUsed + tokens <= budget) {
+      result.included.push(fname);
+      result.tokensUsed += tokens;
+    } else {
+      result.summarized.push(fname);
+    }
+  }
+  result.exceeds = result.summarized.length > 0;
+  return result;
+}
+
+// Resumidor de artefacto: extrae solo encabezados H2/H3 + comentarios HTML (<!-- id: REQ-* -->) del
+// contenido. Preserva la estructura del artefacto pero descarta la prosa (token-first). El agente sigue
+// viendo TODOS los requisitos (por su id/nombre) sin leer el cuerpo completo.
+export function summarizeArtifact(content) {
+  const lines = String(content || '').split('\n');
+  const out = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || /^##\s/.test(line) || /^###\s/.test(line) || /<!--.*?-->/.test(line)) out.push(line);
+  }
+  return out.join('\n');
+}

@@ -78,6 +78,44 @@ await test('stats: infiere el proveedor por TIER del modelo cuando la fase no lo
   eq(cop.calls, 1, 'sonnet sin provider → copilot por tier');
 });
 
+await test('stats: self-repair rate — runs con ciclo fix que recuperan a GREEN', async () => {
+  fresh();
+  const root = join(TMP, 'proj-sr');
+  // run que falló en verify, hizo un fix y recuperó a GREEN (selfRepair.recovered=true)
+  writeTL(root, 'rec', { verdict: 'GREEN', total_ms: 1000, selfRepair: { fixCycles: 1, recovered: true }, phases: [
+    { phase: 'apply', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+    { phase: 'fix', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+    { phase: 'verify', model: 'claude-haiku-4-5', provider: 'copilot', tokens: { in: 5, out: 5 } },
+  ] });
+  // run que falló y NO recuperó (2 ciclos fix, sigue NOT-GREEN)
+  writeTL(root, 'norec', { verdict: 'NOT-GREEN', total_ms: 1000, selfRepair: { fixCycles: 2, recovered: false }, phases: [
+    { phase: 'apply', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+    { phase: 'fix', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+  ] });
+  // run GREEN limpio sin fix → no cuenta en runs_with_fix
+  writeTL(root, 'clean', { verdict: 'GREEN', total_ms: 1000, selfRepair: { fixCycles: 0, recovered: false }, phases: [
+    { phase: 'apply', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+  ] });
+  const r = aggregateStats([{ root }]);
+  eq(r.selfRepair.runs_with_fix, 2, 'dos runs tuvieron ciclo fix');
+  eq(r.selfRepair.recovered, 1, 'uno recuperó sin humano');
+  eq(r.selfRepair.rate_pct, 50, 'self-repair rate = 50%');
+});
+
+await test('stats: self-repair compat — timelines antiguos sin selfRepair (infiere por fases fix)', async () => {
+  fresh();
+  const root = join(TMP, 'proj-srold');
+  // timeline VIEJO (sin campo selfRepair) con una fase fix y GREEN → debe contar como recuperado
+  writeTL(root, 'old', { verdict: 'GREEN', total_ms: 1000, phases: [
+    { phase: 'apply', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+    { phase: 'fix', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 5, out: 5 } },
+    { phase: 'verify', model: 'claude-haiku-4-5', provider: 'copilot', tokens: { in: 5, out: 5 } },
+  ] });
+  const r = aggregateStats([{ root }]);
+  eq(r.selfRepair.runs_with_fix, 1, 'infiere el ciclo fix del array de fases');
+  eq(r.selfRepair.recovered, 1, 'GREEN con fase fix → recuperado');
+});
+
 await test('stats: sin proyectos / sin timelines no rompe (todo en cero)', async () => {
   fresh();
   const empty = aggregateStats([]);
@@ -103,4 +141,24 @@ await test('stats: perProject separa byok vs copilot y ordena por nº de runs', 
   eq(r.perProject[0].copilot_phases, 2, 'b: dos fases copilot');
   eq(r.perProject[1].byok_phases, 1, 'a: una fase byok');
   eq(r.running, 0, 'ningún run en curso');
+});
+
+await test('stats: byModelPhase cruza modelo x fase con conteo y green rate', async () => {
+  fresh();
+  const root = join(TMP, 'proj-mphase');
+  writeTL(root, 'r1', { verdict: 'GREEN', total_ms: 1000, phases: [
+    { phase: 'apply', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 10, out: 10 } },
+    { phase: 'verify', model: 'claude-sonnet-4-6', provider: 'copilot', tokens: { in: 5, out: 5 } },
+  ] });
+  writeTL(root, 'r2', { verdict: 'NOT-GREEN', total_ms: 1000, phases: [
+    { phase: 'apply', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 8, out: 8 } },
+  ] });
+  const r = aggregateStats([{ root }]);
+  assert(Array.isArray(r.byModelPhase), 'byModelPhase es array');
+  const qwenApply = r.byModelPhase.find((mp) => mp.model === 'qwen36-msc1' && mp.phase === 'apply');
+  eq(qwenApply.calls, 2, 'qwen apply: 2 llamadas (r1+r2)');
+  eq(qwenApply.green, 1, 'qwen apply: solo 1 run fue GREEN');
+  const sonnetVerify = r.byModelPhase.find((mp) => mp.model === 'claude-sonnet-4-6' && mp.phase === 'verify');
+  eq(sonnetVerify.calls, 1, 'sonnet verify: 1 llamada');
+  eq(sonnetVerify.green, 1, 'sonnet verify: 1 GREEN');
 });
