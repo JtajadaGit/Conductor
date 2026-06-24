@@ -275,7 +275,9 @@ await test('serve(v3.12): RESUME por ruta scoped /api/run/<pid>/<change>/resume 
   writeFileSync(join(R, 'openspec', 'changes', 'feat-r', '.conductor', 'timeline.json'), JSON.stringify({ request: 'reanuda esto', complexity: 'simple', domain: 'feat', verdict: 'STOPPED', phases: [] }));
   const spawned = [];
   const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on: () => {}, send: () => {}, kill: () => {} }; } });
-  const pid = (await (await fetch(srv.url + 'api/ping')).json()).projects[0].id;
+  // selecciona el proyecto POR ROOT (no projects[0]): el registro persistido en CONDUCTOR_HOME acumula
+  // proyectos de otros tests/runs, así que projects[0] no es fiablemente este → resume al proyecto equivocado.
+  const pid = (await (await fetch(srv.url + 'api/ping')).json()).projects.find((p) => /[\\/]\.tmp-resume-scoped$/.test(p.root)).id;
   const rs = await (await fetch(srv.url + 'api/run/' + pid + '/feat-r/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   eq(rs.ok, true, 'resume scoped responde ok');
   eq(spawned.length, 1, 'lanzó el driver');
@@ -337,6 +339,44 @@ await test('serve(#69): POST archive — GREEN promueve+mueve; no-GREEN → 409'
   writeFileSync(join(ch2, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'NOT_GREEN', request: 'y', phases: [] }));
   const r2 = await fetch(srv.url + 'api/run/' + pid + '/feat-y/archive', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   eq(r2.status, 409, 'un change no-GREEN no se archiva (409)');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(P0): /api/launch propaga el preset de gobierno al driver; uno inválido se ignora; /api/estimate lo propone', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-preset-wire');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
+  const spawned = [];
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  // preset VÁLIDO viaja al spawn del driver (el dial deja de estar muerto en la UI)
+  const l = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'migrar tabla', name: 'mig-x', complexity: 'complex', preset: 'migration' }) })).json();
+  eq(l.ok, true);
+  eq(spawned[0].preset, 'migration', 'el dial de gobierno llega al driver vía launch→spawnRun');
+  // preset DESCONOCIDO se ignora (cae a conductor.json/defaults) — tolerante, no rompe el launch
+  const l2 = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'x', name: 'inv-x', preset: 'no-existe' }) })).json();
+  eq(l2.ok, true);
+  eq(spawned[1].preset, undefined, 'un nombre de preset desconocido NO se propaga');
+  // /api/estimate devuelve un PLAN DE ACCIONES + comprobaciones activadas por contenido (sin buckets de talla)
+  const est = await (await fetch(srv.url + 'api/estimate?request=' + encodeURIComponent('migrar la tabla de clientes al nuevo esquema'))).json();
+  assert(Array.isArray(est.actions) && est.actions.length > 0, 'el estimate devuelve ACCIONES (no una etiqueta de talla)');
+  assert((est.checks || []).some((c) => c.id === 'datos' && c.why), 'el plan activa la comprobación de datos por el contenido (migrar/tabla), con su porqué');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(P0): el RESUME reusa el preset de gobierno persistido en el timeline', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-preset-resume');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, 'openspec', 'changes', 'mig-r', '.conductor'), { recursive: true });
+  writeFileSync(join(R, 'openspec', 'changes', 'mig-r', '.conductor', 'timeline.json'), JSON.stringify({ request: 'reanuda migración', complexity: 'complex', domain: 'mig', verdict: 'STOPPED', preset: { name: 'migration', label: 'Gran migración' }, phases: [] }));
+  const spawned = [];
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const rs = await (await fetch(srv.url + 'api/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'mig-r' }) })).json();
+  eq(rs.ok, true);
+  eq(spawned[0].preset, 'migration', 'el resume reusa el preset de gobierno del timeline (no degrada a laxo)');
   await srv.close();
   rmSync(R, { recursive: true, force: true });
 });

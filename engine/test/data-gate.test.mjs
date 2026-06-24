@@ -109,4 +109,43 @@ await test('data-gate(seal): strictGate.trace=true → el sello es estricto (tra
   } finally { restoreEnv(saved); }
 });
 
+await test('contract-gate(drive): cfg.contractDiff + esquema con cambio INCOMPATIBLE (drop column) → NOT-GREEN (CONTRACT-FAIL)', async () => {
+  fresh();
+  const saved = clearEnv();
+  try {
+    mkdirSync(join(TMP, 'openspec'), { recursive: true });
+    const base = w('contracts/users.base.sql', 'CREATE TABLE users (id int, email varchar(50));');
+    const head = w('contracts/users.head.sql', 'CREATE TABLE users (id int);'); // se eliminó email → breaking
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ contractDiff: [{ base, head }], maxRetries: 0, lenses: false }));
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'ct'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(null) });
+    eq(r.verdict, 'NOT-GREEN');
+    eq(r.gate, 'CONTRACT-FAIL');
+    assert((r.contractFindings || []).some((f) => /column-dropped/.test(f.rule)), 'reporta la columna eliminada como incompatible');
+  } finally { restoreEnv(saved); }
+});
+
+await test('contract-gate(drive): cfg.contractDiff con cambio COMPATIBLE (añadir columna nullable) → GREEN', async () => {
+  fresh();
+  const saved = clearEnv();
+  try {
+    mkdirSync(join(TMP, 'openspec'), { recursive: true });
+    const base = w('contracts/users.base.sql', 'CREATE TABLE users (id int);');
+    const head = w('contracts/users.head.sql', 'CREATE TABLE users (id int, nick varchar(20));'); // columna nullable nueva = compatible
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ contractDiff: [{ base, head }], maxRetries: 0, lenses: false }));
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'cc'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(null) });
+    eq(r.verdict, 'GREEN', 'un cambio aditivo compatible no bloquea');
+  } finally { restoreEnv(saved); }
+});
+
+await test('contract-gate(drive): rutas de contractDiff CONFINADAS al proyecto (un ../ se ignora, no escala)', async () => {
+  fresh();
+  const saved = clearEnv();
+  try {
+    mkdirSync(join(TMP, 'openspec'), { recursive: true });
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ contractDiff: [{ base: '../../etc/passwd', head: '../../etc/shadow' }], maxRetries: 0, lenses: false }));
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'cf'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(null) });
+    eq(r.verdict, 'GREEN', 'rutas fuera del proyecto se ignoran (confinamiento) → no evalúa, no escala');
+  } finally { restoreEnv(saved); }
+});
+
 rmSync(TMP, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 // conductor/lib/mcp.mjs — MCP server (stdio, protocolo 2025-11-25) exponiendo TODO el motor.
 // Sin deps. stdout = solo JSON-RPC; logs a stderr.
 import { createInterface } from 'node:readline';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { checkCoherence } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
@@ -12,12 +12,34 @@ import { seal, verifySeal, hashSpecs } from '../provenance/provenance.mjs';
 import { explain } from '../analysis/explain.mjs';
 import { detectDrift } from '../contract/drift.mjs';
 import { lintMigrations } from '../contract/migration.mjs';
+import { assessReadiness } from '../contract/legacy.mjs';
 import { drive } from '../pipeline/drive.mjs';
 import { initConfig } from '../analysis/scaffold.mjs';
 import { assertConfined } from './confine.mjs';
 import { count } from '../core/report.mjs';
 
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
+
+// walk de TEXTO acotado (para el evidence-gate de migración legacy): lee ficheros de código/datos, salta deps y
+// binarios, topa en nº de ficheros y tamaño. Determinista y sin red.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'target', '.next', 'coverage', 'vendor']);
+const TEXT_EXT = /\.(js|ts|tsx|jsx|java|php|py|sql|cls|go|cs|rb|jsp|xml|html|vue|svelte|sru|srw|pbl|pbt|jrxml|wsdl|xsd|sh|sas)$/i;
+function walkText(dir) {
+  const out = []; const stack = [dir];
+  while (stack.length && out.length < 3000) {
+    const d = stack.pop();
+    let entries; try { entries = readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (out.length >= 3000) break;
+      if (e.isSymbolicLink()) continue; // NO seguir symlinks (un enlace podría apuntar fuera del root → fuga de confinamiento)
+      if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) stack.push(join(d, e.name)); continue; }
+      if (!TEXT_EXT.test(e.name)) continue;
+      const p = join(d, e.name);
+      try { if (statSync(p).size <= 512 * 1024) out.push({ path: p, text: readFileSync(p, 'utf8') }); } catch {}
+    }
+  }
+  return out;
+}
 
 // naming SDD: sin acentos/ñ y, si hay que derivar del request, sin palabras vacías (nunca la frase cruda)
 const deaccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -48,6 +70,8 @@ const TOOLS = {
     run: ({ changeDir, srcDir }) => { const r = detectDrift(changeDir, srcDir); return { verdict: r.findings.some((f) => f.severity === 'error' || f.severity === 'breaking') ? 'DRIFT' : 'OK', summary: r.summary, findings: r.findings }; } },
   conductor_migrate: { def: { name: 'conductor_migrate', title: 'DB migration safety linter', description: 'Lint SQL migration files for destructive/irreversible/blocking operations (large DB migrations, rolling deploys).', inputSchema: { type: 'object', properties: { target: { type: 'string', description: 'migrations dir or .sql file' } }, required: ['target'] } },
     run: ({ target }) => { const F = lintMigrations(target); return { verdict: F.some((f) => f.severity === 'breaking' || f.severity === 'error') ? 'UNSAFE' : 'OK', count: count(F), findings: F }; } },
+  conductor_legacy: { def: { name: 'conductor_legacy', title: 'legacy migration readiness (evidence-gate, code-driven)', description: 'Code-driven legacy-migration evidence gate. Given a legacy source dir and the DECLARED features to migrate, deterministically traces each feature to evidence in the OLD code and BLOCKS spec/implementation until every feature is evidence-backed ("declared != ready"). Returns state READY_FOR_SPEC|NEEDS_DEEPENING|BLOCKED, allowed.generateSpec/implement, and per-feature evidence + explicit blockers (CODE_TRACE_REQUIRED, DATA_MODEL_REQUIRED, EXTERNAL_CONTRACT_REQUIRED). 0 LLM, 0 network.', inputSchema: { type: 'object', properties: { srcDir: { type: 'string', description: 'root of the legacy source tree' }, features: { type: 'array', description: 'declared features to migrate', items: { type: 'object', properties: { name: { type: 'string' }, keywords: { type: 'array', items: { type: 'string' } } }, required: ['name'] } } }, required: ['srcDir', 'features'] } },
+    run: ({ srcDir, features }) => assessReadiness(features || [], walkText(resolve(srcDir))) },
   // NOTA: conductor_start/conductor_next se RETIRARON del MCP (2026-06-10): un modelo de sesión los
   // usaba para re-hacer el pipeline a mano en paralelo al driver (carrera + tokens). La máquina de
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.

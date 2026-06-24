@@ -3,9 +3,13 @@ import { customElement, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { router } from '../router';
-import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate } from '../api/types';
+import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate, PlanCheck } from '../api/types';
 import { fmt, kebab, verdictClass } from '../lib/format';
 import '../components/status-pill';
+
+// El usuario NO clasifica la tarea (ni "complejidad" ni "gobierno", ni etiquetas de talla tipo "arreglo rápido").
+// Describe el cambio y le ENSEÑAMOS el PLAN: las ACCIONES que se harán + QUÉ se comprobará y por qué. Esos datos
+// los deriva el motor (resolvePlan) y llegan en /api/estimate (actions[] + checks[]). Aquí solo se pintan.
 
 /** PANTALLA / : métricas del proyecto + formulario de lanzamiento + lista de runs (multi-proyecto). */
 @customElement('panel-screen')
@@ -22,14 +26,14 @@ export class PanelScreen extends CElement {
   @state() private mPlanner = '';
   @state() private mCoder = '';
   @state() private mReviewer = '';
-  @state() private preset = ''; // preset activo: '' | 'cost' | 'quality' | 'clear' (para resaltar el botón elegido)
+  @state() private preset = ''; // preset de MODELO/coste activo: '' | 'cost' | 'quality' | 'clear' (resalta el botón elegido)
   @state() private busy = false;
   @state() private error = '';
   @state() private byokUrl = '';
   @state() private byokKey = '';
   @state() private byokSaving = false;
   @state() private byokMsg = '';
-  @state() private est: { total: number; rows: PhaseEstimate[]; saved: number } | null = null;
+  @state() private est: { total: number; rows: PhaseEstimate[]; saved: number; actions: string[]; checks: PlanCheck[] } | null = null;
   @state() private q = '';
   @state() private hits: SearchHit[] = [];
   @state() private archived: ArchiveEntry[] = [];
@@ -70,9 +74,12 @@ export class PanelScreen extends CElement {
     } catch { /* conserva el último dato bueno */ }
   }
 
+  private nameTouched = false; // el usuario editó el nombre a mano → dejamos de auto-rellenarlo desde la descripción
   private onReq(e: Event): void {
     this.req = (e.target as HTMLTextAreaElement).value;
-    if (!this.name) this.name = kebab(this.req.split(/\s+/).slice(0, 4).join(' '));
+    // auto-nombre: SIGUE a la descripción mientras el usuario no lo haya tocado (antes se bloqueaba en la 1ª letra
+    // porque la condición era `!this.name`, que se vuelve falsa tras el primer carácter).
+    if (!this.nameTouched) this.name = kebab(this.req.split(/\s+/).slice(0, 6).join(' '));
     this.scheduleEstimate();
   }
   // coste visible en el punto de decisión: estima tokens (preflight, sin API) con debounce
@@ -82,7 +89,14 @@ export class PanelScreen extends CElement {
   }
   private async fetchEstimate(): Promise<void> {
     if (!this.req.trim()) { this.est = null; return; }
-    try { const e = await this.api.estimate(this.complexity, this.req); this.est = { total: e.total, rows: e.phases, saved: e.noRescanSaved }; } catch { /* hint opcional */ }
+    try {
+      // El usuario NO clasifica: pedimos el PLAN por la petición. El servidor (resolvePlan) devuelve las ACCIONES
+      // que se harán + las COMPROBACIONES que se activan por contenido (cada una con su porqué) + la complejidad
+      // interna que el motor ejecutará → el plan que se MUESTRA coincide con el que se LANZA.
+      const e = await this.api.estimate(this.req);
+      this.est = { total: e.total, rows: e.phases, saved: e.noRescanSaved, actions: e.actions ?? [], checks: e.checks ?? [] };
+      this.complexity = e.complexity || this.complexity; // profundidad interna derivada del contenido (nunca se muestra como talla)
+    } catch { /* hint opcional */ }
   }
 
   // buscar en runs vivos + archivo (sin LLM): el motor recorre openspec/changes y archive/
@@ -256,6 +270,27 @@ export class PanelScreen extends CElement {
       </details>`;
   }
 
+  // Plan legible del run: el usuario describe y AQUÍ ve el tipo detectado, las fases SDD que correrán y qué se
+  // comprobará — en lenguaje llano. Si la detección no acierta, ajusta el tipo y el plan se recalcula. Sustituye a
+  // los antiguos selects "Complejidad" + "Gobierno" (jerga que nadie sabía elegir y que permitía pedir un fix y
+  // acabar en "gran migración").
+  // PLAN del run en lenguaje de negocio: las ACCIONES que se ejecutarán (no una etiqueta de talla) + QUÉ se
+  // comprobará y POR QUÉ (las comprobaciones se encienden por el contenido del cambio). Lo deriva el motor.
+  private planPanel(): TemplateResult {
+    const actions = this.est?.actions ?? [];
+    const checks = this.est?.checks ?? [];
+    return html`
+      <div class="launch-plan" style="margin:.1rem 0 .2rem;padding:.7rem .9rem;border-left:3px solid var(--accent,#4f7cff);background:var(--soft,#f3f6fc);border-radius:7px">
+        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#64748b);font-weight:600">Plan</div>
+        ${actions.length ? html`<div style="margin-top:.3rem;font-size:.9rem;line-height:1.5">${actions.map((a, i) => html`${i ? html`<span class="muted" style="margin:0 .4rem">→</span>` : nothing}<strong style="font-weight:600">${a}</strong>`)}</div>` : nothing}
+        ${checks.length ? html`
+          <div style="margin-top:.55rem;font-size:.82rem"><span class="muted">Comprobaré:</span></div>
+          <ul style="margin:.2rem 0 0;padding-left:1.15rem;font-size:.82rem;line-height:1.5">
+            ${checks.map((c) => html`<li>${c.label}${c.why ? html` <span class="muted">— ${c.why}</span>` : nothing}</li>`)}
+          </ul>` : nothing}
+      </div>`;
+  }
+
   override render(): TemplateResult {
     const m = this.metrics();
     const opts = this.modelOptions();
@@ -271,14 +306,12 @@ export class PanelScreen extends CElement {
         <label class="fl">Qué quieres construir
           <textarea rows="3" placeholder="Describe el cambio en una frase o pega una especificación completa" .value=${this.req} @input=${(e: Event) => this.onReq(e)} required></textarea>
         </label>
+        ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
           ${this.sddProjects().length > 1 ? html`<label class="fl">Proyecto<select .value=${this.projId} @change=${(e: Event) => { this.projId = (e.target as HTMLSelectElement).value; }}>
             ${this.sddProjects().map((p) => html`<option value=${p.id}>${p.name}</option>`)}
           </select></label>` : nothing}
-          <label class="fl" style="flex:1;min-width:10rem" title="Identificador del cambio (kebab): el id de la carpeta openspec/changes. NO es la spec — los requisitos los escribe el Planner. Auto-sugerido; edítalo si quieres.">Nombre del cambio<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
-          <label class="fl" title="rápido = 1 fase de código sin spec (gancho para tareas pequeñas: typos, ajustes). simple/medium/complex = pipeline SDD completo (spec→…→verify).">Complejidad<select .value=${this.complexity} @change=${(e: Event) => { this.complexity = (e.target as HTMLSelectElement).value; this.scheduleEstimate(); }}>
-            <option value="micro">Fix · sin spec</option><option value="simple">Simple · SDD</option><option value="medium">Media · SDD</option><option value="complex">Compleja · SDD</option>
-          </select></label>
+          <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
           <label class="fl" title="Sin pausas de revisión: el pipeline corre de principio a fin sin pedirte aprobar cada fase (el experto suele quererlo OFF)">Auto-aprobar<label class="switch"><input type="checkbox" aria-label="Auto-aprobar: ejecutar sin pausas de revisión" .checked=${this.auto} @change=${(e: Event) => { this.auto = (e.target as HTMLInputElement).checked; }}><span></span></label></label>
           <button class="btn" ?disabled=${this.busy} style="align-self:end">${this.busy ? '…' : 'Lanzar run'}</button>
         </div>

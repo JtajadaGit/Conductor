@@ -11,6 +11,8 @@ import { join, resolve, relative, isAbsolute } from 'node:path';
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { PRICE } from '../core/cost.mjs';
 import { activeRun, rollbackTo, readDriveConfig, scrubSecrets } from '../pipeline/drive.mjs';
+import { PRESET_NAMES } from '../pipeline/presets.mjs';
+import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
 import { classifyTier } from '../core/tiers.mjs';
 import { renderAiact } from './aiact.mjs';
@@ -349,9 +351,10 @@ export function listChanges(root) {
 }
 
 // spawner real (inyectable en tests): lanza el driver DETACHED con su propia web (sin abrir navegador)
-function defaultSpawnRun({ engine, root, name, request, complexity, domain }) {
+function defaultSpawnRun({ engine, root, name, request, complexity, domain, preset }) {
   const changeDir = join(root, 'openspec', 'changes', name);
   const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--serve'];
+  if (preset) args.push('--preset', preset);
   const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } });
   child.unref();
   return { pid: child.pid };
@@ -459,6 +462,14 @@ let _models = { at: 0, data: null };
 // catálogo REAL de modelos Copilot vía el SDK (client.listModels), cacheado y rellenado en BACKGROUND.
 // NUNCA una lista inventada: si el SDK/runtime no responde, el picker muestra SOLO lo OBSERVADO en runs.
 let _copilotCat = { at: 0, models: [], fetching: false };
+// CATÁLOGO Copilot para el picker, derivado de la tabla PRICE MANTENIDA — ÚNICA fuente de verdad de los
+// modelos que conductor de verdad conoce (los que tienen precio+tier definidos por el equipo en cost.mjs).
+// NO se inventan ni transcriben ids: solo lo que está en PRICE (ids reales; dash→punto para el formato del
+// flag --model: claude-opus-4-8 → claude-opus-4.8). Se siembra cuando el fetch en vivo del SDK da vacío
+// (auth-gated, no fiable). Para AÑADIR un modelo al picker, añádelo a PRICE con su precio/tier real: así
+// catálogo + coste + tier quedan COHERENTES desde un único sitio (y se arregla el coste $0 de modelos no
+// tabulados). El fetch en vivo del entitlement real del seat queda como deuda DOCUMENTADA, no fabricada.
+const KNOWN_COPILOT = Object.keys(PRICE).filter((k) => PRICE[k]?.tier !== 'byok').map((k) => k.replace(/-(\d+)$/, '.$1'));
 function byokCredsLocal() {
   const env = process.env;
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
@@ -526,6 +537,9 @@ async function availableModels(registry) {
   // catálogo REAL de Copilot (SDK client.listModels) fusionado con lo observado. Refresco en BACKGROUND
   // (no bloquea el panel) + cache 10 min; si aún no hay catálogo del SDK, NO inventamos — solo lo observado.
   for (const m of _copilotCat.models) copilot.add(m);
+  // si el fetch en vivo del SDK no aportó catálogo (caso actual: API auth-gated), siembra los modelos Copilot
+  // conocidos (tabla PRICE mantenida) para que el picker no quede en solo lo observado. Etiquetado en copilotSource.
+  if (!_copilotCat.models.length) for (const m of KNOWN_COPILOT) copilot.add(m);
   if (!_copilotCat.fetching && Date.now() - _copilotCat.at > 600000) {
     _copilotCat.fetching = true;
     let sdkBundle = null; try { sdkBundle = [join(resolve(process.argv[1]), '..', 'copilot-sdk.mjs')].find(existsSync) || null; } catch {}
@@ -539,7 +553,7 @@ async function availableModels(registry) {
   // tier por modelo (economy|balanced|premium) → el panel arma el preset "Optimizar coste" sin adivinar
   const tiers = {};
   for (const id of [...byokIds, ...copilotIds]) tiers[id] = classifyTier(id);
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, byokSource, copilotSource: _copilotCat.models.length ? 'SDK Copilot (listModels)' : 'observados en runs', byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, byokSource, copilotSource: _copilotCat.models.length ? 'SDK Copilot (listModels)' : 'catálogo conocido (tabla mantenida) + observados', byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 
@@ -570,10 +584,12 @@ export function aggregateSearch(projects, q, limit = 80) {
 }
 
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
-function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto }) {
+function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset }) {
   const changeDir = join(root, 'openspec', 'changes', name);
   const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--ipc'];
   if (auto) args.push('--auto');
+  // dial de gobierno por run (los 4 presets): viaja como --preset; el driver le da máxima precedencia sobre conductor.json/env
+  if (preset) args.push('--preset', preset);
   // modelo elegido en el lanzador → env CONDUCTOR_MODEL_{ROLE} (el driver lo respeta; verificable en el registro)
   const env = { ...process.env, CONDUCTOR_SERVE: '0' };
   if (models && typeof models === 'object') {
@@ -654,8 +670,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   };
   // body con TOPE (anti-OOM): un POST gigante no debe acumular sin límite en memoria
   const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r({}); } }); req.on('end', () => { if (over) return; try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
-  const launch = (proj, name, request, complexity, domain, models, auto) => {
-    const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto });
+  const launch = (proj, name, request, complexity, domain, models, auto, preset) => {
+    const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
     child.on?.('exit', () => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; }); // exitedAt → la purga puede sacarlo del Map
@@ -689,7 +705,21 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       // uso/ahorro agregado (mismo cálculo que `conductor stats`) — multi-proyecto o por ?projectId=
       if (u.pathname === '/api/stats') { const pid = u.searchParams.get('projectId'); const scope = pid ? [projOf(pid)].filter(Boolean) : [...registry.values()]; const st = aggregateStats(scope); const realRunning = [...runs.values()].filter((r2) => !r2.exited).length; return json(200, { ...st, running: realRunning }); }
       // estimador de tokens preflight (coste visible en el punto de decisión, sin API)
-      if (u.pathname === '/api/estimate') return json(200, estimateRun({ complexity: u.searchParams.get('complexity') || 'medium', request: u.searchParams.get('request') || '' }));
+      // PLAN del run SIN que el usuario clasifique: si no fuerza un tipo (`preset`), lo PROPONEMOS por la
+      // petición y derivamos la complejidad (= nº de fases SDD) del propio tipo. Así el plan que se MUESTRA y el
+      // run que se LANZA son SIEMPRE coherentes — no hay forma de pedir un fix y acabar en "gran migración".
+      if (u.pathname === '/api/estimate') {
+        const rq = u.searchParams.get('request') || '';
+        // PLAN DE ACCIONES (sin buckets de talla): el resolvedor determinista deriva la profundidad interna y
+        // QUÉ comprobaciones se activan por contenido (cada una con su porqué). La UI muestra acciones+checks,
+        // nunca etiquetas tipo "arreglo rápido". El motor ejecuta esa misma complejidad → plan == run.
+        const plan = resolvePlan({ request: rq });
+        const est = estimateRun({ complexity: plan.complexity, request: rq });
+        // las ACCIONES mostradas salen de las FASES REALES de esa complejidad (las mismas que ejecuta el driver y
+        // que estima la tabla de tokens) → plan MOSTRADO == run == tabla, sin divergencias (no usar plan.phases).
+        const actions = (est.phases || []).map((r) => PHASE_ACTION[r.phase] || r.phase);
+        return json(200, { ...est, complexity: plan.complexity, actions, checks: plan.checks });
+      }
       // explain app-native: borrador de spec por ingeniería inversa del código (motor determinista, 0 LLM,
       // 0 red). Por ?projectId= o el default; ?src= opcional (subdir confinado). Devuelve CONTEOS + borradores
       // (no vuelca files[] → token-first). El walk salta node_modules/.git/dist/... y topa en MAX_FILES.
@@ -794,7 +824,16 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // launch-target-confirm-security (visibilidad): deja constancia si se lanza en un proyecto que NO es
         // el root servido por defecto (con colisión de puerto, ayuda a detectar ejecución en el repo equivocado).
         if (proj.id !== DEFAULT.id) { try { process.stderr.write(`conductor: /api/launch en proyecto NO-default ${proj.root} (la app sirve ${DEFAULT.root})\n`); } catch {} }
-        launch(proj, b.name, b.request, b.complexity, b.domain, b.models, b.auto === true);
+        // dial de gobierno (los 4 presets): solo se acepta un nombre conocido; uno inválido se IGNORA (cae al
+        // preset de conductor.json/env o a los defaults) en vez de romper el launch — tolerante con clientes viejos.
+        const presetArg = (b.preset && PRESET_NAMES.includes(b.preset)) ? b.preset : undefined;
+        // El SERVIDOR deriva la profundidad de la petición (determinista), NO se fía del `complexity` del cliente:
+        // éste puede llegar obsoleto (carrera con el debounce del estimate) o por defecto si el estimate falló.
+        // Así el run ejecuta SIEMPRE el plan derivado del texto → plan == run, independiente del timing del cliente.
+        // EXCEPCIÓN: 'micro' (no-SDD amurallado, decisión explícita) NO lo produce resolvePlan ni la UI normal;
+        // si un caller lo pide explícitamente, se respeta (sin él, micro sería inalcanzable y romperíamos ese modo).
+        const launchComplexity = b.complexity === 'micro' ? 'micro' : resolvePlan({ request: b.request }).complexity;
+        launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
@@ -807,7 +846,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (!tl?.request) return json(404, { ok: false, error: 'sin timeline que reanudar' });
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso' });
-        launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models);
+        launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
       const mArt2 = u.pathname.match(/^\/artifact\/([a-z0-9-]+~[a-f0-9]{6})\/([a-z0-9-]+)\/dashboard\.html$/);
@@ -863,7 +902,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const tl2 = readJson(join(changeDir, '.conductor', 'timeline.json'));
           if (!tl2?.request) return json(404, { ok: false });
           if (activeRun(changeDir) || (reg && !reg.exited)) return json(409, { ok: false, error: 'ya en curso' });
-          launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models); // resume EXACTO: reusa los modelos por fase persistidos (RunState robusto)
+          launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models, undefined, tl2.preset?.name); // resume EXACTO: reusa modelos por fase + preset de gobierno persistidos (RunState robusto)
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'stop') {

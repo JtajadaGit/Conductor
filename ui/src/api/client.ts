@@ -26,8 +26,10 @@ export class ConductorApi {
   // ── panel (base '/api/') ──
   changes(): Promise<ChangesResponse> { return this.getJson<ChangesResponse>('changes'); }
   models(): Promise<ModelsResponse> { return this.getJson<ModelsResponse>('models'); }
-  estimate(complexity: string, request: string): Promise<EstimateResponse> {
-    return this.getJson<EstimateResponse>('estimate?complexity=' + encodeURIComponent(complexity) + '&request=' + encodeURIComponent(request.slice(0, 4000)));
+  // El usuario NO clasifica: el servidor propone el tipo y deriva las fases. `preset` solo se envía si el
+  // experto ajustó el tipo a mano.
+  estimate(request: string, preset?: string): Promise<EstimateResponse> {
+    return this.getJson<EstimateResponse>('estimate?request=' + encodeURIComponent(request.slice(0, 4000)) + (preset ? '&preset=' + encodeURIComponent(preset) : ''));
   }
   launch(body: LaunchBody): Promise<ApiResult> { return this.post('launch', body); }
   resumeNamed(name: string, projectId?: string): Promise<ApiResult> { return this.post('resume', { name, projectId }); }

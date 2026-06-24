@@ -11,7 +11,7 @@
 //   spawn(CONDUCTOR_AGENT_CMD || 'copilot', ['--allow-all-tools','--no-auto-update','-p', <prompt>])
 // El agente hereda el entorno del proceso (BYOK) — por eso el driver se ejecuta desde la shell del
 // usuario (CLI `conductor drive` / eval), no desde el MCP server (que solo recibe PATH).
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
@@ -20,9 +20,11 @@ import { resolvePreset } from './presets.mjs';
 import { checkCoherence, parseReport } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { buildTrace } from '../gates/trace.mjs';
+import { checkContract } from '../contract/contract.mjs';
 import { loadPolicy, modelAllowed } from '../gates/policy.mjs';
 import { scanSecrets } from '../gates/secrets.mjs';
 import { scanData } from '../gates/data.mjs';
+import { scanHollowTests } from '../gates/hollow.mjs';
 import { seal, hashSpecs } from '../provenance/provenance.mjs';
 import { append as ledgerAppend } from '../provenance/ledger.mjs';
 import { loadSkills, matchSkills, renderSkillsBlock, buildRegistry } from '../analysis/skills.mjs';
@@ -432,7 +434,7 @@ export function activeRun(changeDir) {
   return null;
 }
 
-export async function drive({ changeDir, request, complexity = 'medium', domain = 'core', srcDir, runAgent = defaultRunAgent, log: logOut = () => {}, maxRetries, timeoutMs, pauseAt = [], onPause = null, stopSignal = null, serveUrl = null }) {
+export async function drive({ changeDir, request, complexity = 'medium', domain = 'core', srcDir, runAgent = defaultRunAgent, log: logOut = () => {}, maxRetries, timeoutMs, pauseAt = [], onPause = null, stopSignal = null, serveUrl = null, preset: presetOpt = null }) {
   const dup = activeRun(changeDir);
   if (dup) {
     logOut(`✅ TASK COMPLETE — ya hay un run EN CURSO para este change (pid ${dup.pid}); este lanzamiento duplicado no hace nada. NO relances: sigue el run existente en su web.`);
@@ -473,9 +475,10 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   maxRetries = maxRetries ?? (Number.isInteger(cfg.maxRetries) ? cfg.maxRetries : 1);
   const gitCommit = process.env.CONDUCTOR_GIT_COMMIT === '1' || (cfg.gitCommit === true && process.env.CONDUCTOR_GIT_COMMIT !== '0');
   // PRESET (#67): paquete de knobs de gobierno (el "dial" trivial→complejo) sobre el MISMO driver. Llega por
-  // openspec/conductor.json ("preset") o env CONDUCTOR_PRESET. El experto MANDA: cualquier knob explícito
-  // (strictTrace/strictId/specFreeze/pauseAt/reviewTimeoutMs/onReviewTimeout) gana sobre el del preset.
-  const preset = resolvePreset(cfg.preset || process.env.CONDUCTOR_PRESET);
+  // (1) opción de llamada `preset` (la elige el experto en el panel/launcher POR RUN — máxima precedencia),
+  // (2) openspec/conductor.json ("preset"), o (3) env CONDUCTOR_PRESET. El experto MANDA: cualquier knob
+  // explícito (strictTrace/strictId/specFreeze/pauseAt/reviewTimeoutMs/onReviewTimeout) gana sobre el del preset.
+  const preset = resolvePreset(presetOpt || cfg.preset || process.env.CONDUCTOR_PRESET);
   const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
@@ -1040,6 +1043,44 @@ ${readSafe(x.lp).trim()}`);
       log(`⛔ gate de datos: ${blocking.length} operación(es) de migración peligrosa(s) → NOT-GREEN: ${blocking.slice(0, 5).map((f) => `${f.file} ${f.rule}`).join(' · ')}`);
     } else if (dataFindings.length) log(`   ⚠ gate de datos: ${dataFindings.length} aviso(s) no bloqueante(s) en SQL (revisa migraciones/PII)`);
     else if (sqlFiles.length) log(`   ✓ gate de datos: ${sqlFiles.length} fichero(s) SQL sin DDL peligroso`);
+  }
+
+  // TESTS HUECOS (P1): un test que pasa pero no verifica nada da FALSA cobertura (el gate de traza ve "hay test"
+  // pero el test no afirma). Escáner determinista (0 tokens) sobre los ficheros de TEST escritos. OPT-IN
+  // (cfg.hollowTests:true) porque varios proyectos usan placeholders vacíos a propósito; un hallazgo 'error'
+  // tumba el GREEN. Auto-activarlo por preset queda pendiente (requiere que los fixtures afirmen de verdad).
+  if (step.verdict === 'GREEN' && cfg.hollowTests === true) {
+    const writtenTests = [...new Set(timeline.filter((p) => p.phase === 'apply' || p.phase === 'fix').flatMap((p) => (p.files || []).map((f) => f.p)).filter(Boolean))];
+    const hollow = scanHollowTests(projectRoot, writtenTests);
+    const sev = (f) => String(f.severity || '').toLowerCase();
+    const blocking = hollow.filter((f) => sev(f) === 'error');
+    if (blocking.length) {
+      step = { ...step, verdict: 'NOT-GREEN', gate: 'HOLLOW-TESTS', hollow };
+      log(`⛔ tests huecos: ${blocking.length} test(s) que pasan sin verificar nada → NOT-GREEN: ${blocking.slice(0, 5).map((f) => `${f.file} ${f.rule}`).join(' · ')}`);
+    } else if (hollow.length) log(`   ⚠ tests huecos: ${hollow.length} aviso(s) (revisa que los tests verifiquen de verdad)`);
+  }
+
+  // GATE DE CONTRATO (motores de diff cableados al RUN): hasta ahora sqldiff/openapi-diff/tsdiff solo vivían como
+  // herramientas MCP sueltas. Aquí se cablean al gate, OPT-IN por config (cfg.contractDiff = [{base, head}]) → cero
+  // ruido si no se declara. checkContract autodetecta el dominio por extensión (.json OpenAPI · .sql esquema · .ts
+  // contrato público) y un cambio incompatible (breaking/error) tumba el GREEN. Rutas CONFINADAS al proyecto
+  // (conductor.json = entrada NO confiable: repo clonado) — un '..' o ruta absoluta se ignora.
+  if (step.verdict === 'GREEN' && Array.isArray(cfg.contractDiff) && cfg.contractDiff.length) {
+    const within = (rel) => { try { const abs = resolve(projectRoot, String(rel || '')); const r = relative(projectRoot, abs); if (r.startsWith('..') || isAbsolute(r)) return null; try { if (existsSync(abs) && lstatSync(abs).isSymbolicLink()) return null; } catch {} return abs; } catch { return null; } };
+    const contractFindings = [];
+    for (const pair of cfg.contractDiff) {
+      if (!pair || typeof pair !== 'object') continue;
+      const base = within(pair.base), head = within(pair.head);
+      if (!base || !head || !existsSync(base) || !existsSync(head)) continue;
+      try { for (const f of checkContract(base, head)) contractFindings.push(f); } catch { /* un fallo del motor NO enmascara el gate */ }
+    }
+    const sev = (f) => String(f.severity || '').toLowerCase();
+    const blocking = contractFindings.filter((f) => sev(f) === 'breaking' || sev(f) === 'error');
+    if (blocking.length) {
+      step = { ...step, verdict: 'NOT-GREEN', gate: 'CONTRACT-FAIL', contractFindings };
+      log(`⛔ gate de contrato: ${blocking.length} cambio(s) incompatible(s) → NOT-GREEN: ${blocking.slice(0, 5).map((f) => `${f.file || ''} ${f.rule}`).join(' · ')}`);
+    } else if (contractFindings.length) log(`   ⚠ gate de contrato: ${contractFindings.length} aviso(s) no bloqueante(s)`);
+    else log(`   ✓ gate de contrato: sin cambios incompatibles`);
   }
 
   // P0-2 GREEN CREÍBLE (enterprise): el gate estructural (coherencia + artefactos + traza) NO ejecuta

@@ -43,6 +43,10 @@ await test('presets: resolvePreset y suggestPreset (heurística determinista por
   assert(!resolvePreset('feature').strict.semanticDelta, 'feature NO activa semanticDelta (solo migración)');
   eq(resolvePreset('nope'), null);
   eq(suggestPreset(['db/migrations/001.sql']), 'migration');
+  eq(suggestPreset(['migrar la tabla de clientes al nuevo esquema']), 'migration', 'detecta "migrar"/"esquema" (petición en español, no solo rutas inglesas)');
+  eq(suggestPreset(['arreglar el typo del botón de login']), 'quick-fix', 'un fix pequeño NO debe caer en "feature" (sirve hasta para un fix)');
+  eq(suggestPreset(['corregir el bug del cálculo de IVA']), 'quick-fix', 'palabras ES de arreglo → quick-fix');
+  eq(suggestPreset(['retocar el estilo del header']), 'visual', 'detecta "estilo" (retoque visual en español)');
   eq(suggestPreset(['src/styles/app.css']), 'visual');
   eq(suggestPreset(['README.md']), 'quick-fix');
   eq(suggestPreset(['src/app/service.ts']), 'feature');
@@ -91,6 +95,19 @@ await test('presets: el knob explícito GANA sobre el preset (el experto manda)'
     // preset feature activaría strictTrace, pero strictTrace:false explícito lo desactiva → GREEN pese al hueco
     const r = await runWith({ preset: 'feature', strictTrace: false, strictId: false }, mkAgent({ tag: false }));
     eq(r.verdict, 'GREEN', 'strictTrace:false explícito gana sobre el preset feature');
+  } finally { restoreEnv(saved); }
+});
+
+await test('presets(P0): el preset llega como OPCIÓN de drive() y GANA sobre conductor.json (dial por run del panel)', async () => {
+  const saved = clearEnv();
+  try {
+    // conductor.json dice quick-fix (laxo), pero el panel/launcher pasa preset:'feature' POR RUN → strictTrace
+    // activo → el hueco de trazabilidad bloquea. Demuestra que el `preset` opción del driver tiene precedencia.
+    fresh();
+    mkdirSync(join(TMP, 'openspec'), { recursive: true });
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false, preset: 'quick-fix' }));
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'p'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent({ tag: false }), preset: 'feature' });
+    eq(r.verdict, 'BLOCKED', 'la opción preset:feature (panel) gana sobre conductor.json:quick-fix → strictTrace bloquea');
   } finally { restoreEnv(saved); }
 });
 

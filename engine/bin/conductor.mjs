@@ -31,6 +31,7 @@ import { estimateRun } from '../lib/core/estimate.mjs';
 import { loadSkills, buildSkillsIndex } from '../lib/analysis/skills.mjs';
 import { detectStack } from '../lib/analysis/stack.mjs';
 import { listArchive, searchChanges } from '../lib/analysis/archive.mjs';
+import { buildAtlas } from '../lib/analysis/atlas.mjs';
 import { seal, verifySeal, generateKeypair, signFile, verifyFile, hashSpecs } from '../lib/provenance/provenance.mjs';
 import { githubWorkflow, gitlabCi } from '../lib/sysops/ci.mjs';
 import { renderDashboard } from '../lib/serving/dashboard.mjs';
@@ -124,7 +125,7 @@ switch (cmd) {
   case 'drive': {
     // DRIVER DETERMINISTA: el código conduce el pipeline y llama al modelo (BYOK) por fase.
     // Garantiza la secuencia con cualquier modelo — un modelo flojo da peor contenido, no salta fases.
-    const dir = pos[0]; if (!dir) bad('drive <changeDir> --request "..." [--src dir] [--complexity simple|medium|complex] [--domain name] [--model-planner m] [--model-coder m] [--model-reviewer m]');
+    const dir = pos[0]; if (!dir) bad('drive <changeDir> --request "..." [--src dir] [--complexity simple|medium|complex] [--domain name] [--preset quick-fix|visual|feature|migration] [--model-planner m] [--model-coder m] [--model-reviewer m]');
     // inmune a comillas perdidas: une todas las palabras tras --request hasta el siguiente --flag
     const reqI = argv.indexOf('--request');
     let request = '';
@@ -197,6 +198,7 @@ switch (cmd) {
       ...(srv ? { stopSignal: srv.stopSignal, serveUrl: srv.url } : {}),
       changeDir: dir, request,
       complexity: flag('--complexity', 'medium'), domain: flag('--domain', 'core'),
+      preset: flag('--preset'), // dial de gobierno por run (quick-fix|visual|feature|migration); cae a conductor.json/env si no se pasa
       srcDir: flag('--src'), log: (m) => console.log(m),
     });
     if (srv) { await new Promise((res) => setTimeout(res, 2500)); await srv.close(); } // margen para el último poll
@@ -398,6 +400,17 @@ switch (cmd) {
     console.log('');
     process.exit(0);
   }
+  case 'atlas': {
+    // índice de conocimiento del proyecto (commit-eable): stack + capacidades de la spec viva + historial
+    const root = resolve(pos[0] || flag('--src', '.'));
+    const at = buildAtlas(root);
+    if (has('--json')) { console.log(JSON.stringify({ stack: at.stack, capabilities: at.capabilities, changes: at.changes }, null, 2)); process.exit(0); }
+    const o = flag('-o', join(root, 'openspec', 'ATLAS.md'));
+    try { mkdirSync(dirname(o), { recursive: true }); } catch {}
+    writeFileSync(o, at.markdown);
+    console.log(`atlas → ${o} · ${at.capabilities.length} capacidad(es), ${at.changes.length} cambio(s) archivado(s)`);
+    process.exit(0);
+  }
   case 'stats': {
     // INFORME DE USO (la mezcla qwen + Copilot, "como app"): agrega TODOS los timelines y hace VISIBLE el
     // ahorro (pilar nº1). Sin --project: todos los proyectos registrados (~/.conductor/projects.json).
@@ -575,7 +588,7 @@ function printHelp() {
   trace <changeDir> --src <d> [--html out]
   cost <jsonl> [--otel out] [--json]
   drive <changeDir> --request "..." [--src d] [--complexity simple|medium|complex] [--domain n]
-        [--model-planner m] [--model-coder m] [--model-reviewer m] [--runner spawn|sdk]
+        [--preset quick-fix|visual|feature|migration] [--model-planner m] [--model-coder m] [--model-reviewer m] [--runner spawn|sdk]
                                           # DRIVER determinista: el código conduce el pipeline fase a fase;
                                           # garantiza la secuencia con cualquier modelo. runner sdk = sesiones
                                           # calientes (requiere @github/copilot-sdk; spawn = default validado)

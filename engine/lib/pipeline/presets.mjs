@@ -19,14 +19,18 @@ export function resolvePreset(name) {
   return name && PRESETS[name] ? { name, ...PRESETS[name] } : null;
 }
 
-// PROPONE un preset a partir de las RUTAS tocadas (determinista, sin LLM). Solo sugiere: la decisión es del
-// experto. Orden de especificidad: migración (datos/DDL) > visual (estilos/UI) > arreglo rápido (docs/config)
-// > funcionalidad (default). Pensado para "detectar la carpeta tocada y proponer", no para imponer.
+// PROPONE un preset a partir de las RUTAS tocadas o de las PALABRAS de la petición (determinista, sin LLM).
+// Solo sugiere: la decisión es del experto. Orden de especificidad: migración (datos/DDL/"migrar"/"esquema") >
+// visual (estilos/UI) > arreglo rápido (docs/config) > funcionalidad (default). Raíces ES+EN para un equipo
+// hispano (migrar/migración además de migrate/migration). Pensado para "detectar y proponer", no para imponer.
 export function suggestPreset(paths = []) {
   const p = (paths || []).map((x) => String(x).toLowerCase());
   const any = (re) => p.some((x) => re.test(x));
-  if (any(/migrat|\.sql$|\/ddl|schema\.|liquibase|flyway|alembic/)) return 'migration';
-  if (any(/\.(css|scss|sass|less|html|vue|svelte|svg)$|(^|\/)(styles?|theme|assets)\//)) return 'visual';
-  if (any(/\.(md|txt|rst|adoc)$|(^|\/)(docs?|readme)/)) return 'quick-fix';
+  if (any(/migrat|migrac|migrar|\.sql$|\/ddl|schema\.|esquema|liquibase|flyway|alembic/)) return 'migration';
+  if (any(/\.(css|scss|sass|less|html|vue|svelte|svg)$|(^|\/)(styles?|theme|assets)\/|estilo|maquet/)) return 'visual';
+  // ARREGLO PEQUEÑO: docs/config + palabras ES/EN de fix → para que "sirva hasta para un fix" sin clasificarlo
+  // como Funcionalidad (7 fases). Un falso "arreglo rápido" (laxo) es mucho menos dañino que un falso "migración";
+  // y el plan es visible → el experto lo sube si hace falta.
+  if (any(/\.(md|txt|rst|adoc)$|(^|\/)(docs?|readme)|arregl|\btypo|errata|correg|correcc|\bbug|peque|ajust|\bfix/)) return 'quick-fix';
   return DEFAULT_PRESET;
 }

@@ -122,7 +122,8 @@ export interface ModelsResponse {
 }
 
 export interface PhaseEstimate { phase: string; estIn: number; estOut: number; }
-export interface EstimateResponse { complexity: string; phases: PhaseEstimate[]; totalIn: number; totalOut: number; total: number; noRescanSaved: number; }
+export interface PlanCheck { id: string; label: string; always?: boolean; why?: string; }
+export interface EstimateResponse { complexity: string; phases: PhaseEstimate[]; totalIn: number; totalOut: number; total: number; noRescanSaved: number; actions?: string[]; checks?: PlanCheck[]; }
 
 export interface SearchHit { name: string; verdict: Verdict; archived: boolean; snippet: string; project?: string; projectId?: string; }
 export interface SearchResponse { hits: SearchHit[]; }
@@ -152,6 +153,7 @@ export interface LaunchBody {
   project?: string;
   models?: ModelsByRole;
   auto?: boolean;
+  preset?: string; // dial de gobierno: quick-fix | visual | feature | migration ('' = sin override)
 }
 export interface ContinueBody { selected?: number[]; note?: string; model?: string; }
 export interface ApiResult { ok: boolean; url?: string; error?: string; restored?: number; removed?: number; }
