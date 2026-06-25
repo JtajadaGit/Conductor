@@ -3389,6 +3389,7 @@ __M['scaffold'] = (function(){
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 
 
+const { detectStack } = __M['stack'];
 const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'conductor — configuración de usuario',
@@ -3518,11 +3519,28 @@ function initConfig(openspecDir) {
   const cfgPath = join(openspecDir, 'conductor.json');
   let created = false;
   if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
+  const root = dirname(resolve(openspecDir));
+  // config.yaml: metadata OpenSpec del proyecto (stack DETECTADO por el motor). Init ATÓMICO y COMPLETO (#6): un
+  // fresh-init deja conductor.json (config EJECUTABLE) Y config.yaml (metadata) → "inicializado" deja de ser ambiguo
+  // (antes una ruta creaba uno y otra el otro). Determinista, sin LLM. Idempotente: nunca pisa el del usuario.
+  const ymlPath = join(openspecDir, 'config.yaml');
+  let metadata = false;
+  if (!existsSync(ymlPath)) {
+    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
+    const yml = [
+      '# conductor — metadata del proyecto (generada por el motor en init; determinista, sin LLM).',
+      `name: ${basename(root) || 'proyecto'}`,
+      `stack: ${stk.summary || 'desconocido'}`,
+      stk.testCmd ? `test: ${stk.testCmd}` : '# test: <comando de pruebas del proyecto>',
+      '',
+    ].join('\n');
+    writeFileSync(ymlPath, yml); metadata = true;
+  }
   // .copilotignore al root del proyecto (token-first determinista)
-  const ignorePath = join(dirname(resolve(openspecDir)), '.copilotignore');
+  const ignorePath = join(root, '.copilotignore');
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
-  return { schemaPath, cfgPath, created, ignorePath, copilotignore };
+  return { schemaPath, cfgPath, created, ymlPath, metadata, ignorePath, copilotignore };
 }
 
 return { initConfig, CONFIG_SCHEMA };
@@ -5930,7 +5948,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
         // dos repos con el mismo basename ya no colisionan; coherencia #9).
-        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, version, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
       }
       // REGISTRO CONSCIENTE (`conductor serve <proj>` con la app única ya viva): el CLI registra el proyecto para que
       // la web lo ENFOQUE (en vez de un ✅ mudo que lo ignora, incoherencia #5). Mismo gate de seguridad que launch
@@ -7021,4 +7039,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 6b6cc7f19a595b33cb53eabb0e0bfa3c8ea30748f6f69005a5cb56b9cd6b1e93
+// build-inputs-sha256: 2127d671e8e39a3d44cb00e4143a11b4286563ba6fc1dcf7159388e3e164ef4f

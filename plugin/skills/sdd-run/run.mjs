@@ -146,8 +146,15 @@ const main = async () => {
   // ZOMBIE tras actualizar: el app vivo es de otra versión → pedirle el relevo y arrancar el nuevo
   if (app?.ok && MY_VER && app.version !== MY_VER) {
     llog(`app v${app.version || 'antigua'} ≠ v${MY_VER} → pidiendo relevo y rearranque`);
-    try { await fetch(`${APP}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(2000) }); } catch {}
-    for (let i = 0; i < 10 && app; i++) { await new Promise((r) => setTimeout(r, 300)); app = await ping(); }
+    let shutResp = null;
+    try { shutResp = await fetch(`${APP}/api/shutdown`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(2000) }); } catch {}
+    if (shutResp && shutResp.status === 409) {
+      // hay un run EN CURSO en la app vigente → no se puede actualizar sin interrumpirlo. AVISO CLARO (no silencio)
+      // y seguimos con la app ACTUAL (versión vieja). Mismo gesto → resultado EXPLICADO, no dependiente de azar (#10).
+      llog(`⚠ no actualizo a v${MY_VER}: hay un run EN CURSO en la app v${app.version || '?'}. Sigo con la app vigente; cierra/espera ese run y reinicia con \`conductor restart\` para actualizar.`);
+    } else {
+      for (let i = 0; i < 10 && app; i++) { await new Promise((r) => setTimeout(r, 300)); app = await ping(); }
+    }
   } else if (app?.ok) {
     llog(`app ya viva (v${app.version || '?'})`);
   }

@@ -108,6 +108,7 @@ export interface ProjectSummary {
 export interface ChangesResponse {
   project: string;
   projectId?: string; // ID ESTABLE del proyecto servido (el panel fija el activo por ID, no por nombre)
+  version?: string | null; // versión del motor en uso (badge visible → un relevo de versión no es invisible, #10)
   changes: ChangeSummary[];
   projects: ProjectSummary[];
   ghUsage: GhUsage | null;

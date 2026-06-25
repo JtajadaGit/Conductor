@@ -824,7 +824,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
         // dos repos con el mismo basename ya no colisionan; coherencia #9).
-        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, version, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
       }
       // REGISTRO CONSCIENTE (`conductor serve <proj>` con la app única ya viva): el CLI registra el proyecto para que
       // la web lo ENFOQUE (en vez de un ✅ mudo que lo ignora, incoherencia #5). Mismo gate de seguridad que launch

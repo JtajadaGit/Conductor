@@ -2,7 +2,8 @@
 // (autocompletado/validación en el editor — developer power). Lo invoca el CLI (`conductor init-config`)
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
+import { detectStack } from './stack.mjs';
 
 export const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
@@ -133,9 +134,26 @@ export function initConfig(openspecDir) {
   const cfgPath = join(openspecDir, 'conductor.json');
   let created = false;
   if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
+  const root = dirname(resolve(openspecDir));
+  // config.yaml: metadata OpenSpec del proyecto (stack DETECTADO por el motor). Init ATÓMICO y COMPLETO (#6): un
+  // fresh-init deja conductor.json (config EJECUTABLE) Y config.yaml (metadata) → "inicializado" deja de ser ambiguo
+  // (antes una ruta creaba uno y otra el otro). Determinista, sin LLM. Idempotente: nunca pisa el del usuario.
+  const ymlPath = join(openspecDir, 'config.yaml');
+  let metadata = false;
+  if (!existsSync(ymlPath)) {
+    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
+    const yml = [
+      '# conductor — metadata del proyecto (generada por el motor en init; determinista, sin LLM).',
+      `name: ${basename(root) || 'proyecto'}`,
+      `stack: ${stk.summary || 'desconocido'}`,
+      stk.testCmd ? `test: ${stk.testCmd}` : '# test: <comando de pruebas del proyecto>',
+      '',
+    ].join('\n');
+    writeFileSync(ymlPath, yml); metadata = true;
+  }
   // .copilotignore al root del proyecto (token-first determinista)
-  const ignorePath = join(dirname(resolve(openspecDir)), '.copilotignore');
+  const ignorePath = join(root, '.copilotignore');
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
-  return { schemaPath, cfgPath, created, ignorePath, copilotignore };
+  return { schemaPath, cfgPath, created, ymlPath, metadata, ignorePath, copilotignore };
 }

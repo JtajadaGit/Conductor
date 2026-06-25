@@ -500,6 +500,7 @@ await test('serve(#74): POST /api/init scaffold SDD nativo (conductor.json + .co
   const r = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   eq(r.ok, true); eq(r.created, true, 'crea conductor.json la 1ª vez');
   assert(existsSync(join(R, 'openspec', 'conductor.json')), 'conductor.json creado');
+  assert(existsSync(join(R, 'openspec', 'config.yaml')), 'config.yaml (metadata) creado — init ATÓMICO #6, no dos scaffolds');
   assert(existsSync(join(R, '.copilotignore')), '.copilotignore creado en el root del proyecto');
   const r2 = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   eq(r2.created, false, 'idempotente: no recrea conductor.json del usuario');

@@ -35,6 +35,7 @@ export class PanelScreen extends CElement {
   @state() private projects: ProjectSummary[] = [];
   @state() private gh: GhUsage | null = null;
   @state() private usage: Usage | null = null;
+  @state() private version = ''; // versión del motor (badge visible → un relevo de versión no es invisible, #10)
   @state() private models: ModelsResponse | null = null;
   @state() private req = '';
   @state() private name = '';
@@ -92,6 +93,7 @@ export class PanelScreen extends CElement {
       this.projects = d.projects ?? [];
       this.gh = d.ghUsage ?? null;
       this.usage = d.usage ?? null;
+      this.version = d.version ?? '';
       // PROYECTO ACTIVO por ID ESTABLE (no por nombre — dos repos con el mismo basename ya no colisionan, #9).
       const served = d.projectId || this.projects.find((p) => p.name === d.project)?.id || this.projects[0]?.id || '';
       this.defProjId = served;
@@ -491,7 +493,7 @@ export class PanelScreen extends CElement {
       <p class="muted" style="margin:-.9rem 0 1.3rem;font-size:.82rem">
         ${active ? html`Proyecto activo: <strong style="font-weight:600;color:var(--tx)">${active.name}</strong> <span style="opacity:.7">· ${active.root}</span>` : html`${this.projects.length} proyecto${this.projects.length === 1 ? '' : 's'}`}
         ${this.projects.length > 1 ? html` · <button type="button" @click=${() => { this.showAll = !this.showAll; }} style="background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline">${this.showAll ? 'ver solo este' : `ver todos (${this.projects.length})`}</button>` : nothing}
-        · ${m.total} run${m.total === 1 ? '' : 's'}${this.showAll ? ' · todos' : ''}
+        · ${m.total} run${m.total === 1 ? '' : 's'}${this.showAll ? ' · todos' : ''}${this.version ? html` · <span title="versión del motor en uso">motor v${this.version}</span>` : nothing}
       </p>
       <div class="cards">
         <div class="card"><small>Runs</small><span>${m.total}</span></div>
