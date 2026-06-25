@@ -5988,12 +5988,12 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // dial de gobierno (los 4 presets): solo se acepta un nombre conocido; uno inválido se IGNORA (cae al
         // preset de conductor.json/env o a los defaults) en vez de romper el launch — tolerante con clientes viejos.
         const presetArg = (b.preset && PRESET_NAMES.includes(b.preset)) ? b.preset : undefined;
-        // El SERVIDOR deriva la profundidad de la petición (determinista), NO se fía del `complexity` del cliente:
-        // éste puede llegar obsoleto (carrera con el debounce del estimate) o por defecto si el estimate falló.
-        // Así el run ejecuta SIEMPRE el plan derivado del texto → plan == run, independiente del timing del cliente.
-        // EXCEPCIÓN: 'micro' (no-SDD amurallado, decisión explícita) NO lo produce resolvePlan ni la UI normal;
-        // si un caller lo pide explícitamente, se respeta (sin él, micro sería inalcanzable y romperíamos ese modo).
-        const launchComplexity = b.complexity === 'micro' ? 'micro' : resolvePlan({ request: b.request }).complexity;
+        // El SERVIDOR deriva SIEMPRE la profundidad de la petición (determinista), NO se fía del `complexity` del
+        // cliente: éste puede llegar obsoleto (carrera con el debounce del estimate) o por defecto si el estimate falló.
+        // MICRO RETIRADO (decisión cerrada): "lanzar" significa SIEMPRE proyecto SDD gobernado (spec+apply+verify). El
+        // server IGNORA un `complexity:'micro'` del cliente y deriva un flujo gobernado → no hay vía a un run sin spec
+        // desde el producto. El modo ultra-ahorro = el flujo gobernado mínimo con modelos economy, no un modo sin spec.
+        const launchComplexity = resolvePlan({ request: b.request }).complexity;
         // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
         const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
         launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
@@ -7021,4 +7021,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 35cd9c7426d9cb6758ab235135b8ea1936811894e52cb940511ec57ed38a8928
+// build-inputs-sha256: 6b6cc7f19a595b33cb53eabb0e0bfa3c8ea30748f6f69005a5cb56b9cd6b1e93

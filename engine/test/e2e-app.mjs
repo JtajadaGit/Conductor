@@ -159,21 +159,22 @@ try {
   if (!(names2.indexOf('propose') >= 0 && names2.indexOf('propose') < names2.indexOf('apply'))) fail('timeline heredado desordenado: ' + names2.join('>'));
   ok('⏯ RESUME desde la app → GREEN con timeline heredado en orden (adiós follón v1.30)');
 
-  // ── ESCENARIO 3: modo MICRO (sin SDD, 1 llamada LLM) + modo AUTO (sin pausas) ──
+  // ── ESCENARIO 3: MICRO RETIRADO (decisión: lanzar = SIEMPRE SDD gobernado) + modo AUTO (sin pausas) ──
+  // El cliente envía complexity:'micro' pero el server lo IGNORA y deriva un flujo GOBERNADO (resolvePlan):
+  // no hay vía a un run sin spec desde el producto. Verificamos que el run pasa por verify (gobierno) y cierra GREEN.
   const l3 = await apiJson('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'añade un componente header con título y test', name: 'micro-e2e', complexity: 'micro', auto: true }) });
-  if (!l3.ok) fail('launch micro: ' + JSON.stringify(l3));
-  for (let i = 0; i < 120; i++) { await sleep(400); st = await apiJson('/api/run/micro-e2e/state'); if (st.pending) fail('micro+auto NO debe pausar'); if (st.done) break; }
-  if (st.verdict !== 'GREEN') fail('micro no llegó a GREEN: ' + st.verdict + ' — registro:\n' + (st.logTail || []).join('\n'));
-  if (st.phases.length !== 1 || st.phases[0].phase !== 'apply') fail('micro debía ser 1 sola fase apply: ' + st.phases.map((p) => p.phase).join('>'));
-  const mrep = readFileSync(join(PROJ, 'openspec', 'changes', 'micro-e2e', 'apply-report.md'), 'utf8');
-  if (!/Status: done/.test(mrep)) fail('micro sin apply-report done');
-  const mgates = JSON.parse(readFileSync(join(PROJ, 'openspec', 'changes', 'micro-e2e', '.conductor', 'report.json'), 'utf8')).gates;
-  if (mgates.some((g) => g.severity === 'error')) fail('micro-gate con errores: ' + JSON.stringify(mgates));
-  ok('⚡ MICRO (sin SDD) + AUTO: 1 sola fase apply, sin pausas, micro-gate limpio → GREEN');
+  if (!l3.ok) fail('launch (micro ignorado): ' + JSON.stringify(l3));
+  for (let i = 0; i < 220; i++) { await sleep(400); st = await apiJson('/api/run/micro-e2e/state'); if (st.pending) fail('auto NO debe pausar'); if (st.done) break; }
+  if (st.verdict !== 'GREEN') fail('no llegó a GREEN: ' + st.verdict + ' — registro:\n' + (st.logTail || []).join('\n'));
+  const names3 = st.phases.map((p) => p.phase);
+  if (names3.length <= 1 || !names3.includes('verify')) fail('micro retirado: debe ser un flujo GOBERNADO con verify, no 1 fase: ' + names3.join('>'));
+  if (!names3.includes('spec')) fail('micro retirado: el flujo gobernado debe dejar rastro de spec: ' + names3.join('>'));
+  ok('🚫 MICRO retirado: el cliente pide micro, el server deriva un flujo SDD gobernado (spec+…+verify) → GREEN');
 
-  // CRUDO del modelo ("lo que verías sin conductor"): el driver persiste el stdout del agente y la web lo sirve
+  // CRUDO del modelo ("lo que verías sin conductor"): el driver persiste el stdout del agente y la web lo sirve (fase apply)
   const mtl = JSON.parse(readFileSync(join(PROJ, 'openspec', 'changes', 'micro-e2e', '.conductor', 'timeline.json'), 'utf8'));
-  if (!mtl.phases[0].hasRaw) fail('la fase apply debía marcar hasRaw=true');
+  const mApply = (mtl.phases || []).find((p) => p.phase === 'apply');
+  if (!mApply || !mApply.hasRaw) fail('la fase apply debía marcar hasRaw=true');
   const rawResp = await api('/api/run/micro-e2e/raw?phase=apply');
   if (rawResp.status !== 200 || !rawResp.body.includes('FAKE-MODEL raw')) fail('endpoint raw no devolvió el crudo del modelo: ' + JSON.stringify(rawResp));
   ok('📤 crudo del modelo capturado y servido por /raw (transparencia "qué dice el LLM")');

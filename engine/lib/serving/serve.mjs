@@ -882,12 +882,12 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // dial de gobierno (los 4 presets): solo se acepta un nombre conocido; uno inválido se IGNORA (cae al
         // preset de conductor.json/env o a los defaults) en vez de romper el launch — tolerante con clientes viejos.
         const presetArg = (b.preset && PRESET_NAMES.includes(b.preset)) ? b.preset : undefined;
-        // El SERVIDOR deriva la profundidad de la petición (determinista), NO se fía del `complexity` del cliente:
-        // éste puede llegar obsoleto (carrera con el debounce del estimate) o por defecto si el estimate falló.
-        // Así el run ejecuta SIEMPRE el plan derivado del texto → plan == run, independiente del timing del cliente.
-        // EXCEPCIÓN: 'micro' (no-SDD amurallado, decisión explícita) NO lo produce resolvePlan ni la UI normal;
-        // si un caller lo pide explícitamente, se respeta (sin él, micro sería inalcanzable y romperíamos ese modo).
-        const launchComplexity = b.complexity === 'micro' ? 'micro' : resolvePlan({ request: b.request }).complexity;
+        // El SERVIDOR deriva SIEMPRE la profundidad de la petición (determinista), NO se fía del `complexity` del
+        // cliente: éste puede llegar obsoleto (carrera con el debounce del estimate) o por defecto si el estimate falló.
+        // MICRO RETIRADO (decisión cerrada): "lanzar" significa SIEMPRE proyecto SDD gobernado (spec+apply+verify). El
+        // server IGNORA un `complexity:'micro'` del cliente y deriva un flujo gobernado → no hay vía a un run sin spec
+        // desde el producto. El modo ultra-ahorro = el flujo gobernado mínimo con modelos economy, no un modo sin spec.
+        const launchComplexity = resolvePlan({ request: b.request }).complexity;
         // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
         const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
         launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);

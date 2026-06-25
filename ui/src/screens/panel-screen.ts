@@ -351,7 +351,7 @@ export class PanelScreen extends CElement {
     }
     // SIN conectar = LED ámbar (pendiente) + invitación con acento lateral. La URL se prefilla si la conocemos.
     return html`
-      <details class="inst-panel inst-prompt" style="margin-top:.6rem" open>
+      <details class="inst-panel inst-prompt" style="margin-top:.6rem">
         <summary class="inst-head">
           <span class="inst-led on-warn" aria-hidden="true"></span>
           <span class="inst-title">Conectar qwen · LiteLLM</span>

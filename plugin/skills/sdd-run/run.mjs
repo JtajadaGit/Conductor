@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, statSync, mkdirSync, appendFileSync, openSync } from 'node:fs';
 import { spawn, execSync, execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENGINE = resolve(HERE, '..', '..', '..', 'assets', 'conductor.mjs'); // plugin/skills/sdd-run/ -> ../../../assets/
@@ -46,8 +47,9 @@ const changeDir = join(project, 'openspec', 'changes', changeName);
 
 // DIAGNOSABILIDAD (launcher-diagnostic-chain): el arranque encadena ping→spawn→re-ping→fallback. Antes
 // era SILENCIOSO: si algo fallaba, el usuario veía "fallback" mudo o nada → percepción de "no funciona".
-// Ahora cada transición se loguea a stdout y a .conductor/launcher.log (post-mortem del arranque).
-const launchLog = join(changeDir, '.conductor', 'launcher.log');
+// Ahora cada transición se loguea a stdout y a ~/.conductor/launcher.log — RUTA ESTABLE por-app (#11): existe
+// SIEMPRE, incluso en OPEN_ONLY (sin change asociado, donde el changeDir no es una tarea real). El dev sabe dónde mirar.
+const launchLog = join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'launcher.log');
 const llog = (m) => {
   const line = `[${new Date().toISOString().slice(11, 19)}] ${m}`;
   process.stdout.write(line + '\n');

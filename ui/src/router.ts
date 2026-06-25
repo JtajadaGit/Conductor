@@ -21,8 +21,9 @@ export function parseRoute(pathname: string, search = ''): Route {
     const segs = rest.split('/');
     const apiBase = `/api/run/${rest}/`;
     if (segs.length >= 2) return { name: 'run', apiBase, projId: segs[0], change: segs.slice(1).join('/'), query };
-    // Solo projId sin change name → no hay run que mostrar; volver al panel (B2)
-    return { name: 'panel', apiBase: '/api/', query };
+    // Solo projId sin change name → no hay run que mostrar; en vez de un redirect MUDO al dashboard global,
+    // se ENFOCA ese proyecto (resolve reescribe a /?project=<id>) para no "reposicionar sin explicación" (#13).
+    return { name: 'panel', apiBase: '/api/', projId: segs[0], query };
   }
   if (p.startsWith('/session/') && p.length > 9) {
     const rest = p.slice(9);
@@ -48,6 +49,11 @@ export class Router extends EventTarget {
 
   private resolve(): void {
     this.current = parseRoute(location.pathname, location.search);
+    // /run/<projId> SIN change → parseRoute lo mapeó a panel con projId. Reescribimos la URL a /?project=<id> para
+    // que el dashboard ENFOQUE ese proyecto (en vez de caer al global por defecto sin explicación, #13).
+    if (this.current.name === 'panel' && this.current.projId) {
+      try { history.replaceState({}, '', `/?project=${encodeURIComponent(this.current.projId)}`); } catch { /* sin history */ }
+    }
     this.dispatchEvent(new CustomEvent<Route>('change', { detail: this.current }));
   }
 
