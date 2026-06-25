@@ -15,11 +15,11 @@ const PHASES = {
   medium: ['explore', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify'],
   complex: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'],
 };
-const ROLE = { explore: 'planner', propose: 'planner', clarify: 'planner', spec: 'planner', design: 'planner', tasks: 'planner', apply: 'coder', fix: 'coder', verify: 'reviewer' };
+const ROLE = { explore: 'planner', propose: 'planner', clarify: 'planner', spec: 'planner', design: 'planner', tasks: 'planner', apply: 'coder', fix: 'coder', test: 'tester', verify: 'reviewer' };
 const artifactOf = (phase, domain) => ({
   explore: 'exploration.md', propose: 'proposal.md', clarify: 'questions.md',
   spec: `specs/${domain}/spec.md`, design: 'design.md', tasks: 'tasks.md',
-  apply: 'apply-report.md', fix: 'apply-report.md', verify: 'verify-report.md',
+  apply: 'apply-report.md', fix: 'apply-report.md', test: 'test-report.md', verify: 'verify-report.md',
 }[phase]);
 
 // Instrucciones por fase: el ROL y el formato viajan como DATOS (no en un .md que el modelo ignora).
@@ -63,7 +63,7 @@ function stepFor(dir, s, extra = {}) {
 // openspec/conductor.json "pipeline": ["spec","apply","verify"]. El CÓDIGO sigue conduciendo y el gate
 // se mantiene: se EXIGE que "verify" esté presente (si falta, se añade al final). micro NO es overridable
 // (es "no SDD" por decisión del usuario). Entradas desconocidas se ignoran (no rompen el run).
-const KNOWN = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'];
+const KNOWN = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'];
 
 // FASES CONDICIONALES gate-verificadas (workflows flexibles, versión conductor): una entrada del pipeline
 // puede ser {"phase":"explore","when":"missing:proposal.md"} y solo se incluye si la condición se cumple.
@@ -103,8 +103,11 @@ export function resolvePhases(complexity, pipeline, ctx = {}) {
   // verify es el gate innegociable Y debe ser la fase TERMINAL: si la config lo coloca antes (p.ej.
   // ["spec","apply","verify","design"]), lo reubicamos al final. Si no, las fases declaradas DESPUÉS de
   // verify quedarían "fantasma" (nunca corren) y el run cerraría GREEN antes de tiempo (hallazgo adversarial).
-  const noVerify = filtered.filter((p) => p !== 'verify');
-  return [...noVerify, 'verify'];
+  // `test` (ejecutar las pruebas reales, opcional) se REUBICA justo ANTES de verify: el modelo es apply → test →
+  // (fix-loop si fallan) → verify. Así las pruebas GATEAN el cierre, sin convertirse en gobierno (verify sigue terminal).
+  const noVT = filtered.filter((p) => p !== 'verify' && p !== 'test');
+  const hasTest = filtered.includes('test');
+  return [...noVT, ...(hasTest ? ['test'] : []), 'verify'];
 }
 
 export function start({ changeDir, request, complexity = 'medium', domain = 'core', pipeline = null }) {
@@ -201,6 +204,27 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
     let q = ''; try { q = readFileSync(join(changeDir, 'questions.md'), 'utf8'); } catch {}
     const pending = (q.match(/^\s*-\s*\[ \]/gim) || []).length;
     if (pending > 0) return { done: true, verdict: 'BLOCKED', phase, reason: `clarify: ${pending} pregunta(s) sin responder en questions.md — márcalas "- [x]" tras resolverlas y reanuda` };
+  }
+
+  // TEST = fase determinista de EJECUCIÓN de pruebas, ANTES de verify (modelo: apply → test → fix-loop → verify). El
+  // driver ya corrió el comando y escribió test-report.md; aquí solo se LEE el resultado (orchestrate sigue siendo
+  // análisis estático, sin ejecutar nada). PASS → avanza a verify. FAIL → inserta un ciclo `fix` ANTES de test y
+  // reintenta (mismo mecanismo que el fix de verify); tope de ciclos → BLOCKED. Las pruebas GATEAN el cierre.
+  if (phase === 'test') {
+    let tr = ''; try { tr = readFileSync(join(changeDir, 'test-report.md'), 'utf8'); } catch {}
+    const failed = /##\s*Verdict[^\n]*\n+\s*FAIL/i.test(tr) || /^FAILED:/im.test(tr);
+    if (failed) {
+      const ti = s.idx;
+      s.phases = [...s.phases.slice(0, ti), 'fix', ...s.phases.slice(ti)]; // fix ANTES de test → re-codifica y re-testea
+      s.idx = ti;
+      s.fixCycles = (s.fixCycles || 0) + 1;
+      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
+      saveState(changeDir, s);
+      const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
+      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${INSTRUCTION.fix} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
+    }
+    s.idx += 1; saveState(changeDir, s); // PASS → avanza a verify (gobierno terminal)
+    return stepFor(changeDir, s);
   }
 
   // 2) si es verify → corre el gate determinista + EL VERDICT DEL REVIEWER GATEA (auditoría senior: antes el

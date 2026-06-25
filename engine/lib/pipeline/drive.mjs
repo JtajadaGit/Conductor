@@ -503,7 +503,14 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // (obligatorias spec/apply/verify bloqueadas; opcionales toggleables). Llega como opción `pipeline` (array de
   // fases) y GANA sobre openspec/conductor.json. resolvePhases ya lo sanea (solo fases KNOWN, dedup) y REIMPONE
   // verify terminal — el gobierno no se puede desmarcar. Se persiste en el timeline para que el resume sea idéntico.
-  const effPipeline = (Array.isArray(pipelineOpt) && pipelineOpt.length) ? pipelineOpt : cfg.pipeline;
+  let effPipeline = (Array.isArray(pipelineOpt) && pipelineOpt.length) ? pipelineOpt : cfg.pipeline;
+  // FASE TEST (toggle "test", opcional): si se pidió ejecutar las pruebas reales, aseguramos 'test' en el pipeline
+  // efectivo; el motor (resolvePhases) la reubica justo ANTES de verify (apply → test → fix-loop → verify). Sin
+  // pipeline explícito, partimos del plan por complejidad para no perder las demás fases. (Micro = no-SDD: se ignora.)
+  if (runTestsOpt === true && complexity !== 'micro') {
+    const base = (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : resolvePhases(complexity, null);
+    effPipeline = base.includes('test') ? base : [...base, 'test'];
+  }
   const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
@@ -678,6 +685,33 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       if (phase === 'fix' && Array.isArray(pr?.selected) && pr.selected.length) decisions.push({ at: new Date().toISOString(), phase, kind: 'fix-selection', value: pr.selected.length });
       approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined });
       log(`▶ aprobado — continúa "${phase}"`);
+    }
+    // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
+    // tokens, sin LLM) y escribe test-report.md; next() lee el veredicto (FAIL → ciclo fix → re-test; PASS → verify).
+    // ANTI-RCE: solo EJECUTA con consentimiento (toggle "test" del run, o cfg.allowChecks/env); si no, no-op que pasa.
+    if (phase === 'test') {
+      if (stopSignal?.requested) return stopped();
+      log('⏳ test (ejecución de pruebas del proyecto)');
+      const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
+      const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
+      const failed = []; let detail = '';
+      if (cmds.length && consent) {
+        for (const chk of cmds) {
+          const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
+          if (!a.length) continue;
+          try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
+          catch (e) { failed.push(chk); detail += `FAILED: ${chk}\n${scrubSecrets(String(e.stdout || '') + String(e.stderr || '')).slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk}`); }
+        }
+        testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
+      } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
+      try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
+      timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: true });
+      currentInfo = null; writeTimeline('running');
+      log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
+      trail.push('test');
+      step = next({ changeDir, srcDir: projectRoot, strict: strictGate });
+      if (step.gate === 'TESTS-FAIL') log(`   pruebas fallaron → ${step.phase || '(fix)'}`);
+      continue;
     }
     log(`⏳ ${phase} (${role})`);
     const isCode = phase === 'apply' || phase === 'fix';
@@ -1112,35 +1146,8 @@ ${readSafe(x.lp).trim()}`);
     else log(`   ✓ gate de contrato: sin cambios incompatibles`);
   }
 
-  // VERIFY POR EJECUCIÓN (opcional, post-gate, DISTINTO del gate de gobierno): el gate estructural verify
-  // (coherencia + artefactos + traza) es sin-LLM y NO ejecuta nada — comprueba que la PIPELINE se hizo bien.
-  // Aparte, el usuario puede pedir EJECUTAR las pruebas REALES del proyecto: el toggle "test" del panel por-run
-  // (runTestsOpt = consentimiento humano explícito de ESTE run) o cfg.allowChecks/env (CI/headless). Comando(s):
-  // cfg.checks declarados, o el testCmd autodetectado del stack. SIN shell (argv split). Un conductor.json clonado
-  // es entrada NO confiable (RCE-by-config): por eso se exige consentimiento. Si una prueba falla (exit≠0) → el
-  // run cierra TRI-ESTADO 'TESTS-FAIL' (construido bien · pruebas fallan), distinto del NOT-GREEN ESTRUCTURAL.
-  if (step.verdict === 'GREEN' && (runTestsOpt === true || (Array.isArray(cfg.checks) && cfg.checks.length))) {
-    const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
-    const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
-    if (!cmds.length) {
-      log('ℹ️ "test" solicitado pero no se detectó comando de pruebas (sin cfg.checks ni testCmd del stack) — nada que ejecutar.');
-    } else if (!consent) {
-      log(`ℹ️ ${cmds.length} prueba(s) declaradas pero NO ejecutadas — actívalas con "allowChecks": true en openspec/conductor.json (o CONDUCTOR_ALLOW_CHECKS=1), o marca "test" en el panel. No se ejecuta config clonada por defecto (RCE).`);
-    } else {
-      const failed = [];
-      for (const chk of cmds) {
-        const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
-        if (!a.length) continue;
-        try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: 'ignore', timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
-        catch { failed.push(chk); log(`   ❌ prueba FALLÓ (exit≠0): ${chk}`); }
-      }
-      testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
-      if (failed.length) {
-        step = { ...step, verdict: 'TESTS-FAIL', gate: 'TESTS-FAIL', checksFailed: failed };
-        log(`⚠ gate estructural GREEN, pero ${failed.length} prueba(s) del proyecto fallaron → TESTS-FAIL (construido bien · pruebas fallan): ${failed.join(' · ')}`);
-      } else log(`   ✓ ${cmds.length} prueba(s) del proyecto pasaron — GREEN con pruebas reales`);
-    }
-  }
+  // NOTA: la ejecución de pruebas reales ya NO es un gate post-GREEN — es la FASE `test` (determinista, antes de
+  // verify, con bucle fix). El tri-estado 'TESTS-FAIL' se retiró: si las pruebas no pasan tras N fix → BLOCKED.
 
   // auto-sello de provenance en GREEN: cada run correcto queda firmado y auditable (el foso).
   // Ed25519 si CONDUCTOR_PRIV_KEY apunta a una clave; si no, sello sha256/HMAC. Desactivable con CONDUCTOR_NO_SEAL.

@@ -1,7 +1,7 @@
-// tests-gate.test.mjs — VERIFY POR EJECUCIÓN (opcional, post-gate): el toggle "test" del panel ejecuta las pruebas
-// REALES del proyecto DESPUÉS del GREEN estructural. SEPARADO del gate de gobierno (verify), que es sin-LLM y nunca
-// ejecuta nada. Si las pruebas fallan → veredicto TRI-ESTADO 'TESTS-FAIL' (construido bien · pruebas fallan), distinto
-// del NOT-GREEN estructural. Prueba: tri-estado, consentimiento (runTests por-run / allowChecks / env), y anti-RCE.
+// tests-gate.test.mjs — FASE TEST (modelo apply → test → fix-loop → verify): ejecutar las pruebas REALES del proyecto
+// es una FASE DETERMINISTA opcional ANTES de verify (no un gate post-GREEN). Si fallan → ciclo `fix` (re-codifica) →
+// re-test → … hasta pasar o, tras N intentos, BLOCKED. `verify` (gobierno) sigue terminal. Anti-RCE: la fase solo
+// EJECUTA con consentimiento (toggle "test" por-run / allowChecks / env); en el pipeline pero sin consentimiento = no-op.
 import { drive } from '../lib/pipeline/drive.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ const PASS = 'node --version'; // exit 0
 const FAIL = 'node -e "process.exit(1)"'; // exit 1
 
 const w2 = (abs, c) => { mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, c); };
-// agente FALSO coherente: produce artefactos/código/test que hacen pasar el gate ESTRUCTURAL (→ GREEN estructural).
+// agente FALSO coherente: produce artefactos/código/test que hacen pasar el gate ESTRUCTURAL (→ verify GREEN).
 const mkAgent = () => (a) => {
   const { phase, writeTo, cwd } = a;
   if (phase === 'apply' || phase === 'fix') {
@@ -35,61 +35,74 @@ const fresh = (cfg = {}) => {
   mkdirSync(join(TMP, 'openspec'), { recursive: true });
   writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false, serve: false, ...cfg }));
 };
-const run = (name, opts = {}) => drive({ changeDir: join(TMP, 'openspec', 'changes', name), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(), ...opts });
-const timelineTests = (name) => { try { return JSON.parse(readFileSync(join(TMP, 'openspec', 'changes', name, '.conductor', 'timeline.json'), 'utf8')).tests ?? null; } catch { return null; } };
+// pipeline con la fase `test` (entre apply y verify). resolvePhases la reubica justo antes de la verify terminal.
+const runT = (name, opts = {}) => drive({ changeDir: join(TMP, 'openspec', 'changes', name), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(), pipeline: ['propose', 'spec', 'apply', 'test'], ...opts });
+const tl = (name) => { try { return JSON.parse(readFileSync(join(TMP, 'openspec', 'changes', name, '.conductor', 'timeline.json'), 'utf8')); } catch { return null; } };
 
-// ── 1) toggle "test" por-run + pruebas que PASAN → GREEN con pruebas reales ──
-await test('tests-gate: runTests + cfg.checks que PASA → GREEN, y el timeline registra tests.passed', async () => {
+// ── 1) test PASA → apply→test→verify→GREEN; el timeline registra tests.passed y test va ANTES de verify ──
+await test('tests-gate: fase test con pruebas que PASAN → GREEN; test corre ANTES de verify', async () => {
   const saved = clearEnv();
   try {
     fresh({ checks: [PASS] });
-    const r = await run('t-pass', { runTests: true });
-    eq(r.verdict, 'GREEN', 'gate estructural GREEN + pruebas reales pasan → GREEN');
-    const t = timelineTests('t-pass');
+    const r = await runT('t-pass', { runTests: true });
+    eq(r.verdict, 'GREEN', 'pruebas pasan → el run cierra GREEN en verify');
+    const phases = r.trail;
+    assert(phases.includes('test') && phases.indexOf('test') < phases.indexOf('verify'), 'test corre ANTES de verify: ' + phases.join('>'));
+    const t = tl('t-pass')?.tests;
     assert(t && t.ran === true && t.passed === true, 'el timeline registra que las pruebas corrieron y pasaron');
   } finally { restoreEnv(saved); }
 });
 
-// ── 2) tri-estado: pruebas que FALLAN → TESTS-FAIL (NO NOT-GREEN estructural) ──
-await test('tests-gate: runTests + cfg.checks que FALLA → TESTS-FAIL (tri-estado: construido bien · pruebas fallan)', async () => {
+// ── 2) test FALLA → ciclo fix → re-test → … → BLOCKED (gobierno: sin pruebas en verde no hay GREEN) ──
+await test('tests-gate: fase test con pruebas que FALLAN → ciclo fix → BLOCKED tras N intentos (no GREEN)', async () => {
   const saved = clearEnv();
   try {
     fresh({ checks: [FAIL] });
-    const r = await run('t-fail', { runTests: true });
-    eq(r.verdict, 'TESTS-FAIL', 'gate estructural pasó pero las pruebas fallan → veredicto tri-estado propio');
-    const t = timelineTests('t-fail');
-    assert(t && t.ran === true && t.passed === false && t.failed.length === 1, 'timeline registra el fallo de pruebas');
+    const r = await runT('t-fail', { runTests: true });
+    eq(r.verdict, 'BLOCKED', 'las pruebas no pasan tras los ciclos de fix → BLOCKED, nunca GREEN');
+    assert((r.trail.filter((p) => p === 'fix').length) >= 1, 'hubo al menos un ciclo de fix antes de bloquear');
   } finally { restoreEnv(saved); }
 });
 
-// ── 3) runTests pero SIN comando detectable (sin cfg.checks, sin package.json) → GREEN estructural, nada que ejecutar ──
-await test('tests-gate: runTests sin comando de pruebas detectable → GREEN estructural (no rompe, nada que ejecutar)', async () => {
+// ── 3) fase test sin comando detectable → no-op que pasa → verify → GREEN ──
+await test('tests-gate: fase test sin comando de pruebas → no-op que pasa → GREEN (no bloquea)', async () => {
   const saved = clearEnv();
   try {
-    fresh(); // sin checks; el TMP no tiene package.json → detectStack.testCmd = null
-    const r = await run('t-none', { runTests: true });
-    eq(r.verdict, 'GREEN', 'sin comando que ejecutar, el run queda GREEN estructural');
-    eq(timelineTests('t-none'), null, 'no se registran pruebas (no corrió ninguna)');
+    fresh(); // sin checks; TMP no tiene package.json → testCmd null
+    const r = await runT('t-none', { runTests: true });
+    eq(r.verdict, 'GREEN', 'sin comando que ejecutar, la fase test pasa y el run cierra GREEN');
+    eq(tl('t-none')?.tests ?? null, null, 'no se registran pruebas (no corrió ninguna)');
   } finally { restoreEnv(saved); }
 });
 
-// ── 4) ANTI-RCE: cfg.checks declarados pero SIN consentimiento (runTests=false, allowChecks=false, env unset) → NO se ejecutan ──
-await test('tests-gate: cfg.checks SIN consentimiento (sin runTests/allowChecks/env) → NO se ejecutan (anti-RCE), GREEN', async () => {
+// ── 4) ANTI-RCE: test en el pipeline pero SIN consentimiento → NO ejecuta el comando (no-op pass) ──
+await test('tests-gate: fase test SIN consentimiento (sin runTests/allowChecks/env) → NO ejecuta (anti-RCE), GREEN', async () => {
   const saved = clearEnv();
   try {
-    fresh({ checks: [FAIL] }); // un check que fallaría SI se ejecutara
-    const r = await run('t-rce'); // runTests por defecto false; allowChecks ausente; env limpio
-    eq(r.verdict, 'GREEN', 'config clonada NO se ejecuta por defecto → el check que fallaría ni corre (anti-RCE)');
-    eq(timelineTests('t-rce'), null, 'no se ejecutó ninguna prueba');
+    fresh({ checks: [FAIL] }); // un check que FALLARÍA si se ejecutara
+    const r = await runT('t-rce'); // sin runTests; allowChecks ausente; env limpio
+    eq(r.verdict, 'GREEN', 'config clonada NO se ejecuta sin consentimiento → el check que fallaría ni corre (anti-RCE)');
+    eq(tl('t-rce')?.tests ?? null, null, 'no se ejecutó ninguna prueba');
   } finally { restoreEnv(saved); }
 });
 
-// ── 5) compat: cfg.checks + allowChecks:true (sin runTests) → se ejecutan (vía CI/headless); fallo → TESTS-FAIL ──
-await test('tests-gate: cfg.checks + allowChecks:true (sin toggle) → se ejecutan; un fallo da TESTS-FAIL', async () => {
+// ── 5) consentimiento por allowChecks (CI/headless, sin toggle) → ejecuta; fallo → ciclo fix → BLOCKED ──
+await test('tests-gate: fase test con allowChecks:true (sin toggle) → ejecuta; fallo → fix → BLOCKED', async () => {
   const saved = clearEnv();
   try {
     fresh({ checks: [FAIL], allowChecks: true });
-    const r = await run('t-allow'); // sin runTests; el consentimiento llega por allowChecks (CI)
-    eq(r.verdict, 'TESTS-FAIL', 'allowChecks habilita la ejecución igual que el toggle por-run');
+    const r = await runT('t-allow'); // sin runTests; el consentimiento llega por allowChecks (CI)
+    eq(r.verdict, 'BLOCKED', 'allowChecks habilita la ejecución igual que el toggle por-run');
+  } finally { restoreEnv(saved); }
+});
+
+// ── 6) runTests SIN pipeline explícito → el DRIVER inyecta la fase test en el plan por complejidad ──
+await test('tests-gate: runTests sin pipeline explícito → el driver inyecta la fase test (antes de verify) en el plan por defecto', async () => {
+  const saved = clearEnv();
+  try {
+    fresh({ checks: [PASS] });
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 't-inject'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(), runTests: true });
+    eq(r.verdict, 'GREEN', 'pruebas pasan → GREEN');
+    assert(r.trail.includes('test') && r.trail.indexOf('test') < r.trail.indexOf('verify'), 'test inyectada antes de verify sin pipeline explícito: ' + r.trail.join('>'));
   } finally { restoreEnv(saved); }
 });

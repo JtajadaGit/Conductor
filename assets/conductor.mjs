@@ -3159,11 +3159,11 @@ const PHASES = {
   medium: ['explore', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify'],
   complex: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'],
 };
-const ROLE = { explore: 'planner', propose: 'planner', clarify: 'planner', spec: 'planner', design: 'planner', tasks: 'planner', apply: 'coder', fix: 'coder', verify: 'reviewer' };
+const ROLE = { explore: 'planner', propose: 'planner', clarify: 'planner', spec: 'planner', design: 'planner', tasks: 'planner', apply: 'coder', fix: 'coder', test: 'tester', verify: 'reviewer' };
 const artifactOf = (phase, domain) => ({
   explore: 'exploration.md', propose: 'proposal.md', clarify: 'questions.md',
   spec: `specs/${domain}/spec.md`, design: 'design.md', tasks: 'tasks.md',
-  apply: 'apply-report.md', fix: 'apply-report.md', verify: 'verify-report.md',
+  apply: 'apply-report.md', fix: 'apply-report.md', test: 'test-report.md', verify: 'verify-report.md',
 }[phase]);
 
 // Instrucciones por fase: el ROL y el formato viajan como DATOS (no en un .md que el modelo ignora).
@@ -3207,7 +3207,7 @@ function stepFor(dir, s, extra = {}) {
 // openspec/conductor.json "pipeline": ["spec","apply","verify"]. El CÓDIGO sigue conduciendo y el gate
 // se mantiene: se EXIGE que "verify" esté presente (si falta, se añade al final). micro NO es overridable
 // (es "no SDD" por decisión del usuario). Entradas desconocidas se ignoran (no rompen el run).
-const KNOWN = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'];
+const KNOWN = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'];
 
 // FASES CONDICIONALES gate-verificadas (workflows flexibles, versión conductor): una entrada del pipeline
 // puede ser {"phase":"explore","when":"missing:proposal.md"} y solo se incluye si la condición se cumple.
@@ -3247,8 +3247,11 @@ function resolvePhases(complexity, pipeline, ctx = {}) {
   // verify es el gate innegociable Y debe ser la fase TERMINAL: si la config lo coloca antes (p.ej.
   // ["spec","apply","verify","design"]), lo reubicamos al final. Si no, las fases declaradas DESPUÉS de
   // verify quedarían "fantasma" (nunca corren) y el run cerraría GREEN antes de tiempo (hallazgo adversarial).
-  const noVerify = filtered.filter((p) => p !== 'verify');
-  return [...noVerify, 'verify'];
+  // `test` (ejecutar las pruebas reales, opcional) se REUBICA justo ANTES de verify: el modelo es apply → test →
+  // (fix-loop si fallan) → verify. Así las pruebas GATEAN el cierre, sin convertirse en gobierno (verify sigue terminal).
+  const noVT = filtered.filter((p) => p !== 'verify' && p !== 'test');
+  const hasTest = filtered.includes('test');
+  return [...noVT, ...(hasTest ? ['test'] : []), 'verify'];
 }
 
 function start({ changeDir, request, complexity = 'medium', domain = 'core', pipeline = null }) {
@@ -3345,6 +3348,27 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
     let q = ''; try { q = readFileSync(join(changeDir, 'questions.md'), 'utf8'); } catch {}
     const pending = (q.match(/^\s*-\s*\[ \]/gim) || []).length;
     if (pending > 0) return { done: true, verdict: 'BLOCKED', phase, reason: `clarify: ${pending} pregunta(s) sin responder en questions.md — márcalas "- [x]" tras resolverlas y reanuda` };
+  }
+
+  // TEST = fase determinista de EJECUCIÓN de pruebas, ANTES de verify (modelo: apply → test → fix-loop → verify). El
+  // driver ya corrió el comando y escribió test-report.md; aquí solo se LEE el resultado (orchestrate sigue siendo
+  // análisis estático, sin ejecutar nada). PASS → avanza a verify. FAIL → inserta un ciclo `fix` ANTES de test y
+  // reintenta (mismo mecanismo que el fix de verify); tope de ciclos → BLOCKED. Las pruebas GATEAN el cierre.
+  if (phase === 'test') {
+    let tr = ''; try { tr = readFileSync(join(changeDir, 'test-report.md'), 'utf8'); } catch {}
+    const failed = /##\s*Verdict[^\n]*\n+\s*FAIL/i.test(tr) || /^FAILED:/im.test(tr);
+    if (failed) {
+      const ti = s.idx;
+      s.phases = [...s.phases.slice(0, ti), 'fix', ...s.phases.slice(ti)]; // fix ANTES de test → re-codifica y re-testea
+      s.idx = ti;
+      s.fixCycles = (s.fixCycles || 0) + 1;
+      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
+      saveState(changeDir, s);
+      const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
+      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${INSTRUCTION.fix} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
+    }
+    s.idx += 1; saveState(changeDir, s); // PASS → avanza a verify (gobierno terminal)
+    return stepFor(changeDir, s);
   }
 
   // 2) si es verify → corre el gate determinista + EL VERDICT DEL REVIEWER GATEA (auditoría senior: antes el
@@ -4328,7 +4352,14 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // (obligatorias spec/apply/verify bloqueadas; opcionales toggleables). Llega como opción `pipeline` (array de
   // fases) y GANA sobre openspec/conductor.json. resolvePhases ya lo sanea (solo fases KNOWN, dedup) y REIMPONE
   // verify terminal — el gobierno no se puede desmarcar. Se persiste en el timeline para que el resume sea idéntico.
-  const effPipeline = (Array.isArray(pipelineOpt) && pipelineOpt.length) ? pipelineOpt : cfg.pipeline;
+  let effPipeline = (Array.isArray(pipelineOpt) && pipelineOpt.length) ? pipelineOpt : cfg.pipeline;
+  // FASE TEST (toggle "test", opcional): si se pidió ejecutar las pruebas reales, aseguramos 'test' en el pipeline
+  // efectivo; el motor (resolvePhases) la reubica justo ANTES de verify (apply → test → fix-loop → verify). Sin
+  // pipeline explícito, partimos del plan por complejidad para no perder las demás fases. (Micro = no-SDD: se ignora.)
+  if (runTestsOpt === true && complexity !== 'micro') {
+    const base = (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : resolvePhases(complexity, null);
+    effPipeline = base.includes('test') ? base : [...base, 'test'];
+  }
   const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
@@ -4503,6 +4534,33 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       if (phase === 'fix' && Array.isArray(pr?.selected) && pr.selected.length) decisions.push({ at: new Date().toISOString(), phase, kind: 'fix-selection', value: pr.selected.length });
       approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined });
       log(`▶ aprobado — continúa "${phase}"`);
+    }
+    // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
+    // tokens, sin LLM) y escribe test-report.md; next() lee el veredicto (FAIL → ciclo fix → re-test; PASS → verify).
+    // ANTI-RCE: solo EJECUTA con consentimiento (toggle "test" del run, o cfg.allowChecks/env); si no, no-op que pasa.
+    if (phase === 'test') {
+      if (stopSignal?.requested) return stopped();
+      log('⏳ test (ejecución de pruebas del proyecto)');
+      const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
+      const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
+      const failed = []; let detail = '';
+      if (cmds.length && consent) {
+        for (const chk of cmds) {
+          const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
+          if (!a.length) continue;
+          try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
+          catch (e) { failed.push(chk); detail += `FAILED: ${chk}\n${scrubSecrets(String(e.stdout || '') + String(e.stderr || '')).slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk}`); }
+        }
+        testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
+      } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
+      try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
+      timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: true });
+      currentInfo = null; writeTimeline('running');
+      log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
+      trail.push('test');
+      step = next({ changeDir, srcDir: projectRoot, strict: strictGate });
+      if (step.gate === 'TESTS-FAIL') log(`   pruebas fallaron → ${step.phase || '(fix)'}`);
+      continue;
     }
     log(`⏳ ${phase} (${role})`);
     const isCode = phase === 'apply' || phase === 'fix';
@@ -4937,35 +4995,8 @@ ${readSafe(x.lp).trim()}`);
     else log(`   ✓ gate de contrato: sin cambios incompatibles`);
   }
 
-  // VERIFY POR EJECUCIÓN (opcional, post-gate, DISTINTO del gate de gobierno): el gate estructural verify
-  // (coherencia + artefactos + traza) es sin-LLM y NO ejecuta nada — comprueba que la PIPELINE se hizo bien.
-  // Aparte, el usuario puede pedir EJECUTAR las pruebas REALES del proyecto: el toggle "test" del panel por-run
-  // (runTestsOpt = consentimiento humano explícito de ESTE run) o cfg.allowChecks/env (CI/headless). Comando(s):
-  // cfg.checks declarados, o el testCmd autodetectado del stack. SIN shell (argv split). Un conductor.json clonado
-  // es entrada NO confiable (RCE-by-config): por eso se exige consentimiento. Si una prueba falla (exit≠0) → el
-  // run cierra TRI-ESTADO 'TESTS-FAIL' (construido bien · pruebas fallan), distinto del NOT-GREEN ESTRUCTURAL.
-  if (step.verdict === 'GREEN' && (runTestsOpt === true || (Array.isArray(cfg.checks) && cfg.checks.length))) {
-    const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
-    const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
-    if (!cmds.length) {
-      log('ℹ️ "test" solicitado pero no se detectó comando de pruebas (sin cfg.checks ni testCmd del stack) — nada que ejecutar.');
-    } else if (!consent) {
-      log(`ℹ️ ${cmds.length} prueba(s) declaradas pero NO ejecutadas — actívalas con "allowChecks": true en openspec/conductor.json (o CONDUCTOR_ALLOW_CHECKS=1), o marca "test" en el panel. No se ejecuta config clonada por defecto (RCE).`);
-    } else {
-      const failed = [];
-      for (const chk of cmds) {
-        const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
-        if (!a.length) continue;
-        try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: 'ignore', timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
-        catch { failed.push(chk); log(`   ❌ prueba FALLÓ (exit≠0): ${chk}`); }
-      }
-      testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
-      if (failed.length) {
-        step = { ...step, verdict: 'TESTS-FAIL', gate: 'TESTS-FAIL', checksFailed: failed };
-        log(`⚠ gate estructural GREEN, pero ${failed.length} prueba(s) del proyecto fallaron → TESTS-FAIL (construido bien · pruebas fallan): ${failed.join(' · ')}`);
-      } else log(`   ✓ ${cmds.length} prueba(s) del proyecto pasaron — GREEN con pruebas reales`);
-    }
-  }
+  // NOTA: la ejecución de pruebas reales ya NO es un gate post-GREEN — es la FASE `test` (determinista, antes de
+  // verify, con bucle fix). El tri-estado 'TESTS-FAIL' se retiró: si las pruebas no pasan tras N fix → BLOCKED.
 
   // auto-sello de provenance en GREEN: cada run correcto queda firmado y auditable (el foso).
   // Ed25519 si CONDUCTOR_PRIV_KEY apunta a una clave; si no, sello sha256/HMAC. Desactivable con CONDUCTOR_NO_SEAL.
@@ -7109,4 +7140,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 142268ea236c71703a9f88017980717c73a2622b9c3e4f74991da1a94e395e9b
+// build-inputs-sha256: bc8e6f52cedab644723029494b3cbb1bc843a3c3a268ebc537e3636f2605fcbd

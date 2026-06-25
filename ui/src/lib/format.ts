@@ -32,9 +32,6 @@ export function verdictClass(verdict: string | null | undefined): string {
   const v = verdict.toUpperCase();
   if (v === 'GREEN') return 'GREEN';
   if (v === 'EN CURSO' || v === 'CURSO' || v === 'RUNNING' || v.includes('PAUSA')) return 'CURSO';
-  // tri-estado: el gate estructural pasó pero las pruebas REALES del proyecto fallaron (construido bien · tests fallan).
-  // Color propio (ámbar), distinto del verde GREEN y del rojo NOT-GREEN estructural.
-  if (v === 'TESTS-FAIL') return 'TESTS';
   if (['NOT-GREEN', 'ABORTED', 'STOPPED', 'INTERRUMPIDO', 'BLOCKED'].includes(v)) return v;
   return 'G';
 }

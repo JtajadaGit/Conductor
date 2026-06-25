@@ -405,12 +405,12 @@ export class PanelScreen extends CElement {
           })}
         </ul>
         <div style="margin-top:.5rem;padding-top:.5rem;border-top:1px dashed var(--bd,#d8dee9)">
-          <label style="display:flex;align-items:center;gap:.45rem;cursor:${this.est?.testCmd ? 'pointer' : 'not-allowed'};${this.est?.testCmd ? '' : 'opacity:.5'}" title=${this.est?.testCmd ? 'Ejecuta las pruebas REALES del proyecto DESPUÉS del gate (no es una fase SDD). Si fallan → veredicto TESTS-FAIL.' : 'No se detectó comando de pruebas en este proyecto'}>
+          <label style="display:flex;align-items:center;gap:.45rem;cursor:${this.est?.testCmd ? 'pointer' : 'not-allowed'};${this.est?.testCmd ? '' : 'opacity:.5'}" title=${this.est?.testCmd ? 'Ejecuta las pruebas REALES del proyecto ANTES de verify. Si fallan → ciclo fix → reintenta; si no pasan tras N intentos, el run queda BLOCKED.' : 'No se detectó comando de pruebas en este proyecto'}>
             <input type="checkbox" .checked=${this.runTests} ?disabled=${!this.est?.testCmd} @change=${(ev: Event) => { this.runTests = (ev.target as HTMLInputElement).checked; }} aria-label="ejecutar las pruebas del proyecto tras el gate (opcional)">
             <strong style="font-weight:600">test</strong>
             ${this.est?.testCmd ? html`<span class="muted" style="font-weight:400">→ ejecutar pruebas del proyecto · <code style="font-size:.85em">${this.est.testCmd}</code></span>` : html`<span class="muted" style="font-weight:400">→ sin comando de pruebas detectado</span>`}
           </label>
-          <p class="muted" style="margin:.1rem 0 0 1.55rem;font-size:.72rem">Opcional · corre TRAS el gate (no es una fase). Si fallan → veredicto propio TESTS-FAIL.</p>
+          <p class="muted" style="margin:.1rem 0 0 1.55rem;font-size:.72rem">Opcional · corre ANTES de verify (apply → test → fix → verify). Si fallan, reintenta con fix; si no pasan, BLOCKED.</p>
         </div>
         ${always.length ? html`
           <div style="margin-top:.5rem;font-size:.82rem"><span class="muted">Comprobaré:</span></div>
@@ -444,8 +444,8 @@ export class PanelScreen extends CElement {
         </label>
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
-          ${this.sddProjects().length > 1 ? html`<label class="fl">Proyecto<select .value=${this.projId} @change=${(e: Event) => { this.projId = (e.target as HTMLSelectElement).value; this.persistActive(); }}>
-            ${this.sddProjects().map((p) => html`<option value=${p.id}>${p.name}</option>`)}
+          ${this.sddProjects().length > 1 ? html`<label class="fl">Proyecto<select @change=${(e: Event) => { this.projId = (e.target as HTMLSelectElement).value; this.persistActive(); }}>
+            ${this.sddProjects().map((p) => html`<option value=${p.id} ?selected=${p.id === this.projId}>${p.name}</option>`)}
           </select></label>` : nothing}
           <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
           <label class="fl" title="Sin pausas de revisión: el pipeline corre de principio a fin sin pedirte aprobar cada fase (el experto suele quererlo OFF)">Auto-aprobar<label class="switch"><input type="checkbox" aria-label="Auto-aprobar: ejecutar sin pausas de revisión" .checked=${this.auto} @change=${(e: Event) => { this.auto = (e.target as HTMLInputElement).checked; }}><span></span></label></label>
