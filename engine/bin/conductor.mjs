@@ -248,7 +248,18 @@ switch (cmd) {
         // anti "varios encendidos": si :4750 lo ocupa OTRA conductor VIVA, NO levanto una 2ª app (efímera y
         // confusa) — uso esa. Solo caigo a efímero si el puerto lo ocupa algo AJENO a conductor.
         const j = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(900) }).then((r) => r.json()).catch(() => null);
-        if (j?.ok) { console.log(`✅ Ya hay una app conductor EN MARCHA en http://127.0.0.1:4750 (v${j.version || '?'}) — úsala (no levanto otra). Reinícala con \`conductor restart\` si quieres.`); process.exit(0); }
+        if (j?.ok) {
+          // app única ya viva → REGISTRAR el proyecto pedido y ENFOCARLO en la web (no un ✅ mudo que ignora B, #5).
+          const nm = root.split(/[\\/]/).pop();
+          const reg = await fetch('http://127.0.0.1:4750/api/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: root }) }).then((r) => r.json()).catch(() => null);
+          if (reg?.ok) {
+            const focusUrl = `http://127.0.0.1:4750/?project=${encodeURIComponent(reg.id)}`;
+            console.log(`✅ App conductor única ya en marcha. Registrado y enfocado «${nm}» → ${focusUrl}${reg.openspec ? '' : ' (sin init: la web te ofrecerá Inicializar)'}`);
+            if (process.env.CONDUCTOR_SERVE_OPEN !== '0') { try { const opener = process.platform === 'win32' ? `start "" "${focusUrl}"` : process.platform === 'darwin' ? `open "${focusUrl}"` : `xdg-open "${focusUrl}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch {} }
+            process.exit(0);
+          }
+          console.log(`✅ Ya hay una app conductor EN MARCHA en http://127.0.0.1:4750 (v${j.version || '?'}) — úsala (no levanto otra). Reinícala con \`conductor restart\` si quieres.`); process.exit(0);
+        }
       }
       const why = isAddr ? 'el puerto 4750 lo ocupa algo AJENO a conductor' : `no pude usar el puerto 4750 (${e.message})`;
       srv2 = await createAppServer(appOpts);

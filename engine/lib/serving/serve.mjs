@@ -820,9 +820,22 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       if (u.pathname === '/api/changes') {
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
-        const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, changes: [] };
+        const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
-        return json(200, { project: def.name, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+        // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
+        // dos repos con el mismo basename ya no colisionan; coherencia #9).
+        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+      }
+      // REGISTRO CONSCIENTE (`conductor serve <proj>` con la app única ya viva): el CLI registra el proyecto para que
+      // la web lo ENFOQUE (en vez de un ✅ mudo que lo ignora, incoherencia #5). Mismo gate de seguridad que launch
+      // (anti-ruta-arbitraria). Es un acto DELIBERADO del usuario → se persiste (coherencia #7: registro consciente).
+      if (req.method === 'POST' && u.pathname === '/api/register') {
+        const b = await readBody(req);
+        if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'ruta no válida' });
+        const rp = resolve(b.project);
+        if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'debe ser una ruta con openspec/ o .git' });
+        const p = ensureProject(rp);
+        return json(200, { ok: true, id: p.id, name: p.name, openspec: isSdd(rp) });
       }
       if (req.method === 'POST' && u.pathname === '/api/launch') {
         const b = await readBody(req);

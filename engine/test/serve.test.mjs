@@ -454,6 +454,28 @@ await test('serve(byok): byokChildEnv elimina las COPILOT_PROVIDER_* heredadas c
   } finally { if (saved === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = saved; rmSync(H, { recursive: true, force: true }); }
 });
 
+await test('serve(multi-foco): /api/changes lleva projectId estable; /api/register registra+enfoca B conscientemente (serve B)', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R1 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-focus-a');
+  const R2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-focus-b');
+  for (const r of [R1, R2]) { rmSync(r, { recursive: true, force: true }); mkdirSync(join(r, 'openspec', 'changes'), { recursive: true }); }
+  writeFileSync(join(R1, 'openspec', 'conductor.json'), '{}'); // R1 inicializado
+  mkdirSync(join(R2, '.git'), { recursive: true }); // R2 con .git pero SIN init
+  const srv = await createAppServer({ root: R1, engine: 'E.mjs', spawnRun: () => ({ on() {}, send() {}, kill() {} }) });
+  // /api/changes devuelve el projectId ESTABLE del proyecto servido (R1) — el panel fija el activo por ID, no por nombre
+  const d = await (await fetch(srv.url + 'api/changes')).json();
+  assert(d.projectId && d.projects.some((p) => p.id === d.projectId && /[\\/]\.tmp-focus-a$/.test(p.root)), 'projectId estable del proyecto servido');
+  // /api/register (serve B): registra R2 conscientemente y avisa si necesita init
+  const reg = await (await fetch(srv.url + 'api/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: R2 }) })).json();
+  eq(reg.ok, true); eq(reg.openspec, false, 'R2 registrado pero sin init → la web ofrecerá Inicializar');
+  const d2 = await (await fetch(srv.url + 'api/changes')).json();
+  assert(d2.projects.some((p) => p.id === reg.id && /[\\/]\.tmp-focus-b$/.test(p.root)), 'R2 en el registro tras serve B (registro consciente)');
+  // ruta arbitraria/inexistente → rechazada (mismo gate de seguridad que launch)
+  eq((await fetch(srv.url + 'api/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: join(R1, 'noexiste') }) })).status, 400, 'ruta inexistente rechazada');
+  await srv.close();
+  rmSync(R1, { recursive: true, force: true }); rmSync(R2, { recursive: true, force: true });
+});
+
 await test('serve(P0): el RESUME reusa el preset de gobierno persistido en el timeline', async () => {
   const { createAppServer } = await import('../lib/serving/serve.mjs');
   const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-preset-resume');

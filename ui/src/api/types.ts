@@ -107,6 +107,7 @@ export interface ProjectSummary {
 
 export interface ChangesResponse {
   project: string;
+  projectId?: string; // ID ESTABLE del proyecto servido (el panel fija el activo por ID, no por nombre)
   changes: ChangeSummary[];
   projects: ProjectSummary[];
   ghUsage: GhUsage | null;

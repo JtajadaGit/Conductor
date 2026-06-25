@@ -5926,9 +5926,22 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       if (u.pathname === '/api/changes') {
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
-        const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, changes: [] };
+        const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
-        return json(200, { project: def.name, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+        // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
+        // dos repos con el mismo basename ya no colisionan; coherencia #9).
+        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+      }
+      // REGISTRO CONSCIENTE (`conductor serve <proj>` con la app única ya viva): el CLI registra el proyecto para que
+      // la web lo ENFOQUE (en vez de un ✅ mudo que lo ignora, incoherencia #5). Mismo gate de seguridad que launch
+      // (anti-ruta-arbitraria). Es un acto DELIBERADO del usuario → se persiste (coherencia #7: registro consciente).
+      if (req.method === 'POST' && u.pathname === '/api/register') {
+        const b = await readBody(req);
+        if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'ruta no válida' });
+        const rp = resolve(b.project);
+        if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'debe ser una ruta con openspec/ o .git' });
+        const p = ensureProject(rp);
+        return json(200, { ok: true, id: p.id, name: p.name, openspec: isSdd(rp) });
       }
       if (req.method === 'POST' && u.pathname === '/api/launch') {
         const b = await readBody(req);
@@ -6581,7 +6594,18 @@ switch (cmd) {
         // anti "varios encendidos": si :4750 lo ocupa OTRA conductor VIVA, NO levanto una 2ª app (efímera y
         // confusa) — uso esa. Solo caigo a efímero si el puerto lo ocupa algo AJENO a conductor.
         const j = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(900) }).then((r) => r.json()).catch(() => null);
-        if (j?.ok) { console.log(`✅ Ya hay una app conductor EN MARCHA en http://127.0.0.1:4750 (v${j.version || '?'}) — úsala (no levanto otra). Reinícala con \`conductor restart\` si quieres.`); process.exit(0); }
+        if (j?.ok) {
+          // app única ya viva → REGISTRAR el proyecto pedido y ENFOCARLO en la web (no un ✅ mudo que ignora B, #5).
+          const nm = root.split(/[\\/]/).pop();
+          const reg = await fetch('http://127.0.0.1:4750/api/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: root }) }).then((r) => r.json()).catch(() => null);
+          if (reg?.ok) {
+            const focusUrl = `http://127.0.0.1:4750/?project=${encodeURIComponent(reg.id)}`;
+            console.log(`✅ App conductor única ya en marcha. Registrado y enfocado «${nm}» → ${focusUrl}${reg.openspec ? '' : ' (sin init: la web te ofrecerá Inicializar)'}`);
+            if (process.env.CONDUCTOR_SERVE_OPEN !== '0') { try { const opener = process.platform === 'win32' ? `start "" "${focusUrl}"` : process.platform === 'darwin' ? `open "${focusUrl}"` : `xdg-open "${focusUrl}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch {} }
+            process.exit(0);
+          }
+          console.log(`✅ Ya hay una app conductor EN MARCHA en http://127.0.0.1:4750 (v${j.version || '?'}) — úsala (no levanto otra). Reinícala con \`conductor restart\` si quieres.`); process.exit(0);
+        }
       }
       const why = isAddr ? 'el puerto 4750 lo ocupa algo AJENO a conductor' : `no pude usar el puerto 4750 (${e.message})`;
       srv2 = await createAppServer(appOpts);
@@ -6997,4 +7021,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: ea6f7847985b6db6c7b4f6414b84a273cd6f534cab0a4414f9c8e1b95db59f96
+// build-inputs-sha256: 35cd9c7426d9cb6758ab235135b8ea1936811894e52cb940511ec57ed38a8928

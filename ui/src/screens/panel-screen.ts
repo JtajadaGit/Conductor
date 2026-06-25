@@ -46,6 +46,7 @@ export class PanelScreen extends CElement {
   @state() private mReviewer = '';
   @state() private preset = ''; // preset de MODELO/coste activo: '' | 'cost' | 'quality' | 'clear' (resalta el botón elegido)
   @state() private busy = false;
+  @state() private showAll = false; // foco: solo el proyecto activo (default) vs agregado global ("ver todos")
   @state() private error = '';
   @state() private byokUrl = '';
   @state() private byokKey = '';
@@ -91,11 +92,23 @@ export class PanelScreen extends CElement {
       this.projects = d.projects ?? [];
       this.gh = d.ghUsage ?? null;
       this.usage = d.usage ?? null;
-      // por defecto, el proyecto SERVIDO (no el primero del registro)
-      if (!this.projId) this.projId = (this.projects.find((p) => p.name === d.project) ?? this.projects[0])?.id ?? '';
-      this.defProjId = (this.projects.find((p) => p.name === d.project) ?? this.projects[0])?.id ?? this.projId;
+      // PROYECTO ACTIVO por ID ESTABLE (no por nombre — dos repos con el mismo basename ya no colisionan, #9).
+      const served = d.projectId || this.projects.find((p) => p.name === d.project)?.id || this.projects[0]?.id || '';
+      this.defProjId = served;
+      // SOLO en la 1ª carga fijamos el activo: URL ?project= (de `conductor serve B`) > último visto > el servido.
+      // Después respetamos la elección del usuario (no se resetea en cada poll de 5s).
+      if (!this.projIdInit) {
+        const valid = (id: string | null): boolean => !!id && this.projects.some((p) => p.id === id);
+        let fromUrl: string | null = null; try { fromUrl = new URLSearchParams(location.search).get('project'); } catch { /* sin location */ }
+        let fromStore: string | null = null; try { fromStore = localStorage.getItem('conductor.activeProject'); } catch { /* sin storage */ }
+        this.projId = [fromUrl, fromStore, served].find((id) => valid(id)) || served;
+        this.projIdInit = true;
+        this.persistActive();
+      }
     } catch { /* conserva el último dato bueno */ }
   }
+  private projIdInit = false; // el activo se fija una vez (no se pisa en cada refresh)
+  private persistActive(): void { try { if (this.projId) localStorage.setItem('conductor.activeProject', this.projId); } catch { /* sin storage */ } }
 
   private nameTouched = false; // el usuario editó el nombre a mano → dejamos de auto-rellenarlo desde la descripción
   private onReq(e: Event): void {
@@ -214,8 +227,8 @@ export class PanelScreen extends CElement {
     if (r.ok && r.url) router.go(r.url);
   }
 
-  private metrics(): { total: number; green: number; curso: number; tin: number; tout: number } {
-    const all = this.projects.flatMap((p) => p.changes ?? []);
+  private metrics(projects: ProjectSummary[]): { total: number; green: number; curso: number; tin: number; tout: number } {
+    const all = projects.flatMap((p) => p.changes ?? []);
     return {
       total: all.length,
       green: all.filter((c) => verdictClass(c.verdict) === 'GREEN').length,
@@ -223,6 +236,13 @@ export class PanelScreen extends CElement {
       tin: all.reduce((a, c) => a + (c.tokens?.in ?? 0), 0),
       tout: all.reduce((a, c) => a + (c.tokens?.out ?? 0), 0),
     };
+  }
+  // FOCO en el proyecto ACTIVO por defecto; "ver todos" agrega el global (coherencia #8: lo global es opt-in).
+  private activeProject(): ProjectSummary | null { return this.projects.find((p) => p.id === this.projId) ?? null; }
+  private scopeProjects(): ProjectSummary[] {
+    if (this.showAll) return this.projects;
+    const a = this.activeProject();
+    return a ? [a] : this.projects;
   }
 
   // proyectos REALES en el selector: solo los que tienen sdd-init hecho (openspec/). Sin sdd-init no hay
@@ -404,13 +424,15 @@ export class PanelScreen extends CElement {
   }
 
   override render(): TemplateResult {
-    const m = this.metrics();
+    // FOCO: por defecto solo el proyecto activo; "ver todos" agrega el global (#8 — lo global es opt-in).
+    const scope = this.scopeProjects();
+    const m = this.metrics(scope);
     const opts = this.modelOptions();
-    // Separa runs activos de completados para jerarquía visual clara
-    const activeItems = this.projects.flatMap((p) =>
+    // Separa runs activos de completados para jerarquía visual clara (sobre el scope activo/global)
+    const activeItems = scope.flatMap((p) =>
       (p.changes ?? []).filter((c) => verdictClass(c.verdict) === 'CURSO').map((c) => ({ p, c }))
     );
-    const doneItems = this.projects.flatMap((p) =>
+    const doneItems = scope.flatMap((p) =>
       (p.changes ?? []).filter((c) => verdictClass(c.verdict) !== 'CURSO').map((c) => ({ p, c }))
     );
     const launchForm = html`
@@ -420,7 +442,7 @@ export class PanelScreen extends CElement {
         </label>
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
-          ${this.sddProjects().length > 1 ? html`<label class="fl">Proyecto<select .value=${this.projId} @change=${(e: Event) => { this.projId = (e.target as HTMLSelectElement).value; }}>
+          ${this.sddProjects().length > 1 ? html`<label class="fl">Proyecto<select .value=${this.projId} @change=${(e: Event) => { this.projId = (e.target as HTMLSelectElement).value; this.persistActive(); }}>
             ${this.sddProjects().map((p) => html`<option value=${p.id}>${p.name}</option>`)}
           </select></label>` : nothing}
           <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
@@ -466,7 +488,11 @@ export class PanelScreen extends CElement {
     const launchSurface = (active && active.openspec === false) ? this.initPanel(active) : launchForm;
     return html`
       <div class="apphdr"><h1>Dashboard</h1></div>
-      <p class="muted" style="margin:-.9rem 0 1.3rem;font-size:.82rem">${this.projects.length} proyecto${this.projects.length === 1 ? '' : 's'} · ${m.total} run${m.total === 1 ? '' : 's'}</p>
+      <p class="muted" style="margin:-.9rem 0 1.3rem;font-size:.82rem">
+        ${active ? html`Proyecto activo: <strong style="font-weight:600;color:var(--tx)">${active.name}</strong> <span style="opacity:.7">· ${active.root}</span>` : html`${this.projects.length} proyecto${this.projects.length === 1 ? '' : 's'}`}
+        ${this.projects.length > 1 ? html` · <button type="button" @click=${() => { this.showAll = !this.showAll; }} style="background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline">${this.showAll ? 'ver solo este' : `ver todos (${this.projects.length})`}</button>` : nothing}
+        · ${m.total} run${m.total === 1 ? '' : 's'}${this.showAll ? ' · todos' : ''}
+      </p>
       <div class="cards">
         <div class="card"><small>Runs</small><span>${m.total}</span></div>
         <div class="card ok"><small>Green</small><span>${m.green}</span></div>
