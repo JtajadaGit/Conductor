@@ -136,6 +136,7 @@ await test('serve(v3-P0): APP ÚNICA — launch IPC, pausa→continue con nota/m
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '.tmp-app');
   rmSync(ROOT, { recursive: true, force: true });
   mkdirSync(join(ROOT, 'openspec', 'changes'), { recursive: true });
+  writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}'); // proyecto INICIALIZADO (el gate de gobierno de /api/launch exige init)
   // hijo IPC falso: registra lo que el panel le manda
   const spawned = [];
   const mkChild = (a) => { const c = new EventEmitter(); c.sent = []; c.send = (m) => c.sent.push(m); c.kill = () => {}; c.args = a; spawned.push(c); return c; };
@@ -223,7 +224,8 @@ await test('seguridad: POST cross-site ciego (sin Content-Type JSON / Host ajeno
     rq.on('error', () => res2(0)); rq.end();
   });
   eq(rebStatus, 403, 'Host ajeno → 403');
-  // el cliente legítimo (JSON) pasa
+  // el cliente legítimo (JSON) pasa — TMP inicializado (el launch exige init de gobierno)
+  mkdirSync(join(TMP, 'openspec'), { recursive: true }); writeFileSync(join(TMP, 'openspec', 'conductor.json'), '{}');
   const okReq = await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'x', name: 'sec-ok' }) });
   eq(okReq.status, 200, 'POST legítimo con JSON pasa');
   await srv.close();
@@ -243,7 +245,7 @@ await test('serve(v4-P2): APP GLOBAL — segundo proyecto vía launch {project},
   const { createAppServer } = await import('../lib/serving/serve.mjs');
   const R1 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-multi-a');
   const R2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-multi-b');
-  for (const r of [R1, R2]) { rmSync(r, { recursive: true, force: true }); mkdirSync(join(r, 'openspec', 'changes'), { recursive: true }); }
+  for (const r of [R1, R2]) { rmSync(r, { recursive: true, force: true }); mkdirSync(join(r, 'openspec', 'changes'), { recursive: true }); writeFileSync(join(r, 'openspec', 'conductor.json'), '{}'); }
   const spawned = [];
   const srv = await createAppServer({ root: R1, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on: () => {}, send: () => {}, kill: () => {} }; } });
   // lanzar en el SEGUNDO proyecto (no el default) — se registra solo
@@ -348,6 +350,7 @@ await test('serve(P0): /api/launch propaga el preset de gobierno al driver; uno 
   const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-preset-wire');
   rmSync(R, { recursive: true, force: true });
   mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
+  writeFileSync(join(R, 'openspec', 'conductor.json'), '{}'); // proyecto INICIALIZADO (gate de gobierno)
   const spawned = [];
   const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
   // preset VÁLIDO viaja al spawn del driver (el dial deja de estar muerto en la UI)
@@ -364,6 +367,91 @@ await test('serve(P0): /api/launch propaga el preset de gobierno al driver; uno 
   assert((est.checks || []).some((c) => c.id === 'datos' && c.why), 'el plan activa la comprobación de datos por el contenido (migrar/tabla), con su porqué');
   await srv.close();
   rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(checkboxes): /api/launch propaga el pipeline POR-RUN al driver; fases basura se filtran', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-pipeline-wire');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
+  writeFileSync(join(R, 'openspec', 'conductor.json'), '{}'); // proyecto INICIALIZADO (gate de gobierno)
+  const spawned = [];
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  // las fases elegidas en los checkboxes viajan al driver; las desconocidas se SANEAN (allowlist KNOWN_PHASES)
+  const l = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'pp-x', complexity: 'medium', pipeline: ['explore', 'spec', 'apply', 'verify', 'rm-rf', 'eval'] }) })).json();
+  eq(l.ok, true);
+  eq(spawned[0].pipeline, ['explore', 'spec', 'apply', 'verify'], 'el pipeline elegido llega al driver, saneado a fases conocidas');
+  // sin pipeline → undefined (el motor cae al plan por complejidad; nunca un array vacío)
+  const l2 = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'x', name: 'pp-none', complexity: 'simple' }) })).json();
+  eq(l2.ok, true);
+  eq(spawned[1].pipeline, undefined, 'sin checkboxes no se fuerza pipeline (plan determinista por complejidad)');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(test-toggle): /api/launch propaga runTests al driver; /api/estimate expone el testCmd (verify por ejecución)', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-runtests-wire');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
+  // cfg.checks declarados → el estimate los muestra como testCmd (consentimiento informado del toggle "test")
+  writeFileSync(join(R, 'openspec', 'conductor.json'), JSON.stringify({ checks: ['npm test', 'npm run build'] }));
+  const spawned = [];
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  // el toggle "test" (ejecutar pruebas reales tras el gate) viaja al driver como runTests
+  const l = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'rt-x', complexity: 'simple', runTests: true }) })).json();
+  eq(l.ok, true);
+  eq(spawned[0].runTests, true, 'runTests llega al driver vía launch→spawnRun');
+  // sin el toggle → runTests false (no se ejecutan pruebas reales por defecto)
+  const l2 = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'x', name: 'rt-none', complexity: 'simple' }) })).json();
+  eq(l2.ok, true);
+  eq(spawned[1].runTests, false, 'sin toggle no se ejecutan pruebas reales (default seguro)');
+  // /api/estimate expone el comando de pruebas para habilitar el toggle y mostrar QUÉ se ejecutará
+  const est = await (await fetch(srv.url + 'api/estimate?request=' + encodeURIComponent('algo'))).json();
+  eq(est.testCmd, 'npm test && npm run build', 'el estimate refleja los checks del proyecto como testCmd (consentimiento informado)');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(coherencia): /api/launch RECHAZA un proyecto sin init (needsInit); tras Inicializar, pasa — gating ejecución == visibilidad', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-init-gate');
+  rmSync(R, { recursive: true, force: true });
+  mkdirSync(join(R, '.git'), { recursive: true }); // tiene .git (pasa el gate de SEGURIDAD) pero NO openspec (sin init)
+  const spawned = [];
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  // SIN init: el motor crearía openspec/changes a medias y correría sin gobierno → ahora se RECHAZA
+  const r = await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'ng-x', complexity: 'simple' }) });
+  eq(r.status, 400, 'sin init → 400 (no se lanza sobre proyecto sin gobierno)');
+  const j = await r.json();
+  eq(j.needsInit, true, 'el server marca needsInit para que la web ofrezca "Inicializar"');
+  eq(spawned.length, 0, 'no se spawneó ningún driver');
+  // tras inicializar desde la web (POST /api/init), el MISMO launch pasa
+  const i = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
+  eq(i.ok, true, 'init crea openspec/conductor.json');
+  const r2 = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'ng-x', complexity: 'simple' }) })).json();
+  eq(r2.ok, true, 'inicializado → el launch pasa (gating ejecución == visibilidad)');
+  eq(spawned.length, 1, 'ahora sí spawnea el driver');
+  await srv.close();
+  rmSync(R, { recursive: true, force: true });
+});
+
+await test('serve(byok): byokChildEnv elimina las COPILOT_PROVIDER_* heredadas cuando hay byok.json (fuente única, anti creds cruzadas)', async () => {
+  const { byokChildEnv } = await import('../lib/serving/serve.mjs');
+  const H = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-home');
+  rmSync(H, { recursive: true, force: true }); mkdirSync(H, { recursive: true });
+  const saved = process.env.CONDUCTOR_HOME; process.env.CONDUCTOR_HOME = H;
+  try {
+    const base = { COPILOT_PROVIDER_BASE_URL: 'https://sesionA/v1', COPILOT_PROVIDER_API_KEY: 'sk-SESION-A', PATH: 'x' };
+    // SIN byok.json: se conserva el env (compat durante la transición)
+    eq(byokChildEnv(base).COPILOT_PROVIDER_API_KEY, 'sk-SESION-A', 'sin byok.json se hereda el env de la sesión');
+    // CON byok.json: se ELIMINAN las creds heredadas → el hijo cae a byok.json (global), no a la sesión que arrancó la app
+    writeFileSync(join(H, 'byok.json'), JSON.stringify({ baseUrl: 'https://global/v1', apiKey: 'sk-GLOBAL' }));
+    const e2 = byokChildEnv(base);
+    eq(e2.COPILOT_PROVIDER_API_KEY, undefined, 'con byok.json NO se hereda la key de la sesión que arrancó la app (#2 arreglado)');
+    eq(e2.COPILOT_PROVIDER_BASE_URL, undefined, 'tampoco la baseUrl heredada');
+    eq(e2.PATH, 'x', 'el resto del env se conserva intacto');
+  } finally { if (saved === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = saved; rmSync(H, { recursive: true, force: true }); }
 });
 
 await test('serve(P0): el RESUME reusa el preset de gobierno persistido en el timeline', async () => {

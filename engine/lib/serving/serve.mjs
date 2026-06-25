@@ -22,6 +22,7 @@ const NO_UI = '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta 
 const RUN_PAGE = NO_UI, PANEL_PAGE = NO_UI;
 import { uiStaticDir, hasStaticUi, serveStatic } from './ui-static.mjs';
 import { estimateRun } from '../core/estimate.mjs';
+import { detectStack } from '../analysis/stack.mjs';
 import { listArchive, searchChanges, promoteSpec, archiveChange } from '../analysis/archive.mjs';
 import { explain, renderSpec, renderTasks } from '../analysis/explain.mjs';
 import { initConfig } from '../analysis/scaffold.mjs';
@@ -231,6 +232,7 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
     hasDashboard: existsSync(join(changeDir, 'dashboard.html')),
+    tests: tl?.tests ?? null, // verify por ejecución (opcional): {ran, passed, failed[], cmds[]} o null si no se ejecutaron
   };
 }
 
@@ -583,15 +585,40 @@ export function aggregateSearch(projects, q, limit = 80) {
   return hits.slice(0, limit);
 }
 
+// fases SDD válidas (para sanear el pipeline por-run que llega del cliente; verify lo reimpone el motor)
+const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify', 'fix'];
+// PREDICADO ÚNICO de "proyecto SDD inicializado" (coherencia: lo comparten /api/changes, el selector de la UI y el
+// GATE de /api/launch). Un proyecto pasó por init ⇔ tiene openspec/config.yaml (metadata OpenSpec) O conductor.json
+// (la config EJECUTABLE). El criterio .git es SOLO seguridad anti-ruta-arbitraria, NUNCA define "proyecto válido".
+const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || existsSync(join(root, 'openspec', 'conductor.json'));
+// BYOK FUENTE ÚNICA (decisión cerrada): si existe ~/.conductor/byok.json (configurado en el form, cifrado DPAPI),
+// es la ÚNICA fuente de credenciales. El driver hijo NO debe heredar las COPILOT_PROVIDER_* del env de la APP — esas
+// vienen de la SESIÓN que ARRANCÓ la app (p.ej. A), no de la del run (B) → bug de creds cruzadas. Se ELIMINAN del env
+// del hijo para que byokCreds caiga a byok.json (global por usuario, igual para todos los proyectos). Sin byok.json se
+// conserva el env (compat durante la transición a "configurar una vez en el form").
+const BYOK_ENV_KEYS = ['COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS', 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS', 'CONDUCTOR_API_KEY', 'CONDUCTOR_MODEL_URL'];
+export function byokChildEnv(baseEnv) {
+  const env = { ...baseEnv };
+  try { if (existsSync(join(CONDUCTOR_HOME(), 'byok.json'))) for (const k of BYOK_ENV_KEYS) delete env[k]; } catch {}
+  return env;
+}
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
-function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset }) {
+function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset, pipeline, runTests }) {
   const changeDir = join(root, 'openspec', 'changes', name);
   const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--ipc'];
   if (auto) args.push('--auto');
   // dial de gobierno por run (los 4 presets): viaja como --preset; el driver le da máxima precedencia sobre conductor.json/env
   if (preset) args.push('--preset', preset);
+  // fases por-run (checkboxes de la app): SANEADAS a solo fases KNOWN (argv con shell:true → nada de inyección).
+  // El driver/resolvePhases reimpone verify terminal, así que el gobierno no se puede desmarcar.
+  if (Array.isArray(pipeline)) { const safe = pipeline.filter((p) => KNOWN_PHASES.includes(p)); if (safe.length) args.push('--pipeline', safe.join(',')); }
+  // toggle "test" del panel (verify POR EJECUCIÓN, opcional, post-gate): consentimiento humano explícito de ESTE
+  // run para ejecutar las pruebas REALES del proyecto. Es SEPARADO del pipeline (no es una fase); fallo → TESTS-FAIL.
+  if (runTests === true) args.push('--run-tests');
   // modelo elegido en el lanzador → env CONDUCTOR_MODEL_{ROLE} (el driver lo respeta; verificable en el registro)
-  const env = { ...process.env, CONDUCTOR_SERVE: '0' };
+  // byokChildEnv: con byok.json presente, NO se heredan las COPILOT_PROVIDER_* de la app (creds de la sesión que la
+  // arrancó) → cada run usa la key global del form, no la de "otra sesión" (arregla el bug de creds cruzadas #2).
+  const env = { ...byokChildEnv(process.env), CONDUCTOR_SERVE: '0' };
   if (models && typeof models === 'object') {
     if (models.planner) env.CONDUCTOR_MODEL_PLANNER = models.planner;
     if (models.coder) env.CONDUCTOR_MODEL_CODER = models.coder;
@@ -670,8 +697,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   };
   // body con TOPE (anti-OOM): un POST gigante no debe acumular sin límite en memoria
   const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r({}); } }); req.on('end', () => { if (over) return; try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
-  const launch = (proj, name, request, complexity, domain, models, auto, preset) => {
-    const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset });
+  const launch = (proj, name, request, complexity, domain, models, auto, preset, pipeline, runTests) => {
+    const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
     child.on?.('exit', () => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; }); // exitedAt → la purga puede sacarlo del Map
@@ -714,11 +741,19 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // QUÉ comprobaciones se activan por contenido (cada una con su porqué). La UI muestra acciones+checks,
         // nunca etiquetas tipo "arreglo rápido". El motor ejecuta esa misma complejidad → plan == run.
         const plan = resolvePlan({ request: rq });
-        const est = estimateRun({ complexity: plan.complexity, request: rq });
-        // las ACCIONES mostradas salen de las FASES REALES de esa complejidad (las mismas que ejecuta el driver y
-        // que estima la tabla de tokens) → plan MOSTRADO == run == tabla, sin divergencias (no usar plan.phases).
+        // pipeline POR-RUN: si el usuario tocó los checkboxes de fases, llega aquí (saneado) y el estimate refleja
+        // EXACTO esas fases (verify lo reimpone estimateRun, como el motor) → la tabla de tokens == el run real.
+        const rawPipe = u.searchParams.get('pipeline');
+        const pipeline = rawPipe ? rawPipe.split(',').map((s) => s.trim()).filter((p) => KNOWN_PHASES.includes(p)) : null;
+        const est = estimateRun({ complexity: plan.complexity, request: rq, pipeline: pipeline && pipeline.length ? pipeline : null });
+        // las ACCIONES mostradas salen de las FASES REALES estimadas (las mismas que ejecuta el driver y que
+        // estima la tabla de tokens) → plan MOSTRADO == run == tabla, sin divergencias (no usar plan.phases).
         const actions = (est.phases || []).map((r) => PHASE_ACTION[r.phase] || r.phase);
-        return json(200, { ...est, complexity: plan.complexity, actions, checks: plan.checks });
+        // testCmd detectado del stack → habilita el toggle "test" (verify por ejecución) y muestra QUÉ se ejecutará
+        // (consentimiento informado). cfg.checks del proyecto gana sobre el autodetectado en el motor.
+        let testCmd = null;
+        try { const ec = readDriveConfig(root); testCmd = (Array.isArray(ec.checks) && ec.checks.length) ? ec.checks.join(' && ') : (detectStack(root).testCmd || null); } catch { /* hint opcional */ }
+        return json(200, { ...est, complexity: plan.complexity, actions, checks: plan.checks, testCmd });
       }
       // explain app-native: borrador de spec por ingeniería inversa del código (motor determinista, 0 LLM,
       // 0 red). Por ?projectId= o el default; ?src= opcional (subdir confinado). Devuelve CONTEOS + borradores
@@ -783,9 +818,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         } catch (e) { return json(500, { ok: false, error: String(e.message) }); }
       }
       if (u.pathname === '/api/changes') {
-        // openspec=true ⇔ el proyecto pasó por /sdd-init: tiene openspec/config.yaml (metadata OpenSpec) O
-        // openspec/conductor.json (la config EJECUTABLE, fuente de verdad única del pipeline). Cualquiera basta.
-        const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || existsSync(join(root, 'openspec', 'conductor.json'));
+        // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
         const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
@@ -799,8 +832,17 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // si es el root servido por defecto, o un proyecto REAL (tiene openspec/ o .git). Un dir cualquiera
         // (p.ej. C:\sensible) se rechaza → cierra el vector de un POST local/CSRF que ejecutaría donde quisiera.
         const isRealProject = (p) => { try { const rp = resolve(p); return rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')); } catch { return false; } };
-        const proj = b.project ? ((existsSync(b.project) && isRealProject(b.project)) ? ensureProject(b.project) : null) : (b.projectId ? projOf(b.projectId) : DEFAULT);
-        if (!proj) return json(400, { ok: false, error: 'proyecto no válido: debe ser una ruta con openspec/ o .git (no se ejecuta en rutas arbitrarias)' });
+        // resolver el ROOT destino SIN persistir aún: gate de SEGURIDAD (anti-ruta-arbitraria) primero.
+        let tgtRoot = null, tgtProj = null;
+        if (b.project) { if (existsSync(b.project) && isRealProject(b.project)) tgtRoot = resolve(b.project); }
+        else if (b.projectId) { tgtProj = projOf(b.projectId); tgtRoot = tgtProj?.root || null; }
+        else { tgtProj = DEFAULT; tgtRoot = DEFAULT.root; }
+        if (!tgtRoot) return json(400, { ok: false, error: 'proyecto no válido: debe ser una ruta con openspec/ o .git (no se ejecuta en rutas arbitrarias)' });
+        // GATE DE GOBIERNO (coherencia, decisión cerrada): NO se lanza en un proyecto sin init. needsInit → la web
+        // ofrece "Inicializar". Es distinto del gate de seguridad .git de arriba. Se REGISTRA solo un proyecto ya
+        // inicializado (anti-contaminación del registro: estar en el registro ⇒ inicializado o usado conscientemente).
+        if (!isSdd(tgtRoot)) return json(400, { ok: false, needsInit: true, projectId: projId(tgtRoot), error: 'Este proyecto no está inicializado. Inicialízalo (crea openspec/) para poder lanzar features.' });
+        const proj = tgtProj || ensureProject(tgtRoot);
         const ch = join(proj.root, 'openspec', 'changes', b.name);
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso', url: `/run/${proj.id}/${b.name}` });
@@ -833,7 +875,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // EXCEPCIÓN: 'micro' (no-SDD amurallado, decisión explícita) NO lo produce resolvePlan ni la UI normal;
         // si un caller lo pide explícitamente, se respeta (sin él, micro sería inalcanzable y romperíamos ese modo).
         const launchComplexity = b.complexity === 'micro' ? 'micro' : resolvePlan({ request: b.request }).complexity;
-        launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg);
+        // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
+        const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
+        launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
@@ -846,7 +890,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (!tl?.request) return json(404, { ok: false, error: 'sin timeline que reanudar' });
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso' });
-        launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name);
+        launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name, tl.pipeline, tl.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
       const mArt2 = u.pathname.match(/^\/artifact\/([a-z0-9-]+~[a-f0-9]{6})\/([a-z0-9-]+)\/dashboard\.html$/);
@@ -902,7 +946,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const tl2 = readJson(join(changeDir, '.conductor', 'timeline.json'));
           if (!tl2?.request) return json(404, { ok: false });
           if (activeRun(changeDir) || (reg && !reg.exited)) return json(409, { ok: false, error: 'ya en curso' });
-          launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models, undefined, tl2.preset?.name); // resume EXACTO: reusa modelos por fase + preset de gobierno persistidos (RunState robusto)
+          launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models, undefined, tl2.preset?.name, tl2.pipeline, tl2.runTests === true); // resume EXACTO: reusa modelos + preset + pipeline + runTests persistidos (RunState robusto)
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'stop') {

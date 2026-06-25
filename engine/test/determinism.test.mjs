@@ -81,6 +81,23 @@ await test('determinismo: micro ejecuta SOLO [apply] (no SDD por decisión del u
   eq(order, ['apply'], 'micro = una sola fase de código, sin spec');
 });
 
+// ── pipeline POR-RUN (checkboxes de fases en la app): el experto elige las fases; el CÓDIGO las honra y REIMPONE el gobierno ──
+await test('pipeline por-run: el experto desmarca fases (explore/design/tasks) → corre SOLO las elegidas + verify terminal', async () => {
+  fresh();
+  const order = [];
+  const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'pp1'), request: 'do x', complexity: 'medium', domain: 'core', srcDir: TMP, runAgent: fakeAgent(order), pipeline: ['spec', 'apply'] });
+  eq(order, ['spec', 'apply', 'verify'], 'corre exactamente el pipeline elegido + verify reimpuesto terminal');
+  eq(r.verdict, 'GREEN');
+});
+
+await test('pipeline por-run: el gobierno NO se puede desmarcar — sin apply, verify se reimpone y el run NO cierra GREEN', async () => {
+  fresh();
+  const order = [];
+  const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'pp2'), request: 'do x', complexity: 'medium', domain: 'core', srcDir: TMP, runAgent: fakeAgent(order), pipeline: ['spec'] });
+  eq(order[order.length - 1], 'verify', 'verify SIEMPRE terminal aunque el cliente no lo marque');
+  eq(r.verdict, 'NOT-GREEN', 'verify-needs-apply: sin implementación no hay GREEN (gobierno innegociable)');
+});
+
 // ── 2) INMUNIDAD AL MODELO: contenido + inyección del agente NO alteran la secuencia ──
 await test('anti-V1: la INYECCIÓN en lo que "dice" el modelo NO reordena ni salta fases', async () => {
   fresh();

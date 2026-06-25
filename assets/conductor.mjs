@@ -1957,6 +1957,36 @@ function aggregateStats(projects) {
 return { aggregateStats };
 })();
 
+// ===== lib/core/minify.mjs =====
+__M['minify'] = (function(){
+// conductor/lib/minify.mjs — minificador de CONTEXTO para el prompt (token-first, determinista, 0 deps).
+// Reduce tokens SIN perder semántica: recorta espacios finales, colapsa 3+ líneas en blanco a una, y quita
+// blancos al inicio/fin. Lossless en markdown/texto. Para CÓDIGO (opt-in) puede además quitar comentarios de
+// línea y colapsar blancos — útil si algún día se inyecta fuente en el prompt (hoy el contexto es perezoso por
+// ruta, así que se aplica sobre todo a los RESÚMENES inlineados). Complementa a summarizeArtifact (no lo sustituye).
+
+function minifyText(s) {
+  return String(s == null ? '' : s)
+    .replace(/[ \t]+$/gm, '')   // espacios/tabs al final de cada línea
+    .replace(/\n{3,}/g, '\n\n') // 3+ líneas en blanco → 1
+    .replace(/^\n+|\n+$/g, ''); // sin líneas en blanco al inicio/fin
+}
+
+// minificador para código (opt-in): quita comentarios de línea (// y #, sin tocar :// de URLs) y colapsa blancos.
+// NO toca comentarios de bloque ni strings con precisión (es heurístico) → usar solo donde la pérdida sea aceptable.
+function minifyCode(s) {
+  return minifyText(String(s == null ? '' : s)
+    .replace(/(?<!:)\/\/[^\n]*/g, '')
+    .replace(/^\s*#[^\n]*/gm, ''));
+}
+
+const toks = (x) => Math.ceil(String(x == null ? '' : x).length / 4);
+// tokens (aprox chars/4) ahorrados entre el original y el minificado; nunca negativo.
+function minifySaved(orig, min) { return Math.max(0, toks(orig) - toks(min)); }
+
+return { minifyText, minifyCode, minifySaved };
+})();
+
 // ===== lib/core/estimate.mjs =====
 __M['estimate'] = (function(){
 // conductor/lib/estimate.mjs — ESTIMADOR ESTÁTICO de tokens por fase (preflight, sin llamar a la API).
@@ -1982,11 +2012,21 @@ const ARTIFACT = (phase, domain) => ({
 
 // estima entrada/salida por fase. La entrada ≈ instrucción base + contexto acumulado (artefactos previos,
 // reales si ya existen — útil para estimar un resume). La salida ≈ heurística por fase.
-function estimateRun({ changeDir, complexity = 'medium', domain = 'core', request = '', baseInstruction = 400 } = {}) {
+function estimateRun({ changeDir, complexity = 'medium', domain = 'core', request = '', baseInstruction = 400, pipeline = null } = {}) {
   // L2/L3: complexity llega de un query param (/api/estimate?complexity=). Un "toString"/"constructor"/
   // "__proto__" hacía PHASES[complexity] = función heredada → "phases is not iterable" → 500. Solo claves PROPIAS.
   if (!Object.prototype.hasOwnProperty.call(PHASES, complexity)) complexity = 'medium';
-  const phases = PHASES[complexity];
+  // pipeline POR-RUN (checkboxes de fases en la app): si llega, manda sobre la complejidad. Se SANEA a fases
+  // conocidas (dedup) y se ESPEJA la regla del motor (verify terminal innegociable) → el estimate coincide
+  // EXACTO con lo que ejecutará resolvePhases (plan == run == tabla de tokens). Sin pipeline → plan por complejidad.
+  let phases;
+  if (Array.isArray(pipeline) && pipeline.length) {
+    const seen = new Set();
+    phases = pipeline.filter((p) => OUT_EST[p] !== undefined && !seen.has(p) && seen.add(p)).filter((p) => p !== 'verify');
+    phases.push('verify');
+  } else {
+    phases = PHASES[complexity];
+  }
   const rows = [];
   let ctx = tokensOf(request);
   for (const phase of phases) {
@@ -3009,7 +3049,7 @@ function resolvePlan({ request = '', hasSpec = false } = {}) {
   const specPasted = hasSpec || looksLikeSpec(req);
   // "sustancial" = varias capacidades / arquitectura / integración / refactor amplio (NO una talla: una señal real)
   const substantial = words > 35
-    || /\bvarios?\b|m[uú]ltiples|adem[aá]s|integrac|arquitect|refactor|flujo completo|end-to-end|migrac/i.test(t)
+    || /\bvarios?\b|m[uú]ltiples|adem[aá]s|integrac|arquitect|refactor|flujo completo|end-to-end|migrac|migrar|legacy|reescrib|portar|nuevo (servicio|m[oó]dulo|sistema)|microservici/i.test(t)
     || (t.match(/,|\sy\s/g) || []).length >= 3;
   // "ambiguo" = corto y vago, o con preguntas abiertas → conviene aclarar antes de construir
   const ambiguous = !specPasted && (words < 4 || /\?|no s[eé]\b|quiz[aá]|tal vez|alguna forma/i.test(t));
@@ -3427,6 +3467,8 @@ const CONFIG_SCHEMA = {
     dataGate: { type: 'boolean', default: false, description: 'Gate de DATOS: el SQL escrito pasa el linter de seguridad de migraciones (DDL destructivo/irreversible + PII en columnas). Lo activa el preset "migration"; ponlo aquí para forzarlo en otros flujos.' },
     hollowTests: { type: 'boolean', default: false, description: 'Gate de TESTS HUECOS: marca tests que pasan sin verificar nada (sin aserciones, tautológicos, cuerpo vacío, todos skip) sobre los tests escritos; un hallazgo error tumba el GREEN. Opt-in (algunos repos usan placeholders a propósito).' },
     contractDiff: { type: 'array', description: 'Gate de CONTRATO: diffea base↔head con los motores deterministas (autodetecta dominio por extensión: .json OpenAPI · .sql esquema BD · .ts contrato público) y un cambio incompatible tumba el GREEN. Rutas relativas al proyecto.', items: { type: 'object', required: ['base', 'head'], properties: { base: { type: 'string', description: 'ruta del contrato ANTES (relativa al proyecto)' }, head: { type: 'string', description: 'ruta del contrato DESPUÉS (relativa al proyecto)' } } } },
+    checks: { type: 'array', description: 'Verify POR EJECUCIÓN (opcional, post-gate): pruebas/build REALES a correr TRAS el GREEN estructural. Ej: ["npm test","npm run build"]. SIN shell. Si alguna falla → veredicto TESTS-FAIL (construido bien · pruebas fallan), distinto del NOT-GREEN estructural. Si se omite, el toggle "test" del panel usa el testCmd autodetectado del stack.', items: { type: 'string' } },
+    allowChecks: { type: 'boolean', default: false, description: 'Ejecutar "checks" automáticamente (CI/headless) sin intervención. Por defecto NO se ejecuta config clonada (anti-RCE); en la app, el toggle "test" por-run es el consentimiento humano explícito equivalente.' },
     serve: { type: 'boolean', default: true, description: 'Mini-web del run en vivo.' },
     serveOpen: { type: 'boolean', default: true, description: 'Abrir el navegador automáticamente.' },
     autoApprove: { type: 'boolean', default: false, description: 'true = sin pausas de revisión.' },
@@ -3747,6 +3789,7 @@ const { detectStack, renderStackHint } = __M['stack'];
 const { tierModel } = __M['tiers'];
 const { priceOf } = __M['cost'];
 const { budgetContextFiles, summarizeArtifact } = __M['estimate'];
+const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
 const { decryptSecret } = __M['secret'];
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -4148,7 +4191,7 @@ function activeRun(changeDir) {
   return null;
 }
 
-async function drive({ changeDir, request, complexity = 'medium', domain = 'core', srcDir, runAgent = defaultRunAgent, log: logOut = () => {}, maxRetries, timeoutMs, pauseAt = [], onPause = null, stopSignal = null, serveUrl = null, preset: presetOpt = null }) {
+async function drive({ changeDir, request, complexity = 'medium', domain = 'core', srcDir, runAgent = defaultRunAgent, log: logOut = () => {}, maxRetries, timeoutMs, pauseAt = [], onPause = null, stopSignal = null, serveUrl = null, preset: presetOpt = null, pipeline: pipelineOpt = null, runTests: runTestsOpt = false }) {
   const dup = activeRun(changeDir);
   if (dup) {
     logOut(`✅ TASK COMPLETE — ya hay un run EN CURSO para este change (pid ${dup.pid}); este lanzamiento duplicado no hace nada. NO relances: sigue el run existente en su web.`);
@@ -4193,6 +4236,11 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // (2) openspec/conductor.json ("preset"), o (3) env CONDUCTOR_PRESET. El experto MANDA: cualquier knob
   // explícito (strictTrace/strictId/specFreeze/pauseAt/reviewTimeoutMs/onReviewTimeout) gana sobre el del preset.
   const preset = resolvePreset(presetOpt || cfg.preset || process.env.CONDUCTOR_PRESET);
+  // PIPELINE POR-RUN (#checkboxes de fases): el experto puede elegir qué fases SDD corren ESTE run desde la app
+  // (obligatorias spec/apply/verify bloqueadas; opcionales toggleables). Llega como opción `pipeline` (array de
+  // fases) y GANA sobre openspec/conductor.json. resolvePhases ya lo sanea (solo fases KNOWN, dedup) y REIMPONE
+  // verify terminal — el gobierno no se puede desmarcar. Se persiste en el timeline para que el resume sea idéntico.
+  const effPipeline = (Array.isArray(pipelineOpt) && pipelineOpt.length) ? pipelineOpt : cfg.pipeline;
   const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
@@ -4237,7 +4285,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         // re-derivar la pipeline CANÓNICA de ESTE run y exigir que el state coincida (salvo ciclos "fix"
         // que el gate inserta, siempre ANTES de la verify terminal). Un phases:["verify"] o ["apply","verify"]
         // forjado NO coincide con la canónica → se descarta el resume y se reinicia limpio (ejecución real).
-        const canonical = resolvePhases(complexity, cfg.pipeline, { changeDir, request });
+        const canonical = resolvePhases(complexity, effPipeline, { changeDir, request });
         const stripFix = Array.isArray(st.phases) ? st.phases.filter((p) => p !== 'fix') : [];
         const matchesCanonical = stripFix.length === canonical.length && stripFix.every((p, i) => p === canonical[i]);
         const stateValid = Array.isArray(st.phases) && st.phases.length
@@ -4266,7 +4314,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       }
     } catch (e) { step = null; log(`⚠ no pude leer/avanzar el estado previo (${stateF}): ${e.message} — empiezo de cero`); }
   }
-  if (!step) step = start({ changeDir, request, complexity, domain, pipeline: cfg.pipeline });
+  if (!step) step = start({ changeDir, request, complexity, domain, pipeline: effPipeline });
   const trail = [];
   const timeline = []; // observabilidad por fase (rol, modelo, ficheros, duración) — telemetría
   // RESUME: heredar las fases YA COMPLETADAS del timeline anterior (con sus tokens/modelos reales) —
@@ -4282,7 +4330,8 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   }
   const t0run = Date.now();
   let currentInfo = null; // fase EN CURSO (para la mini-web): {phase, role, model, attempt, startedAt, timeoutMs, lastError}
-  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  let testsResult = null; // verify POR EJECUCIÓN (opcional, post-gate): {ran, passed, failed[], cmds[]} — para timeline/UI
+  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
@@ -4462,12 +4511,15 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       let ctxBlock = `\n\n## CONTEXT ARTIFACTS (under ${changeDir}) — read ONLY the ones you need; do NOT re-read project source files:\n`;
       ctxBlock += includedFiles.map((f) => `- ${f} — ${reasonFor(f)}`).join('\n');
       if (summarizedFiles.length) {
+        let minSaved = 0;
         ctxBlock += '\n' + summarizedFiles.map((f) => {
           const key = f.split('/').pop();
-          const summary = summarizeArtifact(artifacts[key] || '');
+          const raw = summarizeArtifact(artifacts[key] || '');
+          const summary = minifyText(raw); // minificado lossless del resumen inlineado (token-first)
+          minSaved += minifySaved(raw, summary);
           return `- ${f} — ${reasonFor(f)} (summary — token budget exceeded; read file for full content):\n  \`\`\`\n${summary.split('\n').map((l) => '  ' + l).join('\n')}\n  \`\`\``;
         }).join('\n');
-        log(`   ⚡ ctx budget: ${includedFiles.length} completo(s), ${summarizedFiles.length} resumido(s) (presupuesto de tokens)`);
+        log(`   ⚡ ctx budget: ${includedFiles.length} completo(s), ${summarizedFiles.length} resumido(s)${minSaved ? `, ~${minSaved} tok minificados` : ''} (token-first)`);
       }
       prompt += ctxBlock;
     }
@@ -4797,26 +4849,33 @@ ${readSafe(x.lp).trim()}`);
     else log(`   ✓ gate de contrato: sin cambios incompatibles`);
   }
 
-  // P0-2 GREEN CREÍBLE (enterprise): el gate estructural (coherencia + artefactos + traza) NO ejecuta
-  // tests/build. Para uso empresarial, "GREEN" puede EXIGIR que los checks declarados por el proyecto
-  // pasen. cfg.checks = ["npm test","npm run build"] en openspec/conductor.json. SIN shell (argv split) +
-  // OPT-IN explícito: un conductor.json clonado es entrada NO confiable (RCE-by-config). Si un check falla
-  // (exit≠0) → el run es NOT-GREEN aunque el gate estructural pasara. Así "GREEN" = coherente + compila/pasa.
-  if (step.verdict === 'GREEN' && Array.isArray(cfg.checks) && cfg.checks.length) {
-    if (cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1') {
+  // VERIFY POR EJECUCIÓN (opcional, post-gate, DISTINTO del gate de gobierno): el gate estructural verify
+  // (coherencia + artefactos + traza) es sin-LLM y NO ejecuta nada — comprueba que la PIPELINE se hizo bien.
+  // Aparte, el usuario puede pedir EJECUTAR las pruebas REALES del proyecto: el toggle "test" del panel por-run
+  // (runTestsOpt = consentimiento humano explícito de ESTE run) o cfg.allowChecks/env (CI/headless). Comando(s):
+  // cfg.checks declarados, o el testCmd autodetectado del stack. SIN shell (argv split). Un conductor.json clonado
+  // es entrada NO confiable (RCE-by-config): por eso se exige consentimiento. Si una prueba falla (exit≠0) → el
+  // run cierra TRI-ESTADO 'TESTS-FAIL' (construido bien · pruebas fallan), distinto del NOT-GREEN ESTRUCTURAL.
+  if (step.verdict === 'GREEN' && (runTestsOpt === true || (Array.isArray(cfg.checks) && cfg.checks.length))) {
+    const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
+    const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
+    if (!cmds.length) {
+      log('ℹ️ "test" solicitado pero no se detectó comando de pruebas (sin cfg.checks ni testCmd del stack) — nada que ejecutar.');
+    } else if (!consent) {
+      log(`ℹ️ ${cmds.length} prueba(s) declaradas pero NO ejecutadas — actívalas con "allowChecks": true en openspec/conductor.json (o CONDUCTOR_ALLOW_CHECKS=1), o marca "test" en el panel. No se ejecuta config clonada por defecto (RCE).`);
+    } else {
       const failed = [];
-      for (const chk of cfg.checks) {
+      for (const chk of cmds) {
         const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
         if (!a.length) continue;
-        try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: 'ignore', timeout: 180000, windowsHide: true }); log(`   ✅ check: ${chk}`); }
-        catch { failed.push(chk); log(`   ❌ check FALLÓ (exit≠0): ${chk}`); }
+        try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: 'ignore', timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
+        catch { failed.push(chk); log(`   ❌ prueba FALLÓ (exit≠0): ${chk}`); }
       }
+      testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       if (failed.length) {
-        step = { ...step, verdict: 'NOT-GREEN', gate: 'CHECKS-FAIL', checksFailed: failed };
-        log(`⛔ gate estructural GREEN pero ${failed.length} check(s) del proyecto fallaron → NOT-GREEN (build/test reales): ${failed.join(' · ')}`);
-      } else log(`   ✓ ${cfg.checks.length} check(s) del proyecto pasaron — GREEN con build/test reales`);
-    } else {
-      log(`ℹ️ ${cfg.checks.length} check(s) declarados pero NO ejecutados — actívalos con "allowChecks": true en openspec/conductor.json (o CONDUCTOR_ALLOW_CHECKS=1). No se ejecuta config clonada por defecto (RCE).`);
+        step = { ...step, verdict: 'TESTS-FAIL', gate: 'TESTS-FAIL', checksFailed: failed };
+        log(`⚠ gate estructural GREEN, pero ${failed.length} prueba(s) del proyecto fallaron → TESTS-FAIL (construido bien · pruebas fallan): ${failed.join(' · ')}`);
+      } else log(`   ✓ ${cmds.length} prueba(s) del proyecto pasaron — GREEN con pruebas reales`);
     }
   }
 
@@ -5070,6 +5129,7 @@ const NO_UI = '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta 
 const RUN_PAGE = NO_UI, PANEL_PAGE = NO_UI;
 const { uiStaticDir, hasStaticUi, serveStatic } = __M['ui-static'];
 const { estimateRun } = __M['estimate'];
+const { detectStack } = __M['stack'];
 const { listArchive, searchChanges, promoteSpec, archiveChange } = __M['archive'];
 const { explain, renderSpec, renderTasks } = __M['explain'];
 const { initConfig } = __M['scaffold'];
@@ -5278,6 +5338,7 @@ function runState(changeDir, srcDir, { alive = null } = {}) {
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
     hasDashboard: existsSync(join(changeDir, 'dashboard.html')),
+    tests: tl?.tests ?? null, // verify por ejecución (opcional): {ran, passed, failed[], cmds[]} o null si no se ejecutaron
   };
 }
 
@@ -5630,15 +5691,40 @@ function aggregateSearch(projects, q, limit = 80) {
   return hits.slice(0, limit);
 }
 
+// fases SDD válidas (para sanear el pipeline por-run que llega del cliente; verify lo reimpone el motor)
+const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify', 'fix'];
+// PREDICADO ÚNICO de "proyecto SDD inicializado" (coherencia: lo comparten /api/changes, el selector de la UI y el
+// GATE de /api/launch). Un proyecto pasó por init ⇔ tiene openspec/config.yaml (metadata OpenSpec) O conductor.json
+// (la config EJECUTABLE). El criterio .git es SOLO seguridad anti-ruta-arbitraria, NUNCA define "proyecto válido".
+const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || existsSync(join(root, 'openspec', 'conductor.json'));
+// BYOK FUENTE ÚNICA (decisión cerrada): si existe ~/.conductor/byok.json (configurado en el form, cifrado DPAPI),
+// es la ÚNICA fuente de credenciales. El driver hijo NO debe heredar las COPILOT_PROVIDER_* del env de la APP — esas
+// vienen de la SESIÓN que ARRANCÓ la app (p.ej. A), no de la del run (B) → bug de creds cruzadas. Se ELIMINAN del env
+// del hijo para que byokCreds caiga a byok.json (global por usuario, igual para todos los proyectos). Sin byok.json se
+// conserva el env (compat durante la transición a "configurar una vez en el form").
+const BYOK_ENV_KEYS = ['COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS', 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS', 'CONDUCTOR_API_KEY', 'CONDUCTOR_MODEL_URL'];
+function byokChildEnv(baseEnv) {
+  const env = { ...baseEnv };
+  try { if (existsSync(join(CONDUCTOR_HOME(), 'byok.json'))) for (const k of BYOK_ENV_KEYS) delete env[k]; } catch {}
+  return env;
+}
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
-function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset }) {
+function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset, pipeline, runTests }) {
   const changeDir = join(root, 'openspec', 'changes', name);
   const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--ipc'];
   if (auto) args.push('--auto');
   // dial de gobierno por run (los 4 presets): viaja como --preset; el driver le da máxima precedencia sobre conductor.json/env
   if (preset) args.push('--preset', preset);
+  // fases por-run (checkboxes de la app): SANEADAS a solo fases KNOWN (argv con shell:true → nada de inyección).
+  // El driver/resolvePhases reimpone verify terminal, así que el gobierno no se puede desmarcar.
+  if (Array.isArray(pipeline)) { const safe = pipeline.filter((p) => KNOWN_PHASES.includes(p)); if (safe.length) args.push('--pipeline', safe.join(',')); }
+  // toggle "test" del panel (verify POR EJECUCIÓN, opcional, post-gate): consentimiento humano explícito de ESTE
+  // run para ejecutar las pruebas REALES del proyecto. Es SEPARADO del pipeline (no es una fase); fallo → TESTS-FAIL.
+  if (runTests === true) args.push('--run-tests');
   // modelo elegido en el lanzador → env CONDUCTOR_MODEL_{ROLE} (el driver lo respeta; verificable en el registro)
-  const env = { ...process.env, CONDUCTOR_SERVE: '0' };
+  // byokChildEnv: con byok.json presente, NO se heredan las COPILOT_PROVIDER_* de la app (creds de la sesión que la
+  // arrancó) → cada run usa la key global del form, no la de "otra sesión" (arregla el bug de creds cruzadas #2).
+  const env = { ...byokChildEnv(process.env), CONDUCTOR_SERVE: '0' };
   if (models && typeof models === 'object') {
     if (models.planner) env.CONDUCTOR_MODEL_PLANNER = models.planner;
     if (models.coder) env.CONDUCTOR_MODEL_CODER = models.coder;
@@ -5717,8 +5803,8 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   };
   // body con TOPE (anti-OOM): un POST gigante no debe acumular sin límite en memoria
   const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r({}); } }); req.on('end', () => { if (over) return; try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
-  const launch = (proj, name, request, complexity, domain, models, auto, preset) => {
-    const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset });
+  const launch = (proj, name, request, complexity, domain, models, auto, preset, pipeline, runTests) => {
+    const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
     child.on?.('exit', () => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; }); // exitedAt → la purga puede sacarlo del Map
@@ -5761,11 +5847,19 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // QUÉ comprobaciones se activan por contenido (cada una con su porqué). La UI muestra acciones+checks,
         // nunca etiquetas tipo "arreglo rápido". El motor ejecuta esa misma complejidad → plan == run.
         const plan = resolvePlan({ request: rq });
-        const est = estimateRun({ complexity: plan.complexity, request: rq });
-        // las ACCIONES mostradas salen de las FASES REALES de esa complejidad (las mismas que ejecuta el driver y
-        // que estima la tabla de tokens) → plan MOSTRADO == run == tabla, sin divergencias (no usar plan.phases).
+        // pipeline POR-RUN: si el usuario tocó los checkboxes de fases, llega aquí (saneado) y el estimate refleja
+        // EXACTO esas fases (verify lo reimpone estimateRun, como el motor) → la tabla de tokens == el run real.
+        const rawPipe = u.searchParams.get('pipeline');
+        const pipeline = rawPipe ? rawPipe.split(',').map((s) => s.trim()).filter((p) => KNOWN_PHASES.includes(p)) : null;
+        const est = estimateRun({ complexity: plan.complexity, request: rq, pipeline: pipeline && pipeline.length ? pipeline : null });
+        // las ACCIONES mostradas salen de las FASES REALES estimadas (las mismas que ejecuta el driver y que
+        // estima la tabla de tokens) → plan MOSTRADO == run == tabla, sin divergencias (no usar plan.phases).
         const actions = (est.phases || []).map((r) => PHASE_ACTION[r.phase] || r.phase);
-        return json(200, { ...est, complexity: plan.complexity, actions, checks: plan.checks });
+        // testCmd detectado del stack → habilita el toggle "test" (verify por ejecución) y muestra QUÉ se ejecutará
+        // (consentimiento informado). cfg.checks del proyecto gana sobre el autodetectado en el motor.
+        let testCmd = null;
+        try { const ec = readDriveConfig(root); testCmd = (Array.isArray(ec.checks) && ec.checks.length) ? ec.checks.join(' && ') : (detectStack(root).testCmd || null); } catch { /* hint opcional */ }
+        return json(200, { ...est, complexity: plan.complexity, actions, checks: plan.checks, testCmd });
       }
       // explain app-native: borrador de spec por ingeniería inversa del código (motor determinista, 0 LLM,
       // 0 red). Por ?projectId= o el default; ?src= opcional (subdir confinado). Devuelve CONTEOS + borradores
@@ -5830,9 +5924,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         } catch (e) { return json(500, { ok: false, error: String(e.message) }); }
       }
       if (u.pathname === '/api/changes') {
-        // openspec=true ⇔ el proyecto pasó por /sdd-init: tiene openspec/config.yaml (metadata OpenSpec) O
-        // openspec/conductor.json (la config EJECUTABLE, fuente de verdad única del pipeline). Cualquiera basta.
-        const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || existsSync(join(root, 'openspec', 'conductor.json'));
+        // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
         const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
@@ -5846,8 +5938,17 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // si es el root servido por defecto, o un proyecto REAL (tiene openspec/ o .git). Un dir cualquiera
         // (p.ej. C:\sensible) se rechaza → cierra el vector de un POST local/CSRF que ejecutaría donde quisiera.
         const isRealProject = (p) => { try { const rp = resolve(p); return rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')); } catch { return false; } };
-        const proj = b.project ? ((existsSync(b.project) && isRealProject(b.project)) ? ensureProject(b.project) : null) : (b.projectId ? projOf(b.projectId) : DEFAULT);
-        if (!proj) return json(400, { ok: false, error: 'proyecto no válido: debe ser una ruta con openspec/ o .git (no se ejecuta en rutas arbitrarias)' });
+        // resolver el ROOT destino SIN persistir aún: gate de SEGURIDAD (anti-ruta-arbitraria) primero.
+        let tgtRoot = null, tgtProj = null;
+        if (b.project) { if (existsSync(b.project) && isRealProject(b.project)) tgtRoot = resolve(b.project); }
+        else if (b.projectId) { tgtProj = projOf(b.projectId); tgtRoot = tgtProj?.root || null; }
+        else { tgtProj = DEFAULT; tgtRoot = DEFAULT.root; }
+        if (!tgtRoot) return json(400, { ok: false, error: 'proyecto no válido: debe ser una ruta con openspec/ o .git (no se ejecuta en rutas arbitrarias)' });
+        // GATE DE GOBIERNO (coherencia, decisión cerrada): NO se lanza en un proyecto sin init. needsInit → la web
+        // ofrece "Inicializar". Es distinto del gate de seguridad .git de arriba. Se REGISTRA solo un proyecto ya
+        // inicializado (anti-contaminación del registro: estar en el registro ⇒ inicializado o usado conscientemente).
+        if (!isSdd(tgtRoot)) return json(400, { ok: false, needsInit: true, projectId: projId(tgtRoot), error: 'Este proyecto no está inicializado. Inicialízalo (crea openspec/) para poder lanzar features.' });
+        const proj = tgtProj || ensureProject(tgtRoot);
         const ch = join(proj.root, 'openspec', 'changes', b.name);
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso', url: `/run/${proj.id}/${b.name}` });
@@ -5880,7 +5981,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // EXCEPCIÓN: 'micro' (no-SDD amurallado, decisión explícita) NO lo produce resolvePlan ni la UI normal;
         // si un caller lo pide explícitamente, se respeta (sin él, micro sería inalcanzable y romperíamos ese modo).
         const launchComplexity = b.complexity === 'micro' ? 'micro' : resolvePlan({ request: b.request }).complexity;
-        launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg);
+        // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
+        const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
+        launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
@@ -5893,7 +5996,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         if (!tl?.request) return json(404, { ok: false, error: 'sin timeline que reanudar' });
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso' });
-        launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name);
+        launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name, tl.pipeline, tl.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
       const mArt2 = u.pathname.match(/^\/artifact\/([a-z0-9-]+~[a-f0-9]{6})\/([a-z0-9-]+)\/dashboard\.html$/);
@@ -5949,7 +6052,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           const tl2 = readJson(join(changeDir, '.conductor', 'timeline.json'));
           if (!tl2?.request) return json(404, { ok: false });
           if (activeRun(changeDir) || (reg && !reg.exited)) return json(409, { ok: false, error: 'ya en curso' });
-          launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models, undefined, tl2.preset?.name); // resume EXACTO: reusa modelos por fase + preset de gobierno persistidos (RunState robusto)
+          launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models, undefined, tl2.preset?.name, tl2.pipeline, tl2.runTests === true); // resume EXACTO: reusa modelos + preset + pipeline + runTests persistidos (RunState robusto)
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'stop') {
@@ -6045,7 +6148,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   });
 }
 
-return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, readModelsCache, writeModelsCache, isCopilotFamily, checkByokModels, aggregateArchive, aggregateSearch, createAppServer };
+return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, readModelsCache, writeModelsCache, isCopilotFamily, checkByokModels, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
 })();
 
 // ===== lib/sysops/ci.mjs =====
@@ -6429,6 +6532,8 @@ switch (cmd) {
       changeDir: dir, request,
       complexity: flag('--complexity', 'medium'), domain: flag('--domain', 'core'),
       preset: flag('--preset'), // dial de gobierno por run (quick-fix|visual|feature|migration); cae a conductor.json/env si no se pasa
+      pipeline: flag('--pipeline') ? flag('--pipeline').split(',').map((s) => s.trim()).filter(Boolean) : undefined, // fases por-run (checkboxes app); resolvePhases reimpone verify terminal
+      runTests: has('--run-tests'), // toggle "test" del panel: ejecutar pruebas REALES post-gate (verify por ejecución, opcional); fallo → TESTS-FAIL
       srcDir: flag('--src'), log: (m) => console.log(m),
     });
     if (srv) { await new Promise((res) => setTimeout(res, 2500)); await srv.close(); } // margen para el último poll
@@ -6892,4 +6997,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 758eebca6ba4e56bf93f86a547c673544de6f711468bb4af16394a85ade13618
+// build-inputs-sha256: ea6f7847985b6db6c7b4f6414b84a273cd6f534cab0a4414f9c8e1b95db59f96

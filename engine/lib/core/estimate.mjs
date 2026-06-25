@@ -22,11 +22,21 @@ const ARTIFACT = (phase, domain) => ({
 
 // estima entrada/salida por fase. La entrada ≈ instrucción base + contexto acumulado (artefactos previos,
 // reales si ya existen — útil para estimar un resume). La salida ≈ heurística por fase.
-export function estimateRun({ changeDir, complexity = 'medium', domain = 'core', request = '', baseInstruction = 400 } = {}) {
+export function estimateRun({ changeDir, complexity = 'medium', domain = 'core', request = '', baseInstruction = 400, pipeline = null } = {}) {
   // L2/L3: complexity llega de un query param (/api/estimate?complexity=). Un "toString"/"constructor"/
   // "__proto__" hacía PHASES[complexity] = función heredada → "phases is not iterable" → 500. Solo claves PROPIAS.
   if (!Object.prototype.hasOwnProperty.call(PHASES, complexity)) complexity = 'medium';
-  const phases = PHASES[complexity];
+  // pipeline POR-RUN (checkboxes de fases en la app): si llega, manda sobre la complejidad. Se SANEA a fases
+  // conocidas (dedup) y se ESPEJA la regla del motor (verify terminal innegociable) → el estimate coincide
+  // EXACTO con lo que ejecutará resolvePhases (plan == run == tabla de tokens). Sin pipeline → plan por complejidad.
+  let phases;
+  if (Array.isArray(pipeline) && pipeline.length) {
+    const seen = new Set();
+    phases = pipeline.filter((p) => OUT_EST[p] !== undefined && !seen.has(p) && seen.add(p)).filter((p) => p !== 'verify');
+    phases.push('verify');
+  } else {
+    phases = PHASES[complexity];
+  }
   const rows = [];
   let ctx = tokensOf(request);
   for (const phase of phases) {

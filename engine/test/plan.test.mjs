@@ -19,6 +19,14 @@ await test('plan: petición sustancial (varias áreas/arquitectura) → añade e
   assert(p.phases.includes('explore') && p.phases.includes('design') && p.phases.includes('tasks'), 'plan más profundo');
 });
 
+await test('plan(fix): "migrar … legacy … nuevo servicio" → sustancial → plan PROFUNDO (no 4 fases)', () => {
+  const p = resolvePlan({ request: 'Migrar el modulo de facturacion legacy a un nuevo servicio con su API y su esquema' });
+  assert(p.substantial, 'detecta migración/legacy/nuevo servicio como trabajo sustancial (señales ES)');
+  eq(p.complexity, 'medium', 'una migración clara → plan medio, no simple');
+  assert(p.phases.includes('explore') && p.phases.includes('design') && p.phases.includes('tasks'), 'incluye explorar/diseñar/desglosar');
+  assert(p.phases[p.phases.length - 1] === 'verify', 'verify siempre terminal');
+});
+
 await test('plan: spec pegada → omite proponer/especificar (arranca en implementar)', () => {
   const p = resolvePlan({ request: '## ADDED Requirements\n<!-- id: REQ-X -->\n### Requirement: X\nThe system SHALL hacer algo.\n#### Scenario: s' });
   assert(p.specPasted, 'detecta una spec ya pegada');

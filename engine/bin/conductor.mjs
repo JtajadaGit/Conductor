@@ -199,6 +199,8 @@ switch (cmd) {
       changeDir: dir, request,
       complexity: flag('--complexity', 'medium'), domain: flag('--domain', 'core'),
       preset: flag('--preset'), // dial de gobierno por run (quick-fix|visual|feature|migration); cae a conductor.json/env si no se pasa
+      pipeline: flag('--pipeline') ? flag('--pipeline').split(',').map((s) => s.trim()).filter(Boolean) : undefined, // fases por-run (checkboxes app); resolvePhases reimpone verify terminal
+      runTests: has('--run-tests'), // toggle "test" del panel: ejecutar pruebas REALES post-gate (verify por ejecución, opcional); fallo → TESTS-FAIL
       srcDir: flag('--src'), log: (m) => console.log(m),
     });
     if (srv) { await new Promise((res) => setTimeout(res, 2500)); await srv.close(); } // margen para el último poll

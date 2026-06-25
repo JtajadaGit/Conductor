@@ -96,6 +96,7 @@ export class RunScreen extends CElement {
         <a class="btn sm sec aiact" href=${this.apiBase + 'aiact'} target="_blank">AI Act</a>
         ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested} @click=${() => void this.api.stop()}>${s.stopRequested ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
       </div>
+      ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (tras el gate): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
       ${this.requestBox(s)}
       ${this.phaseId ? this.phaseDetail(s) : nothing}
       ${s.pending ? this.pendingCard(s.pending) : nothing}

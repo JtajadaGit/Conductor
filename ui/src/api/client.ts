@@ -26,12 +26,14 @@ export class ConductorApi {
   // ── panel (base '/api/') ──
   changes(): Promise<ChangesResponse> { return this.getJson<ChangesResponse>('changes'); }
   models(): Promise<ModelsResponse> { return this.getJson<ModelsResponse>('models'); }
-  // El usuario NO clasifica: el servidor propone el tipo y deriva las fases. `preset` solo se envía si el
-  // experto ajustó el tipo a mano.
-  estimate(request: string, preset?: string): Promise<EstimateResponse> {
-    return this.getJson<EstimateResponse>('estimate?request=' + encodeURIComponent(request.slice(0, 4000)) + (preset ? '&preset=' + encodeURIComponent(preset) : ''));
+  // El usuario NO clasifica: el servidor propone el tipo y deriva las fases. `pipeline` solo se envía si el
+  // experto tocó los checkboxes de fases → el estimate (tokens + acciones) refleja EXACTO las fases elegidas.
+  estimate(request: string, pipeline?: string[]): Promise<EstimateResponse> {
+    return this.getJson<EstimateResponse>('estimate?request=' + encodeURIComponent(request.slice(0, 4000)) + (pipeline && pipeline.length ? '&pipeline=' + encodeURIComponent(pipeline.join(',')) : ''));
   }
   launch(body: LaunchBody): Promise<ApiResult> { return this.post('launch', body); }
+  // inicializa SDD en un proyecto desde la web (crea openspec/): hace alcanzable el flujo sin volver a la terminal.
+  init(projectId?: string): Promise<ApiResult> { return this.post('init', projectId ? { projectId } : {}); }
   resumeNamed(name: string, projectId?: string): Promise<ApiResult> { return this.post('resume', { name, projectId }); }
   search(q: string): Promise<SearchResponse> { return this.getJson<SearchResponse>('search?q=' + encodeURIComponent(q)); }
   archive(): Promise<ArchiveResponse> { return this.getJson<ArchiveResponse>('archive'); }

@@ -26,6 +26,7 @@ const g = (c) => execSync(c, { cwd: PROJ, stdio: 'ignore', windowsHide: true });
 g('git init -q'); g('git config user.email e2e@t'); g('git config user.name e2e');
 g('git add -A'); g('git commit -qm base');
 mkdirSync(join(PROJ, 'openspec', 'changes'), { recursive: true });
+writeFileSync(join(PROJ, 'openspec', 'conductor.json'), '{}'); // proyecto INICIALIZADO (isSdd) — el gate de gobierno de /api/launch exige init; config vacía = defaults (no toca lentes)
 
 // ── app única REAL en puerto efímero (env de CI puede tener 4750 libre u ocupado — da igual) ──
 const PROOF = join(HERE, '.tmp-e2e-proof.txt'); rmSync(PROOF, { force: true });

@@ -32,6 +32,7 @@ import { detectStack, renderStackHint } from '../analysis/stack.mjs';
 import { tierModel } from '../core/tiers.mjs';
 import { priceOf } from '../core/cost.mjs';
 import { budgetContextFiles, summarizeArtifact } from '../core/estimate.mjs';
+import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
 import { decryptSecret } from '../provenance/secret.mjs';
 
@@ -434,7 +435,7 @@ export function activeRun(changeDir) {
   return null;
 }
 
-export async function drive({ changeDir, request, complexity = 'medium', domain = 'core', srcDir, runAgent = defaultRunAgent, log: logOut = () => {}, maxRetries, timeoutMs, pauseAt = [], onPause = null, stopSignal = null, serveUrl = null, preset: presetOpt = null }) {
+export async function drive({ changeDir, request, complexity = 'medium', domain = 'core', srcDir, runAgent = defaultRunAgent, log: logOut = () => {}, maxRetries, timeoutMs, pauseAt = [], onPause = null, stopSignal = null, serveUrl = null, preset: presetOpt = null, pipeline: pipelineOpt = null, runTests: runTestsOpt = false }) {
   const dup = activeRun(changeDir);
   if (dup) {
     logOut(`✅ TASK COMPLETE — ya hay un run EN CURSO para este change (pid ${dup.pid}); este lanzamiento duplicado no hace nada. NO relances: sigue el run existente en su web.`);
@@ -479,6 +480,11 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // (2) openspec/conductor.json ("preset"), o (3) env CONDUCTOR_PRESET. El experto MANDA: cualquier knob
   // explícito (strictTrace/strictId/specFreeze/pauseAt/reviewTimeoutMs/onReviewTimeout) gana sobre el del preset.
   const preset = resolvePreset(presetOpt || cfg.preset || process.env.CONDUCTOR_PRESET);
+  // PIPELINE POR-RUN (#checkboxes de fases): el experto puede elegir qué fases SDD corren ESTE run desde la app
+  // (obligatorias spec/apply/verify bloqueadas; opcionales toggleables). Llega como opción `pipeline` (array de
+  // fases) y GANA sobre openspec/conductor.json. resolvePhases ya lo sanea (solo fases KNOWN, dedup) y REIMPONE
+  // verify terminal — el gobierno no se puede desmarcar. Se persiste en el timeline para que el resume sea idéntico.
+  const effPipeline = (Array.isArray(pipelineOpt) && pipelineOpt.length) ? pipelineOpt : cfg.pipeline;
   const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
@@ -523,7 +529,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         // re-derivar la pipeline CANÓNICA de ESTE run y exigir que el state coincida (salvo ciclos "fix"
         // que el gate inserta, siempre ANTES de la verify terminal). Un phases:["verify"] o ["apply","verify"]
         // forjado NO coincide con la canónica → se descarta el resume y se reinicia limpio (ejecución real).
-        const canonical = resolvePhases(complexity, cfg.pipeline, { changeDir, request });
+        const canonical = resolvePhases(complexity, effPipeline, { changeDir, request });
         const stripFix = Array.isArray(st.phases) ? st.phases.filter((p) => p !== 'fix') : [];
         const matchesCanonical = stripFix.length === canonical.length && stripFix.every((p, i) => p === canonical[i]);
         const stateValid = Array.isArray(st.phases) && st.phases.length
@@ -552,7 +558,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       }
     } catch (e) { step = null; log(`⚠ no pude leer/avanzar el estado previo (${stateF}): ${e.message} — empiezo de cero`); }
   }
-  if (!step) step = start({ changeDir, request, complexity, domain, pipeline: cfg.pipeline });
+  if (!step) step = start({ changeDir, request, complexity, domain, pipeline: effPipeline });
   const trail = [];
   const timeline = []; // observabilidad por fase (rol, modelo, ficheros, duración) — telemetría
   // RESUME: heredar las fases YA COMPLETADAS del timeline anterior (con sus tokens/modelos reales) —
@@ -568,7 +574,8 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   }
   const t0run = Date.now();
   let currentInfo = null; // fase EN CURSO (para la mini-web): {phase, role, model, attempt, startedAt, timeoutMs, lastError}
-  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  let testsResult = null; // verify POR EJECUCIÓN (opcional, post-gate): {ran, passed, failed[], cmds[]} — para timeline/UI
+  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
@@ -748,12 +755,15 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       let ctxBlock = `\n\n## CONTEXT ARTIFACTS (under ${changeDir}) — read ONLY the ones you need; do NOT re-read project source files:\n`;
       ctxBlock += includedFiles.map((f) => `- ${f} — ${reasonFor(f)}`).join('\n');
       if (summarizedFiles.length) {
+        let minSaved = 0;
         ctxBlock += '\n' + summarizedFiles.map((f) => {
           const key = f.split('/').pop();
-          const summary = summarizeArtifact(artifacts[key] || '');
+          const raw = summarizeArtifact(artifacts[key] || '');
+          const summary = minifyText(raw); // minificado lossless del resumen inlineado (token-first)
+          minSaved += minifySaved(raw, summary);
           return `- ${f} — ${reasonFor(f)} (summary — token budget exceeded; read file for full content):\n  \`\`\`\n${summary.split('\n').map((l) => '  ' + l).join('\n')}\n  \`\`\``;
         }).join('\n');
-        log(`   ⚡ ctx budget: ${includedFiles.length} completo(s), ${summarizedFiles.length} resumido(s) (presupuesto de tokens)`);
+        log(`   ⚡ ctx budget: ${includedFiles.length} completo(s), ${summarizedFiles.length} resumido(s)${minSaved ? `, ~${minSaved} tok minificados` : ''} (token-first)`);
       }
       prompt += ctxBlock;
     }
@@ -1083,26 +1093,33 @@ ${readSafe(x.lp).trim()}`);
     else log(`   ✓ gate de contrato: sin cambios incompatibles`);
   }
 
-  // P0-2 GREEN CREÍBLE (enterprise): el gate estructural (coherencia + artefactos + traza) NO ejecuta
-  // tests/build. Para uso empresarial, "GREEN" puede EXIGIR que los checks declarados por el proyecto
-  // pasen. cfg.checks = ["npm test","npm run build"] en openspec/conductor.json. SIN shell (argv split) +
-  // OPT-IN explícito: un conductor.json clonado es entrada NO confiable (RCE-by-config). Si un check falla
-  // (exit≠0) → el run es NOT-GREEN aunque el gate estructural pasara. Así "GREEN" = coherente + compila/pasa.
-  if (step.verdict === 'GREEN' && Array.isArray(cfg.checks) && cfg.checks.length) {
-    if (cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1') {
+  // VERIFY POR EJECUCIÓN (opcional, post-gate, DISTINTO del gate de gobierno): el gate estructural verify
+  // (coherencia + artefactos + traza) es sin-LLM y NO ejecuta nada — comprueba que la PIPELINE se hizo bien.
+  // Aparte, el usuario puede pedir EJECUTAR las pruebas REALES del proyecto: el toggle "test" del panel por-run
+  // (runTestsOpt = consentimiento humano explícito de ESTE run) o cfg.allowChecks/env (CI/headless). Comando(s):
+  // cfg.checks declarados, o el testCmd autodetectado del stack. SIN shell (argv split). Un conductor.json clonado
+  // es entrada NO confiable (RCE-by-config): por eso se exige consentimiento. Si una prueba falla (exit≠0) → el
+  // run cierra TRI-ESTADO 'TESTS-FAIL' (construido bien · pruebas fallan), distinto del NOT-GREEN ESTRUCTURAL.
+  if (step.verdict === 'GREEN' && (runTestsOpt === true || (Array.isArray(cfg.checks) && cfg.checks.length))) {
+    const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
+    const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
+    if (!cmds.length) {
+      log('ℹ️ "test" solicitado pero no se detectó comando de pruebas (sin cfg.checks ni testCmd del stack) — nada que ejecutar.');
+    } else if (!consent) {
+      log(`ℹ️ ${cmds.length} prueba(s) declaradas pero NO ejecutadas — actívalas con "allowChecks": true en openspec/conductor.json (o CONDUCTOR_ALLOW_CHECKS=1), o marca "test" en el panel. No se ejecuta config clonada por defecto (RCE).`);
+    } else {
       const failed = [];
-      for (const chk of cfg.checks) {
+      for (const chk of cmds) {
         const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
         if (!a.length) continue;
-        try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: 'ignore', timeout: 180000, windowsHide: true }); log(`   ✅ check: ${chk}`); }
-        catch { failed.push(chk); log(`   ❌ check FALLÓ (exit≠0): ${chk}`); }
+        try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: 'ignore', timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
+        catch { failed.push(chk); log(`   ❌ prueba FALLÓ (exit≠0): ${chk}`); }
       }
+      testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       if (failed.length) {
-        step = { ...step, verdict: 'NOT-GREEN', gate: 'CHECKS-FAIL', checksFailed: failed };
-        log(`⛔ gate estructural GREEN pero ${failed.length} check(s) del proyecto fallaron → NOT-GREEN (build/test reales): ${failed.join(' · ')}`);
-      } else log(`   ✓ ${cfg.checks.length} check(s) del proyecto pasaron — GREEN con build/test reales`);
-    } else {
-      log(`ℹ️ ${cfg.checks.length} check(s) declarados pero NO ejecutados — actívalos con "allowChecks": true en openspec/conductor.json (o CONDUCTOR_ALLOW_CHECKS=1). No se ejecuta config clonada por defecto (RCE).`);
+        step = { ...step, verdict: 'TESTS-FAIL', gate: 'TESTS-FAIL', checksFailed: failed };
+        log(`⚠ gate estructural GREEN, pero ${failed.length} prueba(s) del proyecto fallaron → TESTS-FAIL (construido bien · pruebas fallan): ${failed.join(' · ')}`);
+      } else log(`   ✓ ${cmds.length} prueba(s) del proyecto pasaron — GREEN con pruebas reales`);
     }
   }
 

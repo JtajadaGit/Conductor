@@ -78,7 +78,11 @@ export interface RunState {
   usage: Usage | null;
   ghUsage: GhUsage | null;
   stopRequested: boolean;
+  tests?: TestRun | null; // verify por ejecución (opcional): pruebas reales del proyecto corridas tras el gate
 }
+
+// resultado de ejecutar las pruebas reales del proyecto (post-gate, opcional). Si !passed → verdict 'TESTS-FAIL'.
+export interface TestRun { ran: boolean; passed: boolean; failed: string[]; cmds: string[]; }
 
 export interface ChangeSummary {
   name: string;
@@ -123,7 +127,7 @@ export interface ModelsResponse {
 
 export interface PhaseEstimate { phase: string; estIn: number; estOut: number; }
 export interface PlanCheck { id: string; label: string; always?: boolean; why?: string; }
-export interface EstimateResponse { complexity: string; phases: PhaseEstimate[]; totalIn: number; totalOut: number; total: number; noRescanSaved: number; actions?: string[]; checks?: PlanCheck[]; }
+export interface EstimateResponse { complexity: string; phases: PhaseEstimate[]; totalIn: number; totalOut: number; total: number; noRescanSaved: number; actions?: string[]; checks?: PlanCheck[]; testCmd?: string | null; }
 
 export interface SearchHit { name: string; verdict: Verdict; archived: boolean; snippet: string; project?: string; projectId?: string; }
 export interface SearchResponse { hits: SearchHit[]; }
@@ -154,6 +158,8 @@ export interface LaunchBody {
   models?: ModelsByRole;
   auto?: boolean;
   preset?: string; // dial de gobierno: quick-fix | visual | feature | migration ('' = sin override)
+  pipeline?: string[]; // fases SDD elegidas en los checkboxes (orden = ejecución; el motor reimpone verify terminal)
+  runTests?: boolean; // toggle "test": ejecutar las pruebas REALES del proyecto tras el gate (opcional, no es una fase)
 }
 export interface ContinueBody { selected?: number[]; note?: string; model?: string; }
-export interface ApiResult { ok: boolean; url?: string; error?: string; restored?: number; removed?: number; }
+export interface ApiResult { ok: boolean; url?: string; error?: string; restored?: number; removed?: number; needsInit?: boolean; projectId?: string; }

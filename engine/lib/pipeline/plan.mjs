@@ -28,7 +28,7 @@ export function resolvePlan({ request = '', hasSpec = false } = {}) {
   const specPasted = hasSpec || looksLikeSpec(req);
   // "sustancial" = varias capacidades / arquitectura / integración / refactor amplio (NO una talla: una señal real)
   const substantial = words > 35
-    || /\bvarios?\b|m[uú]ltiples|adem[aá]s|integrac|arquitect|refactor|flujo completo|end-to-end|migrac/i.test(t)
+    || /\bvarios?\b|m[uú]ltiples|adem[aá]s|integrac|arquitect|refactor|flujo completo|end-to-end|migrac|migrar|legacy|reescrib|portar|nuevo (servicio|m[oó]dulo|sistema)|microservici/i.test(t)
     || (t.match(/,|\sy\s/g) || []).length >= 3;
   // "ambiguo" = corto y vago, o con preguntas abiertas → conviene aclarar antes de construir
   const ambiguous = !specPasted && (words < 4 || /\?|no s[eé]\b|quiz[aá]|tal vez|alguna forma/i.test(t));
