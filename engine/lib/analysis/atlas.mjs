@@ -3,7 +3,7 @@
 // SPEC VIVA (openspec/specs, la librería que crece al archivar cambios GREEN) + historial de cambios archivados.
 // NO hay aprendizaje cross-run ni memoria entrenada (lo prohíbe la confidencialidad): es un SNAPSHOT versionable
 // derivado del propio repo. Componible sobre piezas existentes (detectStack + parseSpec + listArchive).
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { detectStack } from './stack.mjs';
 import { parseSpec } from '../gates/coherence.mjs';
@@ -40,6 +40,32 @@ export function buildVerifiedIndex(projectRoot, { domain = '', maxReqs = 40, max
   if (reqLines.length) { L.push('Verified capabilities (live specs):'); L.push(...reqLines); }
   if (chLines.length) { L.push('Recent changes:'); L.push(...chLines); }
   return L.join('\n');
+}
+
+// MAPA DE ORIENTACIÓN BROWNFIELD (token-first, clave en migraciones): pre-computa en CÓDIGO un mapa compacto del
+// repo EXISTENTE (stack + dirs top-level + ficheros de config/CI + entrypoints + comando de test) para alimentar la
+// fase `explore` → el modelo usa este mapa en vez de escanear el repo entero (ahorro líder). Determinista, sin LLM,
+// solo del propio repo. Degrada a casi-vacío en greenfield (inofensivo). '' si no hay nada que mapear.
+const BF_IGNORE = new Set(['node_modules', 'dist', 'build', 'out', 'target', 'coverage', '.angular', '.git', 'vendor', '__pycache__']);
+const BF_CONFIG = ['package.json', 'tsconfig.json', 'pom.xml', 'build.gradle', 'composer.json', 'pyproject.toml', 'go.mod', 'Cargo.toml', 'Dockerfile', 'docker-compose.yml', '.gitlab-ci.yml', '.github/workflows', 'angular.json', 'vite.config.ts', 'webpack.config.js', 'Makefile'];
+export function buildBrownfieldMap(projectRoot, { maxDirs = 14 } = {}) {
+  const stack = detectStack(projectRoot) || { summary: '', testCmd: '', entrypoints: [] };
+  const dirs = [];
+  try {
+    for (const name of readdirSync(projectRoot)) {
+      if (BF_IGNORE.has(name) || name.startsWith('.')) continue;
+      try { if (statSync(join(projectRoot, name)).isDirectory()) dirs.push(name); } catch { /* dir ilegible */ }
+    }
+  } catch { /* root ilegible */ }
+  const config = BF_CONFIG.filter((f) => { try { return existsSync(join(projectRoot, f)); } catch { return false; } });
+  const L = [];
+  if (stack.summary && stack.summary !== 'desconocido') L.push(`Stack: ${stack.summary}`); // 'desconocido' = sin stack útil
+  if (dirs.length) L.push(`Top-level dirs: ${dirs.slice(0, maxDirs).join(', ')}`);
+  if (config.length) L.push(`Config/CI present: ${config.join(', ')}`);
+  if (stack.entrypoints?.length) L.push(`Entrypoints: ${stack.entrypoints.join(', ')}`);
+  if (stack.testCmd) L.push(`Tests: ${stack.testCmd}`);
+  if (!L.length) return '';
+  return 'PROJECT ORIENTATION MAP (deterministic, pre-computed — use this to locate the relevant areas instead of scanning the whole repo; flag anything ambiguous as an open question):\n' + L.join('\n');
 }
 
 export function buildAtlas(projectRoot) {

@@ -89,3 +89,18 @@ await test('archive(#69): archiveChange mueve a archive/YYYY-MM-DD-name; idempot
   assert(blocked, 'ruta fuera de openspec/changes/ rechazada');
   rmSync(ROOT, { recursive: true, force: true });
 });
+
+await test('archive(gobierno): no se archiva un change sin veredicto GREEN; el override explícito del experto sí', () => {
+  rmSync(ROOT, { recursive: true, force: true });
+  const archiveBase = join(ROOT, 'openspec', 'changes', 'archive');
+  // change NOT-GREEN → archivar lo RECHAZA (el CÓDIGO conduce la promoción a la spec viva, defensa en profundidad)
+  w(join(CH('feat-bad'), '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'NOT-GREEN', request: 'x' }));
+  let blocked = false; try { archiveChange(CH('feat-bad'), archiveBase, '2026-06-23'); } catch (e) { blocked = e.code === 'NOT_GREEN'; }
+  assert(blocked, 'sin GREEN → NOT_GREEN, no se archiva');
+  assert(existsSync(CH('feat-bad')), 'el change NO se movió');
+  // override EXPLÍCITO del experto (auditable) → sí archiva
+  const res = archiveChange(CH('feat-bad'), archiveBase, '2026-06-23', { allowNonGreen: true });
+  eq(res.archivedDir, '2026-06-23-feat-bad', 'con override, archiva igual');
+  assert(!existsSync(CH('feat-bad')), 'movido tras el override');
+  rmSync(ROOT, { recursive: true, force: true });
+});

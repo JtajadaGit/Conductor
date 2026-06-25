@@ -95,7 +95,7 @@ export function promoteSpec(changeDir, specsRoot) {
 // Mueve un change a openspec/changes/archive/<YYYY-MM-DD-name>/ con renameSync (MOVER, no borrado recursivo).
 // Confinamiento: el change debe colgar de openspec/changes/ y NO ser el propio archive/. Idempotente: si el
 // destino ya existe → "Already archived" (no se re-archiva). `date` se inyecta desde el llamador (ISO yyyy-mm-dd).
-export function archiveChange(changeDir, archiveBaseDir, date) {
+export function archiveChange(changeDir, archiveBaseDir, date, { allowNonGreen = false } = {}) {
   const src = resolve(changeDir);
   const changesRoot = resolve(archiveBaseDir, '..'); // .../openspec/changes
   const rel = relative(changesRoot, src);
@@ -105,6 +105,13 @@ export function archiveChange(changeDir, archiveBaseDir, date) {
   const archivedDir = `${date}-${basename(src)}`;
   const dest = join(archiveBaseDir, archivedDir);
   if (existsSync(dest)) throw new Error('Already archived');
+  // GOBIERNO (defensa en profundidad, JUSTO antes de promover): archivar = promover el change a la spec viva. El
+  // CÓDIGO conduce esa promoción: no se archiva un change que no cerró GREEN, salvo override EXPLÍCITO del experto
+  // (auditable). Así CUALQUIER llamador (HTTP, MCP, CLI) queda gateado, no solo el boundary HTTP. Verdict = timeline.
+  if (!allowNonGreen) {
+    let verdict = null; try { verdict = JSON.parse(readFileSync(join(src, '.conductor', 'timeline.json'), 'utf8'))?.verdict ?? null; } catch {}
+    if (verdict !== 'GREEN') { const e = new Error(`no se archiva un change sin veredicto GREEN (actual: ${verdict || 'desconocido'}) — corrígelo, o archiva con override explícito`); e.code = 'NOT_GREEN'; throw e; }
+  }
   mkdirSync(archiveBaseDir, { recursive: true });
   renameSync(src, dest); // move atómico (mismo FS) — sin Remove-Item recursivo
   return { archivedDir, dest };

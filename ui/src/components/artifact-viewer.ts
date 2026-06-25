@@ -19,6 +19,8 @@ export class ArtifactViewer extends CElement {
   @state() private editing = false;
   @state() private editable = false;
   @state() private saveErr = ''; // M15: error de guardado a la vista (antes un POST fallido se reportaba como éxito)
+  @state() private dirty = false; // hay cambios sin guardar en el editor (marcador + guarda contra cierre accidental, #4)
+  @state() private pendingClose = false; // se intentó cerrar con cambios sin guardar → pide confirmar (no se pierde un edit)
   private apiBase = '/api/';
   private path = '';
   private opener: HTMLElement | null = null;
@@ -40,13 +42,14 @@ export class ArtifactViewer extends CElement {
     this.editable = d.kind === 'art' && /\.md$/.test(d.path);
     this.vbTitle = (d.kind === 'art' ? '📄 ' : '± ') + d.path;
     this.opener = (document.activeElement as HTMLElement) ?? null;
-    this.open = true; this.editing = false; this.loading = true; this.content = ''; this.saveErr = '';
+    this.open = true; this.editing = false; this.loading = true; this.content = ''; this.saveErr = ''; this.dirty = false; this.pendingClose = false;
     void this.load(d.kind);
     queueMicrotask(() => this.querySelector<HTMLElement>('.vb')?.focus());
   };
   private onKey = (e: KeyboardEvent): void => {
     if (!this.open) return;
-    if (e.key === 'Escape') { this.close(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S') && this.editing) { e.preventDefault(); void this.save(); return; } // Ctrl/Cmd+S guarda
+    if (e.key === 'Escape') { this.tryClose(); return; }
     if (e.key === 'Tab') { // foco atrapado dentro de la modal (a11y, WCAG 2.4.3)
       const f = Array.from(this.querySelectorAll<HTMLElement>('.vb button, .vb a[href], .vb textarea, .vb input'));
       // M14: con 1 solo foco (p.ej. una modal de diff = solo ✕) el trap se desactivaba y el Tab escapaba a la
@@ -67,7 +70,10 @@ export class ArtifactViewer extends CElement {
     } catch { this.content = '(no se pudo cargar)'; }
     finally { this.loading = false; }
   }
-  private close(): void { this.open = false; this.opener?.focus?.(); }
+  // cerrar con cambios sin guardar: NO se pierde en silencio (#4). Pide confirmar (guardar o descartar).
+  private tryClose(): void { if (this.editing && this.dirty) { this.pendingClose = true; return; } this.close(); }
+  private discardClose(): void { this.dirty = false; this.editing = false; this.close(); }
+  private close(): void { this.open = false; this.pendingClose = false; this.opener?.focus?.(); }
   private async save(): Promise<void> {
     const ta = this.querySelector<HTMLTextAreaElement>('.vb-edit');
     if (!ta) return;
@@ -77,24 +83,26 @@ export class ArtifactViewer extends CElement {
       const r = await fetch(this.apiBase + 'artifact', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ p: this.path, content: ta.value }) });
       const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!r.ok || j.ok === false) { this.saveErr = j.error || `No se pudo guardar (${r.status}). Sigues editando.`; return; }
-      this.content = ta.value; this.editing = false; this.saveErr = '';
+      this.content = ta.value; this.editing = false; this.saveErr = ''; this.dirty = false;
+      if (this.pendingClose) this.close(); // se pidió guardar al intentar cerrar → cierra tras guardar
     } catch { this.saveErr = 'No se pudo conectar con el servidor local. Sigues editando.'; }
   }
 
   override render(): TemplateResult | typeof nothing {
     if (!this.open) return nothing;
     return html`
-      <div class="vb-back" @click=${() => this.close()}></div>
+      <div class="vb-back" @click=${() => this.tryClose()}></div>
       <div class="vb" role="dialog" aria-modal="true" aria-label=${this.vbTitle} tabindex="-1">
         <header>
           <span class="vb-t">${this.vbTitle}</span>
-          ${this.editable ? html`<button class="btn sm sec" @click=${() => { if (this.editing) void this.save(); else { this.editing = true; this.saveErr = ''; } }}>${this.editing ? '💾 guardar' : '✏️ editar'}</button>` : nothing}
-          <button class="btn sm sec" aria-label="cerrar" @click=${() => this.close()}>✕</button>
+          ${this.editing && this.dirty ? html`<span class="vb-dirty" title="cambios sin guardar" style="color:var(--warn);font:700 .64rem/1 var(--mono);letter-spacing:.04em">● sin guardar</span>` : nothing}
+          ${this.editable ? html`<button class="btn sm sec" @click=${() => { if (this.editing) void this.save(); else { this.editing = true; this.saveErr = ''; this.dirty = false; } }} title=${this.editing ? 'Guardar (Ctrl/Cmd+S)' : 'Editar'}>${this.editing ? '💾 guardar' : '✏️ editar'}</button>` : nothing}
+          <button class="btn sm sec" aria-label="cerrar" @click=${() => this.tryClose()}>✕</button>
         </header>
         ${this.loading
           ? loader('Cargando documento')
           : this.editing
-          ? html`<textarea class="vb-edit" aria-label="contenido editable">${this.content}</textarea>${this.saveErr ? html`<div class="errline" role="alert" style="margin-top:.4rem">${this.saveErr}</div>` : nothing}`
+          ? html`<textarea class="vb-edit" aria-label="contenido editable" @input=${(e: Event) => { this.dirty = (e.target as HTMLTextAreaElement).value !== this.content; }}>${this.content}</textarea>${this.saveErr ? html`<div class="errline" role="alert" style="margin-top:.4rem">${this.saveErr}</div>` : nothing}${this.pendingClose ? html`<div class="errline" role="alert" style="margin-top:.4rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap"><span>Tienes cambios sin guardar.</span><button class="btn sm" @click=${() => void this.save()}>Guardar</button><button class="btn sm sec" @click=${() => this.discardClose()}>Descartar</button></div>` : nothing}`
           : html`<pre class="vb-c">${this.content}</pre>`}
       </div>`;
   }
