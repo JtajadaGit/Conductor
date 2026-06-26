@@ -24,6 +24,7 @@ export class ArtifactViewer extends CElement {
   private apiBase = '/api/';
   private path = '';
   private opener: HTMLElement | null = null;
+  private loadGen = 0; // token por apertura: una carga que termina TARDE (otra apertura ya en curso) no pisa el contenido actual
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -43,7 +44,8 @@ export class ArtifactViewer extends CElement {
     this.vbTitle = (d.kind === 'art' ? '📄 ' : '± ') + d.path;
     this.opener = (document.activeElement as HTMLElement) ?? null;
     this.open = true; this.editing = false; this.loading = true; this.content = ''; this.saveErr = ''; this.dirty = false; this.pendingClose = false;
-    void this.load(d.kind);
+    const gen = ++this.loadGen; // sella ESTA apertura: una carga anterior aún en vuelo quedará obsoleta
+    void this.load(d.kind, gen);
     queueMicrotask(() => this.querySelector<HTMLElement>('.vb')?.focus());
   };
   private onKey = (e: KeyboardEvent): void => {
@@ -63,12 +65,14 @@ export class ArtifactViewer extends CElement {
     }
   };
 
-  private async load(kind: 'art' | 'diff'): Promise<void> {
+  private async load(kind: 'art' | 'diff', gen: number): Promise<void> {
     try {
       const r = await fetch(this.apiBase + (kind === 'art' ? 'artifact?p=' : 'diff?p=') + encodeURIComponent(this.path));
-      this.content = (await r.text()) || '(vacío)';
-    } catch { this.content = '(no se pudo cargar)'; }
-    finally { this.loading = false; }
+      const txt = (await r.text()) || '(vacío)';
+      if (gen !== this.loadGen) return; // otra apertura ganó mientras esta cargaba → descartar (no pisar)
+      this.content = txt;
+    } catch { if (gen === this.loadGen) this.content = '(no se pudo cargar)'; }
+    finally { if (gen === this.loadGen) this.loading = false; }
   }
   // cerrar con cambios sin guardar: NO se pierde en silencio (#4). Pide confirmar (guardar o descartar).
   private tryClose(): void { if (this.editing && this.dirty) { this.pendingClose = true; return; } this.close(); }

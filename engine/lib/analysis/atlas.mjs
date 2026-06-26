@@ -32,9 +32,13 @@ function liveCapabilities(projectRoot) {
 export function buildVerifiedIndex(projectRoot, { domain = '', maxReqs = 40, maxChanges = 8 } = {}) {
   const caps = liveCapabilities(projectRoot);
   caps.sort((a, b) => (a.domain === domain ? -1 : b.domain === domain ? 1 : 0)); // el dominio del cambio primero
-  const reqLines = caps.slice(0, maxReqs).map((c) => `- ${c.id || 'REQ-?'} (${c.domain}): ${String(c.name).slice(0, 80)}`);
+  // NORMALIZA whitespace (colapsa \n/\t a un espacio) antes de cortar: el id/nombre/request entran en un bloque
+  // que se INYECTA a las fases de planificación; un \n sin colapsar partiría una línea y permitiría inyectar
+  // texto falso (p.ej. una directiva) en el bloque "PROJECT VERIFIED HISTORY". Una línea por entrada, garantizado.
+  const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const reqLines = caps.slice(0, maxReqs).map((c) => `- ${c.id || 'REQ-?'} (${c.domain}): ${oneLine(c.name).slice(0, 80)}`);
   let changes = []; try { changes = listArchive(projectRoot) || []; } catch { changes = []; }
-  const chLines = changes.slice(0, maxChanges).map((c) => `- ${c.name} [${c.verdict || '?'}]${c.request ? `: ${String(c.request).slice(0, 70)}` : ''}`);
+  const chLines = changes.slice(0, maxChanges).map((c) => `- ${c.name} [${c.verdict || '?'}]${c.request ? `: ${oneLine(c.request).slice(0, 70)}` : ''}`);
   if (!reqLines.length && !chLines.length) return '';
   const L = ['PROJECT VERIFIED HISTORY (deterministic index — build ON these, REUSE existing requirements where they apply, and FLAG any conflict/duplication. This REPLACES scanning source files; do not re-derive it):'];
   if (reqLines.length) { L.push('Verified capabilities (live specs):'); L.push(...reqLines); }

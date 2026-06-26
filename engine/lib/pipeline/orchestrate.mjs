@@ -217,8 +217,10 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
       const ti = s.idx;
       s.phases = [...s.phases.slice(0, ti), 'fix', ...s.phases.slice(ti)]; // fix ANTES de test → re-codifica y re-testea
       s.idx = ti;
-      s.fixCycles = (s.fixCycles || 0) + 1;
-      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
+      // presupuesto de reparación PROPIO del loop de pruebas (separado del de verify): un fallo de pruebas no
+      // debe robarle ciclos de fix al gate de gobierno, ni al revés. Cada loop escala a BLOCKED por su cuenta.
+      s.testFixCycles = (s.testFixCycles || 0) + 1;
+      if (s.testFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
       saveState(changeDir, s);
       const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
       return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${INSTRUCTION.fix} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
@@ -257,10 +259,13 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
       // insertar el ciclo fix JUSTO ANTES de la verify terminal, CONSERVANDO el resto del plan. (Antes se
       // truncaba todo lo posterior a apply: un pipeline ["spec","apply","design","verify"] perdía "design".)
       const vi = s.idx;
-      s.phases = [...s.phases.slice(0, vi), 'fix', ...s.phases.slice(vi)];
+      // si el plan EJECUTA pruebas (test en el pipeline), el código reparado por verify DEBE volver a pasarlas
+      // ANTES de cerrar GREEN: se re-inserta [fix, test] (no solo fix). Si no hay test, comportamiento de antes.
+      const reinsert = s.phases.includes('test') ? ['fix', 'test'] : ['fix'];
+      s.phases = [...s.phases.slice(0, vi), ...reinsert, ...s.phases.slice(vi)];
       s.idx = vi; // apunta al "fix" recién insertado
-      s.fixCycles = (s.fixCycles || 0) + 1;
-      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'verify', reason: 'gate sigue fallando tras 2 ciclos de fix — escalar a humano (revisa los hallazgos, corrige manualmente y reanuda)', findings: blocking, policy: { source: pol.source, verdict: pe.verdict } }; }
+      s.verifyFixCycles = (s.verifyFixCycles || 0) + 1;
+      if (s.verifyFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'verify', reason: 'gate sigue fallando tras 2 ciclos de fix — escalar a humano (revisa los hallazgos, corrige manualmente y reanuda)', findings: blocking, policy: { source: pol.source, verdict: pe.verdict } }; }
       saveState(changeDir, s);
       return { ...stepFor(changeDir, s), gate: 'FAIL', findings: blocking, instruction: `${INSTRUCTION.fix} Hallazgos: ${blocking.map((f) => f.message).join(' | ')}`, policy: { source: pol.source, verdict: pe.verdict } };
     }

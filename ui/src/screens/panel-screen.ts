@@ -59,6 +59,8 @@ export class PanelScreen extends CElement {
   @state() private initBusy = false; // inicializando el proyecto activo desde la web
   private initMsg = '';
   private pipelineTouched = false; // el experto tocó los checkboxes → el pipeline elegido MANDA (se envía al lanzar y al estimar)
+  private estSeq = 0; // sella cada estimate (last-write-wins): una respuesta tardía no pisa la tabla/selección actuales
+  private proposedPlan: string[] = []; // plan PROPUESTO completo (estimate SIN pipeline) → "restablecer" lo restaura exacto
   @state() private q = '';
   @state() private hits: SearchHit[] = [];
   @state() private archived: ArchiveEntry[] = [];
@@ -127,16 +129,22 @@ export class PanelScreen extends CElement {
   }
   private async fetchEstimate(): Promise<void> {
     if (!this.req.trim()) { this.est = null; this.phaseSel = []; this.pipelineTouched = false; this.runTests = false; return; }
+    // sella la petición ANTES del await y captura `touched` (no se re-lee tras el await: evita la carrera con un
+    // toggle/tecla que llegue mientras la respuesta viaja). last-write-wins: solo la respuesta más reciente aplica.
+    const seq = ++this.estSeq;
+    const touched = this.pipelineTouched;
     try {
       // El usuario NO clasifica: pedimos el PLAN por la petición. El servidor (resolvePlan) devuelve las ACCIONES
       // que se harán + las COMPROBACIONES que se activan por contenido (cada una con su porqué) + la complejidad
       // interna que el motor ejecutará. Si el experto tocó los checkboxes, mandamos ese pipeline → el estimate
       // (tokens + acciones) refleja EXACTO las fases elegidas (estimate == run). El plan MOSTRADO == el LANZADO.
-      const e = await this.api.estimate(this.req, this.pipelineTouched ? this.effectivePipeline() : undefined);
+      const e = await this.api.estimate(this.req, touched ? this.effectivePipeline() : undefined);
+      if (seq !== this.estSeq) return; // respuesta OBSOLETA (el usuario siguió tecleando/toggleando) → no pisar el estado
       this.est = { total: e.total, rows: e.phases, saved: e.noRescanSaved, actions: e.actions ?? [], checks: e.checks ?? [], testCmd: e.testCmd ?? null };
       this.complexity = e.complexity || this.complexity; // profundidad interna derivada del contenido (nunca se muestra como talla)
-      // SISTEMA PROPONE, EXPERTO MANDA: mientras no toque los checkboxes, la selección SIGUE al plan derivado.
-      if (!this.pipelineTouched) this.phaseSel = e.phases.map((r) => r.phase);
+      // SISTEMA PROPONE, EXPERTO MANDA: sin tocar checkboxes la selección SIGUE al plan derivado; además cacheamos el
+      // plan PROPUESTO COMPLETO (pedido SIN pipeline) para que "restablecer" lo restaure EXACTO (no la selección reducida).
+      if (!touched) { this.phaseSel = e.phases.map((r) => r.phase); this.proposedPlan = e.phases.map((r) => r.phase); }
       if (!e.testCmd) this.runTests = false; // sin comando de pruebas detectado no se puede ejecutar nada
     } catch { /* hint opcional */ }
   }
@@ -157,7 +165,9 @@ export class PanelScreen extends CElement {
   // vuelve al plan PROPUESTO por el motor (deshace la edición manual de fases)
   private resetPipeline(): void {
     this.pipelineTouched = false;
-    this.phaseSel = (this.est?.rows ?? []).map((r) => r.phase);
+    // restaura el plan PROPUESTO completo desde la caché (instantáneo, robusto ante fallo de red); el re-estimate
+    // siguiente refresca tokens/acciones. Antes derivaba de est.rows, que tras un toggle contiene el plan REDUCIDO.
+    if (this.proposedPlan.length) this.phaseSel = [...this.proposedPlan];
     this.scheduleEstimate();
   }
   // pipeline a enviar en el launch: solo si el experto tocó los checkboxes (si no, el motor usa su plan/config)
@@ -249,7 +259,22 @@ export class PanelScreen extends CElement {
 
   // proyectos REALES en el selector: solo los que tienen sdd-init hecho (openspec/). Sin sdd-init no hay
   // pipeline que lanzar, así que no aparecen — evita confusión (p.ej. el repo de dev sin inicializar).
-  private sddProjects(): ProjectSummary[] { return this.projects.filter((p) => p.openspec); }
+  // cambiar el proyecto ACTIVO (foco + destino de launch/init). Disponible AUNQUE el activo sea no-SDD: así no se
+  // queda uno atrapado en el CTA "Inicializar" cuando hay otro proyecto ya inicializado al que saltar (coherencia #9).
+  private switchProject(id: string): void {
+    if (!id || id === this.projId) return;
+    this.projId = id; this.persistActive();
+    void this.refreshChanges(); // refresca el estado del proyecto recién enfocado
+  }
+  // selector a NIVEL DE PANEL (no dentro del form, que no se renderiza si el activo es no-SDD): lista TODOS los
+  // proyectos registrados marcando los no inicializados → se puede enfocar/saltar a cualquiera. Visible con >1.
+  private projectSwitcher(): TemplateResult | typeof nothing {
+    if (this.projects.length <= 1) return nothing;
+    return html`<label class="fl" style="display:inline-flex;flex-flow:row wrap;align-items:center;gap:.45rem;margin:0 0 1rem;font-size:.82rem">Proyecto
+      <select aria-label="Proyecto activo" @change=${(e: Event) => this.switchProject((e.target as HTMLSelectElement).value)} style="min-width:12rem">
+        ${this.projects.map((p) => html`<option value=${p.id} ?selected=${p.id === this.projId}>${p.name}${p.openspec === false ? ' · sin inicializar' : ''}</option>`)}
+      </select></label>`;
+  }
 
   private modelOptions(): string[] {
     const m = this.models;
@@ -444,9 +469,6 @@ export class PanelScreen extends CElement {
         </label>
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
-          ${this.sddProjects().length > 1 ? html`<label class="fl">Proyecto<select @change=${(e: Event) => { this.projId = (e.target as HTMLSelectElement).value; this.persistActive(); }}>
-            ${this.sddProjects().map((p) => html`<option value=${p.id} ?selected=${p.id === this.projId}>${p.name}</option>`)}
-          </select></label>` : nothing}
           <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
           <label class="fl" title="Sin pausas de revisión: el pipeline corre de principio a fin sin pedirte aprobar cada fase (el experto suele quererlo OFF)">Auto-aprobar<label class="switch"><input type="checkbox" aria-label="Auto-aprobar: ejecutar sin pausas de revisión" .checked=${this.auto} @change=${(e: Event) => { this.auto = (e.target as HTMLInputElement).checked; }}><span></span></label></label>
           <button class="btn" ?disabled=${this.busy} style="align-self:end">${this.busy ? '…' : 'Lanzar run'}</button>
@@ -495,6 +517,7 @@ export class PanelScreen extends CElement {
         ${this.projects.length > 1 ? html` · <button type="button" @click=${() => { this.showAll = !this.showAll; }} style="background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline">${this.showAll ? 'ver solo este' : `ver todos (${this.projects.length})`}</button>` : nothing}
         · ${m.total} run${m.total === 1 ? '' : 's'}${this.showAll ? ' · todos' : ''}${this.version ? html` · <span title="versión del motor en uso">motor v${this.version}</span>` : nothing}
       </p>
+      ${this.projectSwitcher()}
       <div class="cards">
         <div class="card"><small>Runs</small><span>${m.total}</span></div>
         <div class="card ok"><small>Green</small><span>${m.green}</span></div>

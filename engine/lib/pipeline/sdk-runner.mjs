@@ -11,6 +11,7 @@
 // Interface: misma que defaultRunAgent de drive.mjs → ({phase, role, prompt, cwd, timeoutMs, model}) ⇒ {code, out|err}
 // + .close() para parar el cliente al acabar el run (drive lo llama si existe).
 import { createRequire } from 'node:module';
+import { decryptSecret } from '../provenance/secret.mjs';
 const requireNode = createRequire(import.meta.url);
 
 // localiza el runtime de Copilot del USUARIO (sin shippear los ~557MB): COPILOT_CLI_PATH manda; si no,
@@ -121,8 +122,12 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
   if (!base || !apiKey) {
     try {
       const { readFileSync } = await import('node:fs'); const { homedir } = await import('node:os'); const { join } = await import('node:path');
-      const j = JSON.parse(readFileSync(join(homedir(), '.conductor', 'byok.json'), 'utf8'));
-      base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || j.apiKey || '';
+      // misma resolución que drive.mjs/serve.mjs: honra CONDUCTOR_HOME (override en tests/multi-home) y descifra
+      // apiKeyEnc (DPAPI, formato nuevo). Antes: HOME hardcodeado + solo apiKey en claro → rompía BYOK fuente única.
+      const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+      const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
+      const dec = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : '');
+      base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || dec || '';
     } catch {}
   }
   const provider = base && apiKey ? { type: 'openai', baseUrl: base.endsWith('/v1') ? base : base + '/v1', apiKey } : undefined;
@@ -133,6 +138,11 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       let m = model || '', sessProvider = provider;
       if (m.startsWith('copilot:')) { m = m.slice(8).trim(); sessProvider = undefined; }
       else if (m.startsWith('byok:')) m = m.slice(5).trim();
+      // hardfail BYOK: una fase "byok:" SIN provider resuelto crearía la sesión contra el catálogo Copilot
+      // Business (gasta AI Credits en silencio). Se rechaza con error — el driver lo trata como fallo de fase.
+      if ((model || '').startsWith('byok:') && !sessProvider) {
+        return { code: -1, err: `fase byok:${m} sin credenciales BYOK (CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY, COPILOT_PROVIDER_*, o ~/.conductor/byok.json) — no se cae a Copilot Business para no gastar AI Credits` };
+      }
       // onPermissionRequest: approveAll = el equivalente del --allow-all-tools del runner spawn (sin él,
       // las peticiones de permiso de tools quedan PENDIENTES y la sesión no escribe ficheros — verificado).
       const session = await client.createSession({

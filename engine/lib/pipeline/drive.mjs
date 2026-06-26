@@ -705,7 +705,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
       try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
-      timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: true });
+      timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: failed.length === 0, ...(failed.length ? { failureKind: 'tests-fail' } : {}) });
       currentInfo = null; writeTimeline('running');
       log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
       trail.push('test');
@@ -745,9 +745,16 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     const provName = mspec.provider === 'byok' ? 'qwen/LiteLLM' : mspec.provider === 'copilot' ? 'Copilot' : (mspec.provider || 'sesión');
     log(`🤖 ${phase}: lanzando con modelo=${mspec.model || '(de la sesión)'} · proveedor=${provName}`);
     // byok-hardfail-no-creds: si la fase pide "byok:" y NO hay credenciales, NO seguir contra el catálogo
-    // Copilot Business (gastaría AI Credits de pago sin consentimiento). Solo con el runner por defecto
-    // (un runAgent inyectado —tests/SDK— trae sus propias credenciales). Opt-in: "byokFallback": true.
-    if (runAgent === defaultRunAgent && mspec.provider === 'byok' && !byokCreds()
+    // Copilot Business (gastaría AI Credits de pago sin consentimiento). Invariante de GOBIERNO para los DOS
+    // runners de PRODUCCIÓN (spawn por defecto + SDK); un runAgent inyectado en tests (sin .kind) queda exento
+    // porque trae sus propias credenciales. El spawn lee byokCreds()→COPILOT_PROVIDER_*; el SDK acepta ADEMÁS
+    // CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY → el chequeo de creds es por-runner para no dar falso BLOCKED.
+    // Opt-in para caer a Copilot: "byokFallback": true (o env CONDUCTOR_BYOK_FALLBACK=1).
+    const isProdRunner = runAgent === defaultRunAgent || runAgent.kind === 'sdk';
+    const hasByokCreds = runAgent.kind === 'sdk'
+      ? (!!byokCreds() || !!(process.env.CONDUCTOR_MODEL_URL && process.env.CONDUCTOR_API_KEY))
+      : !!byokCreds();
+    if (isProdRunner && mspec.provider === 'byok' && !hasByokCreds
         && cfg.byokFallback !== true && process.env.CONDUCTOR_BYOK_FALLBACK !== '1') {
       const reason = `la fase "${phase}" pidió byok:${mspec.model} pero no hay credenciales BYOK (ni env COPILOT_PROVIDER_* ni ~/.conductor/byok.json). Para no gastar AI Credits de pago sin querer, el run se DETIENE. Arregla con \`conductor byok save\`, o permite el fallback con "byokFallback": true en openspec/conductor.json.`;
       log(`⛔ BLOCKED: ${reason}`);

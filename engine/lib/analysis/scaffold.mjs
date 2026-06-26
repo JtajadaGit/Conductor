@@ -145,8 +145,10 @@ export function initConfig(openspecDir) {
     const yml = [
       '# conductor — metadata del proyecto (generada por el motor en init; determinista, sin LLM).',
       `name: ${basename(root) || 'proyecto'}`,
-      `stack: ${stk.summary || 'desconocido'}`,
-      stk.testCmd ? `test: ${stk.testCmd}` : '# test: <comando de pruebas del proyecto>',
+      // entrecomillado JSON: stk.summary lleva "· test: <cmd>" (con ": " embebido) y testCmd es un comando libre;
+      // sin comillas, un ": " interno rompe parsers YAML conformes. JSON.stringify → string YAML válida y escapada.
+      `stack: ${JSON.stringify(stk.summary || 'desconocido')}`,
+      stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
       '',
     ].join('\n');
     writeFileSync(ymlPath, yml); metadata = true;

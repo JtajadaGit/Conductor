@@ -282,7 +282,7 @@ export function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1
       // ver un artefacto del change (proposal/spec/...) — confinado al changeDir y nunca .conductor
       const u = new URL(req.url, 'http://x');
       const rel = u.searchParams.get('p') || '';
-      const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel)); // H2: confina .conductor (case-insens) + scrub
+      const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel), process.env, scrubExtra()); // H2: confina .conductor (case-insens) + scrub + key BYOK (virtual-key LiteLLM que solo vive en byok.json)
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/diff')) {
@@ -295,7 +295,7 @@ export function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1
       // CRUDO del modelo por fase ("lo que verías sin conductor") — fichero whitelisteado en .conductor/raw/
       const u = new URL(req.url, 'http://x');
       const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-      let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8')); } catch {}
+      let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/state')) {
@@ -599,7 +599,10 @@ const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || exi
 const BYOK_ENV_KEYS = ['COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS', 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS', 'CONDUCTOR_API_KEY', 'CONDUCTOR_MODEL_URL'];
 export function byokChildEnv(baseEnv) {
   const env = { ...baseEnv };
-  try { if (existsSync(join(CONDUCTOR_HOME(), 'byok.json'))) for (const k of BYOK_ENV_KEYS) delete env[k]; } catch {}
+  // strip SOLO si byok.json produce credenciales USABLES (parse + descifrado DPAPI + baseUrl/apiKey). Un byok.json
+  // corrupto/vacío/ilegible (p.ej. DPAPI fuera de Windows) NO debe vaciar el env de la sesión: si se strippease por
+  // mera EXISTENCIA, dejaría al hijo sin creds y rompería un BYOK que de otro modo funcionaría con las COPILOT_PROVIDER_*.
+  try { if (byokCredsLocal()) for (const k of BYOK_ENV_KEYS) delete env[k]; } catch {}
   return env;
 }
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
@@ -860,6 +863,11 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso', url: `/run/${proj.id}/${b.name}` });
         runs.set(k, { child: null, pending: null, stopRequested: false, exited: false }); // RESERVA síncrona: cierra el TOCTOU (dos POST casi a la vez pasarían el check de arriba antes del await de abajo → dos drivers)
+        // anti-reserva-huérfana: toda la ruta reserva→launch va en try/finally. Si un await intermedio (availableModels,
+        // resolvePlan…) lanza, la reserva se LIBERA; si no, quedaría un placeholder child:null → 409 PERMANENTE al
+        // relanzar/reanudar + /api/shutdown bloqueado (cree que hay un run vivo). launched=true solo tras launch() OK.
+        let launched = false;
+        try {
         // model-validation-before-send: rechaza modelos byok: inexistentes ANTES de gastar minutos hasta el timeout
         const av = await availableModels(registry);
         const mv = checkByokModels(b.models, av.byok, av.byokCreds);
@@ -891,7 +899,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
         const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
         launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
+        launched = true;
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
+        } finally { if (!launched) runs.delete(k); } // libera la reserva ante CUALQUIER throw o return-temprano de rechazo
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
         const b = await readBody(req);
@@ -977,12 +987,12 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (action === 'raw') {
           // CRUDO del modelo por fase ("lo que verías sin conductor"): fichero whitelisteado en .conductor/raw/
           const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-          let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8')); } catch {}
+          let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'artifact') {
           const rel = u.searchParams.get('p') || '';
-          const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel)); // H2: confina .conductor (case-insens) + scrub
+          const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel), process.env, scrubExtra()); // H2: confina .conductor (case-insens) + scrub + key BYOK (virtual-key LiteLLM que solo vive en byok.json)
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'diff') {
@@ -1005,7 +1015,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const r2 = parseEvents(join(changeDir, '.conductor', 'events.jsonl'), opts) || parseOtelSession(join(changeDir, '.conductor', 'otel'), opts);
           if (!r2) return json(404, { ok: false, error: 'sin traza de sesión (ni events.jsonl ni spans OTel) en este run' });
           // scrub: la traza del CLI puede contener secretos que el agente ecoó → redactar al servir (auditoría)
-          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }); return res.end(scrubSecrets(JSON.stringify(r2)));
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }); return res.end(scrubSecrets(JSON.stringify(r2), process.env, scrubExtra()));
         }
         if (action === 'aiact') {
           try { return html(renderAiact(changeDir)); }

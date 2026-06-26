@@ -2432,9 +2432,13 @@ function liveCapabilities(projectRoot) {
 function buildVerifiedIndex(projectRoot, { domain = '', maxReqs = 40, maxChanges = 8 } = {}) {
   const caps = liveCapabilities(projectRoot);
   caps.sort((a, b) => (a.domain === domain ? -1 : b.domain === domain ? 1 : 0)); // el dominio del cambio primero
-  const reqLines = caps.slice(0, maxReqs).map((c) => `- ${c.id || 'REQ-?'} (${c.domain}): ${String(c.name).slice(0, 80)}`);
+  // NORMALIZA whitespace (colapsa \n/\t a un espacio) antes de cortar: el id/nombre/request entran en un bloque
+  // que se INYECTA a las fases de planificación; un \n sin colapsar partiría una línea y permitiría inyectar
+  // texto falso (p.ej. una directiva) en el bloque "PROJECT VERIFIED HISTORY". Una línea por entrada, garantizado.
+  const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const reqLines = caps.slice(0, maxReqs).map((c) => `- ${c.id || 'REQ-?'} (${c.domain}): ${oneLine(c.name).slice(0, 80)}`);
   let changes = []; try { changes = listArchive(projectRoot) || []; } catch { changes = []; }
-  const chLines = changes.slice(0, maxChanges).map((c) => `- ${c.name} [${c.verdict || '?'}]${c.request ? `: ${String(c.request).slice(0, 70)}` : ''}`);
+  const chLines = changes.slice(0, maxChanges).map((c) => `- ${c.name} [${c.verdict || '?'}]${c.request ? `: ${oneLine(c.request).slice(0, 70)}` : ''}`);
   if (!reqLines.length && !chLines.length) return '';
   const L = ['PROJECT VERIFIED HISTORY (deterministic index — build ON these, REUSE existing requirements where they apply, and FLAG any conflict/duplication. This REPLACES scanning source files; do not re-derive it):'];
   if (reqLines.length) { L.push('Verified capabilities (live specs):'); L.push(...reqLines); }
@@ -3361,8 +3365,10 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
       const ti = s.idx;
       s.phases = [...s.phases.slice(0, ti), 'fix', ...s.phases.slice(ti)]; // fix ANTES de test → re-codifica y re-testea
       s.idx = ti;
-      s.fixCycles = (s.fixCycles || 0) + 1;
-      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
+      // presupuesto de reparación PROPIO del loop de pruebas (separado del de verify): un fallo de pruebas no
+      // debe robarle ciclos de fix al gate de gobierno, ni al revés. Cada loop escala a BLOCKED por su cuenta.
+      s.testFixCycles = (s.testFixCycles || 0) + 1;
+      if (s.testFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
       saveState(changeDir, s);
       const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
       return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${INSTRUCTION.fix} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
@@ -3401,10 +3407,13 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
       // insertar el ciclo fix JUSTO ANTES de la verify terminal, CONSERVANDO el resto del plan. (Antes se
       // truncaba todo lo posterior a apply: un pipeline ["spec","apply","design","verify"] perdía "design".)
       const vi = s.idx;
-      s.phases = [...s.phases.slice(0, vi), 'fix', ...s.phases.slice(vi)];
+      // si el plan EJECUTA pruebas (test en el pipeline), el código reparado por verify DEBE volver a pasarlas
+      // ANTES de cerrar GREEN: se re-inserta [fix, test] (no solo fix). Si no hay test, comportamiento de antes.
+      const reinsert = s.phases.includes('test') ? ['fix', 'test'] : ['fix'];
+      s.phases = [...s.phases.slice(0, vi), ...reinsert, ...s.phases.slice(vi)];
       s.idx = vi; // apunta al "fix" recién insertado
-      s.fixCycles = (s.fixCycles || 0) + 1;
-      if (s.fixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'verify', reason: 'gate sigue fallando tras 2 ciclos de fix — escalar a humano (revisa los hallazgos, corrige manualmente y reanuda)', findings: blocking, policy: { source: pol.source, verdict: pe.verdict } }; }
+      s.verifyFixCycles = (s.verifyFixCycles || 0) + 1;
+      if (s.verifyFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'verify', reason: 'gate sigue fallando tras 2 ciclos de fix — escalar a humano (revisa los hallazgos, corrige manualmente y reanuda)', findings: blocking, policy: { source: pol.source, verdict: pe.verdict } }; }
       saveState(changeDir, s);
       return { ...stepFor(changeDir, s), gate: 'FAIL', findings: blocking, instruction: `${INSTRUCTION.fix} Hallazgos: ${blocking.map((f) => f.message).join(' | ')}`, policy: { source: pol.source, verdict: pe.verdict } };
     }
@@ -3605,8 +3614,10 @@ function initConfig(openspecDir) {
     const yml = [
       '# conductor — metadata del proyecto (generada por el motor en init; determinista, sin LLM).',
       `name: ${basename(root) || 'proyecto'}`,
-      `stack: ${stk.summary || 'desconocido'}`,
-      stk.testCmd ? `test: ${stk.testCmd}` : '# test: <comando de pruebas del proyecto>',
+      // entrecomillado JSON: stk.summary lleva "· test: <cmd>" (con ": " embebido) y testCmd es un comando libre;
+      // sin comillas, un ": " interno rompe parsers YAML conformes. JSON.stringify → string YAML válida y escapada.
+      `stack: ${JSON.stringify(stk.summary || 'desconocido')}`,
+      stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
       '',
     ].join('\n');
     writeFileSync(ymlPath, yml); metadata = true;
@@ -4554,7 +4565,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
       try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
-      timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: true });
+      timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: failed.length === 0, ...(failed.length ? { failureKind: 'tests-fail' } : {}) });
       currentInfo = null; writeTimeline('running');
       log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
       trail.push('test');
@@ -4594,9 +4605,16 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     const provName = mspec.provider === 'byok' ? 'qwen/LiteLLM' : mspec.provider === 'copilot' ? 'Copilot' : (mspec.provider || 'sesión');
     log(`🤖 ${phase}: lanzando con modelo=${mspec.model || '(de la sesión)'} · proveedor=${provName}`);
     // byok-hardfail-no-creds: si la fase pide "byok:" y NO hay credenciales, NO seguir contra el catálogo
-    // Copilot Business (gastaría AI Credits de pago sin consentimiento). Solo con el runner por defecto
-    // (un runAgent inyectado —tests/SDK— trae sus propias credenciales). Opt-in: "byokFallback": true.
-    if (runAgent === defaultRunAgent && mspec.provider === 'byok' && !byokCreds()
+    // Copilot Business (gastaría AI Credits de pago sin consentimiento). Invariante de GOBIERNO para los DOS
+    // runners de PRODUCCIÓN (spawn por defecto + SDK); un runAgent inyectado en tests (sin .kind) queda exento
+    // porque trae sus propias credenciales. El spawn lee byokCreds()→COPILOT_PROVIDER_*; el SDK acepta ADEMÁS
+    // CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY → el chequeo de creds es por-runner para no dar falso BLOCKED.
+    // Opt-in para caer a Copilot: "byokFallback": true (o env CONDUCTOR_BYOK_FALLBACK=1).
+    const isProdRunner = runAgent === defaultRunAgent || runAgent.kind === 'sdk';
+    const hasByokCreds = runAgent.kind === 'sdk'
+      ? (!!byokCreds() || !!(process.env.CONDUCTOR_MODEL_URL && process.env.CONDUCTOR_API_KEY))
+      : !!byokCreds();
+    if (isProdRunner && mspec.provider === 'byok' && !hasByokCreds
         && cfg.byokFallback !== true && process.env.CONDUCTOR_BYOK_FALLBACK !== '1') {
       const reason = `la fase "${phase}" pidió byok:${mspec.model} pero no hay credenciales BYOK (ni env COPILOT_PROVIDER_* ni ~/.conductor/byok.json). Para no gastar AI Credits de pago sin querer, el run se DETIENE. Arregla con \`conductor byok save\`, o permite el fallback con "byokFallback": true en openspec/conductor.json.`;
       log(`⛔ BLOCKED: ${reason}`);
@@ -5047,6 +5065,7 @@ __M['sdk-runner'] = (function(){
 // Interface: misma que defaultRunAgent de drive.mjs → ({phase, role, prompt, cwd, timeoutMs, model}) ⇒ {code, out|err}
 // + .close() para parar el cliente al acabar el run (drive lo llama si existe).
 
+const { decryptSecret } = __M['secret'];
 const requireNode = createRequire(import.meta.url);
 
 // localiza el runtime de Copilot del USUARIO (sin shippear los ~557MB): COPILOT_CLI_PATH manda; si no,
@@ -5157,8 +5176,12 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
   if (!base || !apiKey) {
     try {
       const { readFileSync } = await import('node:fs'); const { homedir } = await import('node:os'); const { join } = await import('node:path');
-      const j = JSON.parse(readFileSync(join(homedir(), '.conductor', 'byok.json'), 'utf8'));
-      base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || j.apiKey || '';
+      // misma resolución que drive.mjs/serve.mjs: honra CONDUCTOR_HOME (override en tests/multi-home) y descifra
+      // apiKeyEnc (DPAPI, formato nuevo). Antes: HOME hardcodeado + solo apiKey en claro → rompía BYOK fuente única.
+      const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+      const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
+      const dec = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : '');
+      base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || dec || '';
     } catch {}
   }
   const provider = base && apiKey ? { type: 'openai', baseUrl: base.endsWith('/v1') ? base : base + '/v1', apiKey } : undefined;
@@ -5169,6 +5192,11 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
       let m = model || '', sessProvider = provider;
       if (m.startsWith('copilot:')) { m = m.slice(8).trim(); sessProvider = undefined; }
       else if (m.startsWith('byok:')) m = m.slice(5).trim();
+      // hardfail BYOK: una fase "byok:" SIN provider resuelto crearía la sesión contra el catálogo Copilot
+      // Business (gasta AI Credits en silencio). Se rechaza con error — el driver lo trata como fallo de fase.
+      if ((model || '').startsWith('byok:') && !sessProvider) {
+        return { code: -1, err: `fase byok:${m} sin credenciales BYOK (CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY, COPILOT_PROVIDER_*, o ~/.conductor/byok.json) — no se cae a Copilot Business para no gastar AI Credits` };
+      }
       // onPermissionRequest: approveAll = el equivalente del --allow-all-tools del runner spawn (sin él,
       // las peticiones de permiso de tools quedan PENDIENTES y la sesión no escribe ficheros — verificado).
       const session = await client.createSession({
@@ -5507,7 +5535,7 @@ function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1' }) {
       // ver un artefacto del change (proposal/spec/...) — confinado al changeDir y nunca .conductor
       const u = new URL(req.url, 'http://x');
       const rel = u.searchParams.get('p') || '';
-      const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel)); // H2: confina .conductor (case-insens) + scrub
+      const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel), process.env, scrubExtra()); // H2: confina .conductor (case-insens) + scrub + key BYOK (virtual-key LiteLLM que solo vive en byok.json)
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/diff')) {
@@ -5520,7 +5548,7 @@ function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1' }) {
       // CRUDO del modelo por fase ("lo que verías sin conductor") — fichero whitelisteado en .conductor/raw/
       const u = new URL(req.url, 'http://x');
       const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-      let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8')); } catch {}
+      let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/state')) {
@@ -5824,7 +5852,10 @@ const isSdd = (root) => existsSync(join(root, 'openspec', 'config.yaml')) || exi
 const BYOK_ENV_KEYS = ['COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS', 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS', 'CONDUCTOR_API_KEY', 'CONDUCTOR_MODEL_URL'];
 function byokChildEnv(baseEnv) {
   const env = { ...baseEnv };
-  try { if (existsSync(join(CONDUCTOR_HOME(), 'byok.json'))) for (const k of BYOK_ENV_KEYS) delete env[k]; } catch {}
+  // strip SOLO si byok.json produce credenciales USABLES (parse + descifrado DPAPI + baseUrl/apiKey). Un byok.json
+  // corrupto/vacío/ilegible (p.ej. DPAPI fuera de Windows) NO debe vaciar el env de la sesión: si se strippease por
+  // mera EXISTENCIA, dejaría al hijo sin creds y rompería un BYOK que de otro modo funcionaría con las COPILOT_PROVIDER_*.
+  try { if (byokCredsLocal()) for (const k of BYOK_ENV_KEYS) delete env[k]; } catch {}
   return env;
 }
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
@@ -6085,6 +6116,11 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso', url: `/run/${proj.id}/${b.name}` });
         runs.set(k, { child: null, pending: null, stopRequested: false, exited: false }); // RESERVA síncrona: cierra el TOCTOU (dos POST casi a la vez pasarían el check de arriba antes del await de abajo → dos drivers)
+        // anti-reserva-huérfana: toda la ruta reserva→launch va en try/finally. Si un await intermedio (availableModels,
+        // resolvePlan…) lanza, la reserva se LIBERA; si no, quedaría un placeholder child:null → 409 PERMANENTE al
+        // relanzar/reanudar + /api/shutdown bloqueado (cree que hay un run vivo). launched=true solo tras launch() OK.
+        let launched = false;
+        try {
         // model-validation-before-send: rechaza modelos byok: inexistentes ANTES de gastar minutos hasta el timeout
         const av = await availableModels(registry);
         const mv = checkByokModels(b.models, av.byok, av.byokCreds);
@@ -6116,7 +6152,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
         const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
         launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
+        launched = true;
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
+        } finally { if (!launched) runs.delete(k); } // libera la reserva ante CUALQUIER throw o return-temprano de rechazo
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
         const b = await readBody(req);
@@ -6202,12 +6240,12 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         if (action === 'raw') {
           // CRUDO del modelo por fase ("lo que verías sin conductor"): fichero whitelisteado en .conductor/raw/
           const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-          let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8')); } catch {}
+          let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'artifact') {
           const rel = u.searchParams.get('p') || '';
-          const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel)); // H2: confina .conductor (case-insens) + scrub
+          const body = touchesPlumbing(rel) ? null : scrubSecrets(safeRead(changeDir, rel), process.env, scrubExtra()); // H2: confina .conductor (case-insens) + scrub + key BYOK (virtual-key LiteLLM que solo vive en byok.json)
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'diff') {
@@ -6230,7 +6268,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           const r2 = parseEvents(join(changeDir, '.conductor', 'events.jsonl'), opts) || parseOtelSession(join(changeDir, '.conductor', 'otel'), opts);
           if (!r2) return json(404, { ok: false, error: 'sin traza de sesión (ni events.jsonl ni spans OTel) en este run' });
           // scrub: la traza del CLI puede contener secretos que el agente ecoó → redactar al servir (auditoría)
-          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }); return res.end(scrubSecrets(JSON.stringify(r2)));
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }); return res.end(scrubSecrets(JSON.stringify(r2), process.env, scrubExtra()));
         }
         if (action === 'aiact') {
           try { return html(renderAiact(changeDir)); }
@@ -7140,4 +7178,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: bc8e6f52cedab644723029494b3cbb1bc843a3c3a268ebc537e3636f2605fcbd
+// build-inputs-sha256: fb03060e7440db89b569f4a6e31188376d729c0ad26d18ee30b4af80ce5f9d93

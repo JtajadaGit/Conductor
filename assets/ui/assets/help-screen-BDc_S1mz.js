@@ -1,4 +1,4 @@
-import{f as e,l as t,m as n,t as r}from"./index-CqR8Smb2.js";var i=class extends t{render(){return n`
+import{f as e,l as t,m as n,t as r}from"./index-BFh0zeEk.js";var i=class extends t{render(){return n`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo.</p>
 
