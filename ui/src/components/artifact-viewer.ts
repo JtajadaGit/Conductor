@@ -23,6 +23,7 @@ export class ArtifactViewer extends CElement {
   @state() private pendingClose = false; // se intentó cerrar con cambios sin guardar → pide confirmar (no se pierde un edit)
   private apiBase = '/api/';
   private path = '';
+  private vkind: 'art' | 'diff' = 'art'; // 'diff' → render coloreado (verde/rojo) en vez de texto plano
   private opener: HTMLElement | null = null;
   private loadGen = 0; // token por apertura: una carga que termina TARDE (otra apertura ya en curso) no pisa el contenido actual
 
@@ -39,7 +40,7 @@ export class ArtifactViewer extends CElement {
 
   private onOpen = (e: Event): void => {
     const d = (e as CustomEvent<ViewDetail>).detail;
-    this.apiBase = d.apiBase; this.path = d.path;
+    this.apiBase = d.apiBase; this.path = d.path; this.vkind = d.kind;
     this.editable = d.kind === 'art' && /\.md$/.test(d.path);
     this.vbTitle = (d.kind === 'art' ? '📄 ' : '± ') + d.path;
     this.opener = (document.activeElement as HTMLElement) ?? null;
@@ -92,6 +93,20 @@ export class ArtifactViewer extends CElement {
     } catch { this.saveErr = 'No se pudo conectar con el servidor local. Sigues editando.'; }
   }
 
+  // clasifica una línea de diff unificado → clase de color. Orden: meta (+++/---) ANTES que add/del (+/-).
+  private diffClass(line: string): string {
+    if (line.startsWith('@@')) return 'dl-hunk';
+    if (/^(\+\+\+|---|diff |index |new file|deleted file|rename |similarity |old mode|new mode|Binary )/.test(line)) return 'dl-meta';
+    if (line.startsWith('+')) return 'dl-add';
+    if (line.startsWith('-')) return 'dl-del';
+    return 'dl-ctx';
+  }
+  // diff COLOREADO: una línea por bloque, fondo tintado por tipo (idiom de verdict: añadido=teal, quitado=rojo).
+  private diffBody(): TemplateResult {
+    const lines = this.content.split('\n');
+    return html`<div class="diffview" aria-label="diff coloreado">${lines.map((l) => html`<div class="dl ${this.diffClass(l)}">${l || ' '}</div>`)}</div>`;
+  }
+
   override render(): TemplateResult | typeof nothing {
     if (!this.open) return nothing;
     return html`
@@ -107,6 +122,8 @@ export class ArtifactViewer extends CElement {
           ? loader('Cargando documento')
           : this.editing
           ? html`<textarea class="vb-edit" aria-label="contenido editable" @input=${(e: Event) => { this.dirty = (e.target as HTMLTextAreaElement).value !== this.content; }}>${this.content}</textarea>${this.saveErr ? html`<div class="errline" role="alert" style="margin-top:.4rem">${this.saveErr}</div>` : nothing}${this.pendingClose ? html`<div class="errline" role="alert" style="margin-top:.4rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap"><span>Tienes cambios sin guardar.</span><button class="btn sm" @click=${() => void this.save()}>Guardar</button><button class="btn sm sec" @click=${() => this.discardClose()}>Descartar</button></div>` : nothing}`
+          : this.vkind === 'diff'
+          ? this.diffBody()
           : html`<pre class="vb-c">${this.content}</pre>`}
       </div>`;
   }
