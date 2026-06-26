@@ -109,14 +109,16 @@ app-sidebar {
 /* contenido CENTRADO con ancho de lectura cómodo + respiración (espacios respetados) */
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 main.content { max-width: 1040px; margin: 0 auto; width: 100%; padding: 2.2rem clamp(1.2rem, 4vw, 2.8rem) 5rem; animation: fadeIn .4s ease both; }
-.apphdr { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: .2rem 0 1.3rem; }
+.apphdr { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: var(--sp-1) 0 var(--sp-2); }
 .apphdr h1 { animation: slideUp .3s cubic-bezier(.22,1,.36,1) .05s both; }
+/* subtítulo bajo la cabecera: clase compartida (sustituye el hack de margin-top negativo, duplicado y frágil) */
+.subhead { margin: 0 0 var(--sp-5); font-size: .82rem; color: var(--tx2); }
 
-/* legibilidad y tamaños más naturales (subir los textos diminutos y dar aire) */
-.cards { gap: .8rem; margin-bottom: 1.6rem; }
+/* legibilidad y tamaños más naturales (subir los textos diminutos y dar aire).
+   NOTA: .cards y .ph (layout) viven AHORA en theme.css / components.css con tokens --sp-* (una sola fuente de verdad);
+   aquí quedan SOLO los ajustes de tamaño de fuente, que no duplican geometría. */
 .card small { font-size: .68rem; }
 .card span, .card b { font-size: 1.15rem; }
-.ph { padding: .85rem 1.1rem .85rem 2.35rem; margin: .55rem 0; }
 .ph .name { font-size: .98rem; }
 .ph .role, .run-row .rq { font-size: .84rem; }
 .ph .right, .run-row .meta { font-size: .82rem; }
@@ -127,11 +129,11 @@ main.content { max-width: 1040px; margin: 0 auto; width: 100%; padding: 2.2rem c
 h1 { font-size: 1.55rem; }
 .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
 .muted { color: var(--tx2); }
-.row-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin: .2rem 0 1rem; }
+.row-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin: var(--sp-1) 0 var(--sp-4); }
 
 /* controles flotantes consistentes: chip cuadrado sutil, foco accesible. Toggle de tema arriba-derecha;
    alternar sidebar arriba-izquierda (solo móvil). */
-.sbtog, .theme-toggle { position: fixed; top: .8rem; z-index: 30; display: inline-grid; place-items: center; width: 2.1rem; height: 2.1rem; border-radius: 9px; background: var(--card); border: 1px solid var(--bd); color: var(--tx2); cursor: pointer; box-shadow: var(--sh); transition: color .15s, border-color .15s; }
+.sbtog, .theme-toggle { position: fixed; top: .8rem; z-index: 30; display: inline-grid; place-items: center; width: 2.5rem; height: 2.5rem; border-radius: 9px; background: var(--card); border: 1px solid var(--bd); color: var(--tx2); cursor: pointer; box-shadow: var(--sh); transition: color .15s, border-color .15s; }
 .sbtog { left: .8rem; display: none; }
 .theme-toggle { right: .9rem; padding: 0; }
 .sbtog:hover, .theme-toggle:hover { color: var(--accent); border-color: var(--accent); }

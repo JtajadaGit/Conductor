@@ -39,7 +39,9 @@ export interface CurrentPhase {
   lastError?: string | null;
 }
 
-export interface PendingDecision { before: string; role: string; findings?: string[]; }
+export interface DecisionFinding { message: string; severity?: string; file?: string; }
+// findings: string (compat con estados viejos/mock) u objeto estructurado (severidad + fichero del hallazgo del gate)
+export interface PendingDecision { before: string; role: string; findings?: Array<string | DecisionFinding>; }
 export interface Approval { phase: string; at: string; via: string; note?: boolean; }
 
 export interface CostEntry { in: number; out: number; phases: number; }

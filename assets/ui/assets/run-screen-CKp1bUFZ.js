@@ -1,4 +1,4 @@
-import{a as e,d as t,f as n,i as r,l as i,m as a,n as o,o as s,p as c,s as l,t as u,u as d}from"./index-BFh0zeEk.js";import"./status-pill-D1qF3cpU.js";var f=class{constructor(e,t,n){this.base=e,this.onState=t,this.onError=n,this.timer=null,this.abort=null,this.lastHash=``,this.stopped=!0}start(){this.stopped=!1,this.lastHash=``,this.tick()}stop(){this.stopped=!0,this.timer!=null&&(clearTimeout(this.timer),this.timer=null),this.abort&&=(this.abort.abort(),null)}schedule(e){this.stopped||(this.timer=setTimeout(()=>void this.tick(),e))}async tick(){if(!this.stopped){this.abort=new AbortController;try{let e=await(await fetch(this.base+`state`,{signal:this.abort.signal})).json();if(this.stopped)return;if(!e||typeof e!=`object`||Array.isArray(e)){this.schedule(3e3);return}let t={...e,phases:Array.isArray(e.phases)?e.phases:[]},n=this.hashOf(t);if(n!==this.lastHash&&(this.lastHash=n,this.onState(t)),t.done){this.stop();return}this.schedule(t.pending?5e3:2e3)}catch(e){if(this.stopped)return;e.name!==`AbortError`&&this.onError?.(e),this.schedule(3e3)}}}hashOf(e){let{now:t,...n}=e;return JSON.stringify(n)}},p={explore:`🔍`,propose:`📝`,clarify:`❓`,spec:`📐`,design:`🧩`,tasks:`🗂️`,apply:`🛠️`,fix:`🔧`,verify:`🛡️`};function m(e){return p[e]??`•`}function h(e,t){let n=(e??``).toLowerCase();return t===`byok`||/qwen|deepseek/.test(n)?`🔑`:/opus/.test(n)?`🧠`:/sonnet/.test(n)?`🎼`:/haiku/.test(n)?`⚡`:/gpt/.test(n)?`🤖`:`💼`}var g=class extends i{constructor(...e){super(...e),this.apiBase=`/api/`,this.phase=``,this.text=``,this.loaded=!1}async load(){if(!this.loaded){this.loaded=!0,this.text=`…`;try{let e=await(await fetch(this.apiBase+`raw?phase=`+encodeURIComponent(this.phase))).text();this.text=e&&e!==`no encontrado`?e.trim():`No se registró salida del modelo para esta fase.`}catch{this.text=`No se pudo cargar la salida del modelo.`}}}render(){return a`<details class="raw" @toggle=${e=>{e.target.open&&this.load()}}>
+import{a as e,d as t,f as n,i as r,l as i,m as a,n as o,o as s,p as c,s as l,t as u,u as d}from"./index-BHq7yQoT.js";import"./status-pill-Ri5jutnL.js";var f=class{constructor(e,t,n){this.base=e,this.onState=t,this.onError=n,this.timer=null,this.abort=null,this.lastHash=``,this.stopped=!0}start(){this.stopped=!1,this.lastHash=``,this.tick()}stop(){this.stopped=!0,this.timer!=null&&(clearTimeout(this.timer),this.timer=null),this.abort&&=(this.abort.abort(),null)}schedule(e){this.stopped||(this.timer=setTimeout(()=>void this.tick(),e))}async tick(){if(!this.stopped){this.abort=new AbortController;try{let e=await(await fetch(this.base+`state`,{signal:this.abort.signal})).json();if(this.stopped)return;if(!e||typeof e!=`object`||Array.isArray(e)){this.schedule(3e3);return}let t={...e,phases:Array.isArray(e.phases)?e.phases:[]},n=this.hashOf(t);if(n!==this.lastHash&&(this.lastHash=n,this.onState(t)),t.done){this.stop();return}this.schedule(t.pending?5e3:2e3)}catch(e){if(this.stopped)return;e.name!==`AbortError`&&this.onError?.(e),this.schedule(3e3)}}}hashOf(e){let{now:t,...n}=e;return JSON.stringify(n)}},p={explore:`🔍`,propose:`📝`,clarify:`❓`,spec:`📐`,design:`🧩`,tasks:`🗂️`,apply:`🛠️`,fix:`🔧`,verify:`🛡️`};function m(e){return p[e]??`•`}function h(e,t){let n=(e??``).toLowerCase();return t===`byok`||/qwen|deepseek/.test(n)?`🔑`:/opus/.test(n)?`🧠`:/sonnet/.test(n)?`🎼`:/haiku/.test(n)?`⚡`:/gpt/.test(n)?`🤖`:`💼`}var g=class extends i{constructor(...e){super(...e),this.apiBase=`/api/`,this.phase=``,this.text=``,this.loaded=!1}async load(){if(!this.loaded){this.loaded=!0,this.text=`…`;try{let e=await(await fetch(this.apiBase+`raw?phase=`+encodeURIComponent(this.phase))).text();this.text=e&&e!==`no encontrado`?e.trim():`No se registró salida del modelo para esta fase.`}catch{this.text=`No se pudo cargar la salida del modelo.`}}}render(){return a`<details class="raw" @toggle=${e=>{e.target.open&&this.load()}}>
       <summary>Salida sin procesar del modelo</summary>
       <pre class="rawpre">${(this.text||`…`).trim()||`…`}</pre>
     </details>`}};u([t()],g.prototype,`apiBase`,void 0),u([t()],g.prototype,`phase`,void 0),u([d()],g.prototype,`text`,void 0),u([d()],g.prototype,`loaded`,void 0),g=u([n(`raw-output`)],g);var _=class extends i{constructor(...e){super(...e),this.cost=null}render(){let e=this.cost?.byModel;if(!e||!Object.keys(e).length)return c;let t=Object.values(e).reduce((e,t)=>e+(t.in||0),0)||1;return a`<h2 class="sect">Coste por modelo</h2>
@@ -12,14 +12,14 @@ import{a as e,d as t,f as n,i as r,l as i,m as a,n as o,o as s,p as c,s as l,t a
       <option value="">Mantener el modelo de esta fase</option>
       ${t.length?a`<optgroup label="Copilot">${t.map(e=>a`<option value="copilot:${e}">${e}</option>`)}</optgroup>`:c}
       ${r&&n.length?a`<optgroup label="qwen · LiteLLM">${n.map(e=>a`<option value="byok:${e}">${e}</option>`)}</optgroup>`:c}
-    </select></label>`}async approve(e){await this.api.continue({selected:e?[...this.selected]:void 0,note:this.note||void 0,model:this.hotModel||void 0}),this.note=``,this.hotModel=``,this.selected=new Set}toggleSel(e,t){let n=new Set(this.selected);t?n.add(e):n.delete(e),this.selected=n}async rollback(e){confirm(`¿Deshacer "${e}"? Se restaurarán los archivos al estado previo a esta fase. La rama de git no se modifica.`)&&await this.api.rollback(e)}viewDiff(e){document.dispatchEvent(new CustomEvent(`cdr-view`,{detail:{apiBase:this.apiBase,kind:`diff`,path:e}}))}runPath(){return location.pathname.replace(/\/+$/,``)}dashboardHref(){return this.projId?`/artifact/${this.projId}/${this.change}/dashboard.html`:`/artifact/${this.change}/dashboard.html`}sessionHref(){return this.projId?`/session/${this.projId}/${this.change}`:`/session/${this.change}`}sign(e){return e===`create`?`+`:e===`delete`?`−`:`±`}render(){if(this.err&&!this.s)return a`<p class="errline">Error: ${this.err}</p>`;let t=this.s;return t?a`
+    </select></label>`}async approve(e){await this.api.continue({selected:e?[...this.selected]:void 0,note:this.note||void 0,model:this.hotModel||void 0}),this.note=``,this.hotModel=``,this.selected=new Set}toggleSel(e,t){let n=new Set(this.selected);t?n.add(e):n.delete(e),this.selected=n}async rollback(e){confirm(`¿Deshacer "${e}"? Se restaurarán los archivos al estado previo a esta fase. La rama de git no se modifica.`)&&await this.api.rollback(e)}viewDiff(e){document.dispatchEvent(new CustomEvent(`cdr-view`,{detail:{apiBase:this.apiBase,kind:`diff`,path:e}}))}viewArtifact(e){document.dispatchEvent(new CustomEvent(`cdr-view`,{detail:{apiBase:this.apiBase,kind:`art`,path:e}}))}runPath(){return location.pathname.replace(/\/+$/,``)}dashboardHref(){return this.projId?`/artifact/${this.projId}/${this.change}/dashboard.html`:`/artifact/${this.change}/dashboard.html`}sessionHref(){return this.projId?`/session/${this.projId}/${this.change}`:`/session/${this.change}`}sign(e){return e===`create`?`+`:e===`delete`?`−`:`±`}render(){if(this.err&&!this.s)return a`<p class="errline" role="alert">Error: ${this.err}</p>`;let t=this.s;return t?a`
       <div class="apphdr">
         <h1 class="trunc">${this.change||t.project||`run`}</h1>
-        <status-pill .verdict=${t.pending?`EN PAUSA`:t.verdict??`EN CURSO`}></status-pill>
+        <span role="status" aria-live="polite"><status-pill .verdict=${t.pending?`EN PAUSA`:t.verdict??`EN CURSO`}></status-pill></span>
       </div>
-      <p class="muted" style="margin:-.9rem 0 1.1rem;font-size:.82rem">${t.project||`—`}${t.branch?a` · ${t.branch}`:``}</p>
+      <p class="subhead">${t.project||`—`}${t.branch?a` · ${t.branch}`:``}</p>
       <div class="actbar">
-        <a class="btn sm" href=${this.sessionHref()}>Ver sesión</a>
+        <a class="btn sm sec" href=${this.sessionHref()}>Ver sesión</a>
         ${t.done&&e(t.verdict)!==`GREEN`?a`<button class="btn sm sec resume" @click=${()=>void this.api.resume()}>↻ Reanudar</button>`:c}
         ${t.hasDashboard?a`<a class="btn sm sec dash" href=${this.dashboardHref()} target="_blank">Informe</a>`:c}
         <a class="btn sm sec aiact" href=${this.apiBase+`aiact`} target="_blank">AI Act</a>
@@ -44,18 +44,22 @@ import{a as e,d as t,f as n,i as r,l as i,m as a,n as o,o as s,p as c,s as l,t a
       </div>
       ${this.fileList(t.files)}
       ${t.hasRaw?a`<raw-output .apiBase=${this.apiBase} .phase=${t.phase}></raw-output>`:c}
-      <div style="margin-top:.5rem"><a class="btn sm sec" href=${this.runPath()}>← volver</a></div>
-    </div>`:c}pendingCard(e){let t=e.findings??[];return a`<section class="decision" role="status" aria-live="polite">
+      <div style="margin-top:var(--sp-2)"><a class="btn sm sec" href=${this.runPath()}>← volver</a></div>
+    </div>`:c}pendingCard(e){let t=(e.findings??[]).map(e=>typeof e==`string`?{message:e}:e);return a`<section class="decision">
       <header class="decision-head">
         <span class="decision-led" aria-hidden="true"></span>
         <div class="decision-titles">
-          <span class="decision-title">Decisión del revisor</span>
-          <span class="decision-sub">Antes de <b>${e.before}</b> · ${t.length?`selecciona los hallazgos a corregir o ajusta la fase`:`revisa y aprueba para continuar`}</span>
+          <h2 class="decision-title">Decisión del revisor</h2>
+          <span class="decision-sub" role="status" aria-live="polite">Antes de <b>${e.before}</b> · ${t.length?`selecciona los hallazgos a corregir o ajusta la fase`:`revisa y aprueba para continuar`}</span>
         </div>
       </header>
       <div class="decision-body">
         ${t.length?a`<ul class="decision-findings">${t.map((e,t)=>a`
-          <li><label><input type="checkbox" .checked=${this.selected.has(t)} @change=${e=>this.toggleSel(t,e.target.checked)}> <span>${e}</span></label></li>`)}</ul>`:c}
+          <li>
+            <label><input type="checkbox" .checked=${this.selected.has(t)} @change=${e=>this.toggleSel(t,e.target.checked)}>
+              <span class="fnd">${e.severity?a`<span class="sev ${e.severity===`error`?`error`:`aviso`}">${e.severity===`error`?`error`:`aviso`}</span>`:c}${e.message}</span></label>
+            ${e.file?/\.(md|txt)$/.test(e.file)?a`<button type="button" class="lnk fnd-file" title="ver ${e.file}" @click=${()=>this.viewArtifact(e.file)}>${e.file}</button>`:a`<code class="fnd-file">${e.file}</code>`:c}
+          </li>`)}</ul>`:c}
         <div class="pend-controls">
           <label class="fl" style="flex:1;min-width:14rem">Nota (opcional)<textarea class="pend-note" rows="2" .value=${this.note} @input=${e=>{this.note=e.target.value}} placeholder="Instrucción para esta fase (opcional)"></textarea></label>
           ${this.hotModelSelect()}
@@ -74,7 +78,7 @@ import{a as e,d as t,f as n,i as r,l as i,m as a,n as o,o as s,p as c,s as l,t a
       <div class="rail">
         ${e.phases.map(e=>this.phaseCard(e))}
         ${e.current?this.currentCard(e.current,e.now):c}
-        ${n.map(e=>a`<div class="ph"><div class="row"><span class="name muted">○ ${m(e)} ${e}</span></div></div>`)}
+        ${n.map(e=>a`<div class="ph todo"><div class="row"><span class="name muted">○ ${m(e)} ${e}</span></div></div>`)}
       </div>
     `}fileList(e){return e?.length?a`<details class="files"><summary>${e.length} fichero(s)</summary><ul>
       ${e.map(e=>a`<li><span class="k ${e.k}">${this.sign(e.k)}</span> <button class="lnk" @click=${()=>this.viewDiff(e.p)}>${e.p}</button></li>`)}
@@ -95,7 +99,7 @@ import{a as e,d as t,f as n,i as r,l as i,m as a,n as o,o as s,p as c,s as l,t a
       </div>
       ${this.fileList(e.files)}
       ${this.phaseContext(e)}
-      ${e.phase===`apply`||e.phase===`fix`?a`<div style="margin-top:.4rem"><button class="rollbtn" @click=${()=>void this.rollback(e.phase)}>↩ Deshacer</button></div>`:c}
+      ${e.phase===`apply`||e.phase===`fix`?a`<div style="margin-top:var(--sp-2)"><button class="rollbtn" @click=${()=>void this.rollback(e.phase)}>↩ Deshacer</button></div>`:c}
       ${e.hasRaw?a`<raw-output .apiBase=${this.apiBase} .phase=${e.phase}></raw-output>`:c}
       ${e.lastError?a`<div class="errline">${e.lastError}</div>`:c}
     </div>`}currentCard(e,t){let n=e.timeoutMs?Math.min(95,Math.round((t-e.startedAt)/e.timeoutMs*100)):40;return a`<div class="ph now">

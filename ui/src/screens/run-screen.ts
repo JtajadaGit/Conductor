@@ -3,7 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { RunPoller } from '../api/poller';
-import type { RunState, Phase, CurrentPhase, PendingDecision, FileChange, ModelsResponse } from '../api/types';
+import type { RunState, Phase, CurrentPhase, PendingDecision, DecisionFinding, FileChange, ModelsResponse } from '../api/types';
 import { fmt, secs, verdictClass } from '../lib/format';
 import { loader } from '../lib/loader';
 import { phaseIcon, modelIcon } from '../lib/icons';
@@ -72,6 +72,9 @@ export class RunScreen extends CElement {
   private viewDiff(path: string): void {
     document.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'diff', path } }));
   }
+  private viewArtifact(path: string): void {
+    document.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'art', path } }));
+  }
   private runPath(): string { return location.pathname.replace(/\/+$/, ''); }
   private dashboardHref(): string {
     return this.projId ? `/artifact/${this.projId}/${this.change}/dashboard.html` : `/artifact/${this.change}/dashboard.html`;
@@ -80,17 +83,17 @@ export class RunScreen extends CElement {
   private sign(k: string): string { return k === 'create' ? '+' : k === 'delete' ? '−' : '±'; }
 
   override render(): TemplateResult {
-    if (this.err && !this.s) return html`<p class="errline">Error: ${this.err}</p>`;
+    if (this.err && !this.s) return html`<p class="errline" role="alert">Error: ${this.err}</p>`;
     const s = this.s;
     if (!s) return loader('Cargando run');
     return html`
       <div class="apphdr">
         <h1 class="trunc">${this.change || s.project || 'run'}</h1>
-        <status-pill .verdict=${s.pending ? 'EN PAUSA' : (s.verdict ?? 'EN CURSO')}></status-pill>
+        <span role="status" aria-live="polite"><status-pill .verdict=${s.pending ? 'EN PAUSA' : (s.verdict ?? 'EN CURSO')}></status-pill></span>
       </div>
-      <p class="muted" style="margin:-.9rem 0 1.1rem;font-size:.82rem">${s.project || '—'}${s.branch ? html` · ${s.branch}` : ''}</p>
+      <p class="subhead">${s.project || '—'}${s.branch ? html` · ${s.branch}` : ''}</p>
       <div class="actbar">
-        <a class="btn sm" href=${this.sessionHref()}>Ver sesión</a>
+        <a class="btn sm sec" href=${this.sessionHref()}>Ver sesión</a>
         ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm sec resume" @click=${() => void this.api.resume()}>↻ Reanudar</button>` : nothing}
         ${s.hasDashboard ? html`<a class="btn sm sec dash" href=${this.dashboardHref()} target="_blank">Informe</a>` : nothing}
         <a class="btn sm sec aiact" href=${this.apiBase + 'aiact'} target="_blank">AI Act</a>
@@ -125,23 +128,32 @@ export class RunScreen extends CElement {
       </div>
       ${this.fileList(p.files)}
       ${p.hasRaw ? html`<raw-output .apiBase=${this.apiBase} .phase=${p.phase}></raw-output>` : nothing}
-      <div style="margin-top:.5rem"><a class="btn sm sec" href=${this.runPath()}>← volver</a></div>
+      <div style="margin-top:var(--sp-2)"><a class="btn sm sec" href=${this.runPath()}>← volver</a></div>
     </div>`;
   }
 
   private pendingCard(pd: PendingDecision): TemplateResult {
-    const fnd = pd.findings ?? [];
-    return html`<section class="decision" role="status" aria-live="polite">
+    // hallazgos tolerantes: string (compat/estados viejos) u objeto {message, severity, file}. Se muestra la SEVERIDAD
+    // (error vs aviso — antes invisible, todos parecían igual de graves) y el FICHERO (clickable si es un artefacto del
+    // cambio) → el revisor decide qué corregir VIENDO qué es grave y dónde, sin bajar a la barra de fases.
+    const fnd: DecisionFinding[] = (pd.findings ?? []).map((f) => (typeof f === 'string' ? { message: f } : f));
+    return html`<section class="decision">
       <header class="decision-head">
         <span class="decision-led" aria-hidden="true"></span>
         <div class="decision-titles">
-          <span class="decision-title">Decisión del revisor</span>
-          <span class="decision-sub">Antes de <b>${pd.before}</b> · ${fnd.length ? 'selecciona los hallazgos a corregir o ajusta la fase' : 'revisa y aprueba para continuar'}</span>
+          <h2 class="decision-title">Decisión del revisor</h2>
+          <span class="decision-sub" role="status" aria-live="polite">Antes de <b>${pd.before}</b> · ${fnd.length ? 'selecciona los hallazgos a corregir o ajusta la fase' : 'revisa y aprueba para continuar'}</span>
         </div>
       </header>
       <div class="decision-body">
-        ${fnd.length ? html`<ul class="decision-findings">${fnd.map((mtxt, i) => html`
-          <li><label><input type="checkbox" .checked=${this.selected.has(i)} @change=${(e: Event) => this.toggleSel(i, (e.target as HTMLInputElement).checked)}> <span>${mtxt}</span></label></li>`)}</ul>` : nothing}
+        ${fnd.length ? html`<ul class="decision-findings">${fnd.map((f, i) => html`
+          <li>
+            <label><input type="checkbox" .checked=${this.selected.has(i)} @change=${(e: Event) => this.toggleSel(i, (e.target as HTMLInputElement).checked)}>
+              <span class="fnd">${f.severity ? html`<span class="sev ${f.severity === 'error' ? 'error' : 'aviso'}">${f.severity === 'error' ? 'error' : 'aviso'}</span>` : nothing}${f.message}</span></label>
+            ${f.file ? (/\.(md|txt)$/.test(f.file)
+              ? html`<button type="button" class="lnk fnd-file" title="ver ${f.file}" @click=${() => this.viewArtifact(f.file as string)}>${f.file}</button>`
+              : html`<code class="fnd-file">${f.file}</code>`) : nothing}
+          </li>`)}</ul>` : nothing}
         <div class="pend-controls">
           <label class="fl" style="flex:1;min-width:14rem">Nota (opcional)<textarea class="pend-note" rows="2" .value=${this.note} @input=${(e: Event) => { this.note = (e.target as HTMLTextAreaElement).value; }} placeholder="Instrucción para esta fase (opcional)"></textarea></label>
           ${this.hotModelSelect()}
@@ -176,7 +188,7 @@ export class RunScreen extends CElement {
       <div class="rail">
         ${s.phases.map((p) => this.phaseCard(p))}
         ${s.current ? this.currentCard(s.current, s.now) : nothing}
-        ${pending.map((ph) => html`<div class="ph"><div class="row"><span class="name muted">○ ${phaseIcon(ph)} ${ph}</span></div></div>`)}
+        ${pending.map((ph) => html`<div class="ph todo"><div class="row"><span class="name muted">○ ${phaseIcon(ph)} ${ph}</span></div></div>`)}
       </div>
     `;
   }
@@ -215,7 +227,7 @@ export class RunScreen extends CElement {
       </div>
       ${this.fileList(p.files)}
       ${this.phaseContext(p)}
-      ${(p.phase === 'apply' || p.phase === 'fix') ? html`<div style="margin-top:.4rem"><button class="rollbtn" @click=${() => void this.rollback(p.phase)}>↩ Deshacer</button></div>` : nothing}
+      ${(p.phase === 'apply' || p.phase === 'fix') ? html`<div style="margin-top:var(--sp-2)"><button class="rollbtn" @click=${() => void this.rollback(p.phase)}>↩ Deshacer</button></div>` : nothing}
       ${p.hasRaw ? html`<raw-output .apiBase=${this.apiBase} .phase=${p.phase}></raw-output>` : nothing}
       ${p.lastError ? html`<div class="errline">${p.lastError}</div>` : nothing}
     </div>`;

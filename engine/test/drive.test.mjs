@@ -249,10 +249,12 @@ await test('drive(Path X): FIX DIRIGIDO — el humano elige qué hallazgos del g
   });
   const fixPause = pauses.find((p) => p.before === 'fix');
   assert(fixPause && Array.isArray(fixPause.findings) && fixPause.findings.length >= 2, 'la pausa de fix expone los hallazgos del gate');
+  assert(fixPause.findings.every((f) => f && typeof f.message === 'string'), 'los hallazgos llegan ESTRUCTURADOS ({message, severity, file}) a la decisión humana');
   assert(seenFix.length >= 1, 'el fix se ejecutó');
   const prompt = seenFix[0];
-  assert(prompt.includes(fixPause.findings[0]), 'el hallazgo seleccionado SÍ va en el prompt');
-  assert(!prompt.includes(fixPause.findings[1]), 'el hallazgo NO seleccionado queda fuera (fix dirigido)');
+  // findings ahora ESTRUCTURADOS ({message, severity, file}) hacia la decisión humana → se compara por .message.
+  assert(prompt.includes(fixPause.findings[0].message), 'el hallazgo seleccionado SÍ va en el prompt');
+  assert(!prompt.includes(fixPause.findings[1].message), 'el hallazgo NO seleccionado queda fuera (fix dirigido)');
 });
 
 await test('drive(Path X): LOCK anti-duplicado — un 2º lanzamiento concurrente NO hace nada; lock liberado al acabar', async () => {

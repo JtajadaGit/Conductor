@@ -225,12 +225,12 @@ export class PanelScreen extends CElement {
   // estado "sin inicializar": un único CTA en vez de un formulario que lanzaría sobre un proyecto sin gobierno.
   private initPanel(active: ProjectSummary): TemplateResult {
     return html`
-      <div class="launch-init" style="padding:1rem 1.1rem;border:1px solid var(--bd);border-left:3px solid var(--accent);border-radius:8px;background:var(--accentbg);color:var(--tx)">
+      <div class="launch-init" style="padding:1rem 1.1rem;border:1px solid var(--bd);border-left:3px solid var(--accent);border-radius:var(--r);background:var(--accentbg);color:var(--tx)">
         <h2 style="margin:0 0 .3rem;font-size:1rem;font-weight:600">Este proyecto no está inicializado</h2>
         <p class="muted" style="margin:0 0 .25rem;font-size:.86rem"><strong style="font-weight:600">${active.name}</strong> aún no tiene SDD configurado. Inicialízalo para poder lanzar features con gobierno (spec · apply · verify).</p>
         <p class="muted" style="margin:0 0 .7rem;font-size:.78rem">Crea <code>openspec/</code> con la config del pipeline, el esquema y <code>.copilotignore</code> (ahorro de tokens). No toca tu código.</p>
         <button class="btn" ?disabled=${this.initBusy} @click=${() => void this.doInit()}>${this.initBusy ? 'Inicializando…' : 'Inicializar este proyecto'}</button>
-        ${this.initMsg ? html`<p style="margin:.55rem 0 0;font-size:.82rem;color:var(--bad)">${this.initMsg}</p>` : nothing}
+        ${this.initMsg ? html`<p role="alert" style="margin:.55rem 0 0;font-size:.82rem;color:var(--bad)">${this.initMsg}</p>` : nothing}
       </div>`;
   }
 
@@ -504,7 +504,7 @@ export class PanelScreen extends CElement {
         </details>` : nothing}
         ${this.byokForm()}
       </form>
-      ${this.error ? html`<p style="color:var(--bad)">${this.error}</p>` : nothing}
+      ${this.error ? html`<p role="alert" style="color:var(--bad)">${this.error}</p>` : nothing}
     `;
     // GATE DE INIT (coherencia gating==visibilidad): si el proyecto ACTIVO no está inicializado, se muestra el CTA
     // "Inicializar" en vez del formulario — no se ofrece lanzar sobre un proyecto sin gobierno.
@@ -512,7 +512,7 @@ export class PanelScreen extends CElement {
     const launchSurface = (active && active.openspec === false) ? this.initPanel(active) : launchForm;
     return html`
       <div class="apphdr"><h1>Dashboard</h1></div>
-      <p class="muted" style="margin:-.9rem 0 1.3rem;font-size:.82rem">
+      <p class="subhead">
         ${active ? html`Proyecto activo: <strong style="font-weight:600;color:var(--tx)">${active.name}</strong> <span style="opacity:.7">· ${active.root}</span>` : html`${this.projects.length} proyecto${this.projects.length === 1 ? '' : 's'}`}
         ${this.projects.length > 1 ? html` · <button type="button" @click=${() => { this.showAll = !this.showAll; }} style="background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline">${this.showAll ? 'ver solo este' : `ver todos (${this.projects.length})`}</button>` : nothing}
         · ${m.total} run${m.total === 1 ? '' : 's'}${this.showAll ? ' · todos' : ''}${this.version ? html` · <span title="versión del motor en uso">motor v${this.version}</span>` : nothing}

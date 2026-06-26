@@ -4523,7 +4523,9 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     if (onPause && (pauseEff.includes(phase) || phase === 'fix')) {
       currentInfo = null; writeTimeline('running');
       log(`⏸ pausado antes de "${phase}" — revisa${phase === 'fix' ? ' los hallazgos del gate y elige cuáles arreglar' : ' los artefactos'} y aprueba para continuar`);
-      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => f.message) : undefined }));
+      // findings ESTRUCTURADOS a la decisión humana (message + severidad + fichero): el revisor ve qué es ERROR vs
+      // aviso y a qué fichero apunta cada hallazgo (antes solo el texto). El `selected` sigue mapeando por índice.
+      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined }));
       if (pr === REVIEW_ABORT) { writeTimeline('STOPPED'); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
       // FIX DIRIGIDO: el humano elige qué hallazgos van al prompt del fix (default: todos)
@@ -5892,7 +5894,7 @@ const DEMO_STATE = () => ({
   complexity: 'medium', verdict: null, done: false, resumed: true, total_ms: 754000, now: Date.now(),
   plan: ['propose', 'spec', 'apply', 'verify'],
   current: null,
-  pending: { before: 'fix', role: 'coder', findings: ['REQ-HEADER: el scenario "shows title" no tiene test asociado', 'tasks.md: 2/3 tareas sin cerrar'] },
+  pending: { before: 'fix', role: 'coder', findings: [{ message: 'REQ-HEADER: el scenario "shows title" no tiene test asociado', severity: 'error', file: 'verify-report.md' }, { message: 'tasks.md: 2/3 tareas sin cerrar', severity: 'warning', file: 'tasks.md' }] },
   approvals: [{ phase: 'apply', at: new Date().toISOString(), via: 'human-web' }],
   phases: [
     { phase: 'propose', role: 'planner', model: 'qwen36-msc1', provider: 'byok', attempts: 1, ms: 61000, tokens: { in: 433000, out: 1300 }, files: [{ p: 'proposal.md', k: 'create' }], ok: true },
@@ -7178,4 +7180,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: fb03060e7440db89b569f4a6e31188376d729c0ad26d18ee30b4af80ce5f9d93
+// build-inputs-sha256: 42446bc3e30743fbd2cd6e93284caddf94fdc439689f4e4fac2ced14373d8860

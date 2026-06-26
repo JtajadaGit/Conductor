@@ -21,13 +21,15 @@
   --sh:0 1px 2px rgba(15,30,55,.06),0 2px 8px rgba(15,30,55,.05);
   --shlg:0 6px 22px rgba(15,30,55,.10),0 20px 48px rgba(15,30,55,.10);
   --r:11px;--r-sm:7px;
+  /* escala de espaciado 4px — UNA sola fuente de ritmo (sustituye los valores ad-hoc). --sp-section = área de respeto de sección */
+  --sp-1:.25rem;--sp-2:.5rem;--sp-3:.75rem;--sp-4:1rem;--sp-5:1.5rem;--sp-6:2rem;--sp-section:var(--sp-5);
   --font:"Inter var",Inter,-apple-system,"Segoe UI Variable","Segoe UI",ui-sans-serif,system-ui,sans-serif;
   --mono:ui-monospace,"Cascadia Code","JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
 }
 :root[data-theme="dark"]{
   color-scheme: dark;
   /* Dark corporativo: slate frío profundo (casi negro azulado), no gris cálido */
-  --tx:#e9eff6;--tx2:#9fb0c1;--tx3:#637282;
+  --tx:#e9eff6;--tx2:#9fb0c1;--tx3:#7a8798;
   --bg:#0b0f14;--bg2:#161d27;--card:#121922;
   --bd:#222d3a;--bd2:#19212b;
   --ok:#2eb792;--okbg:#0f2c26;--bad:#f0625a;--badbg:#2f1b1b;--warn:#dca044;--warnbg:#2c2413;
@@ -44,9 +46,9 @@ a:hover{text-decoration:underline}
 
 /* escala tipográfica deliberada */
 h1{font-size:1.5rem;line-height:1.15;letter-spacing:-.022em;font-weight:680;margin:.1rem 0}
-h2{font-size:1.02rem;letter-spacing:-.012em;font-weight:640;margin:1.6rem 0 .55rem}
+h2{font-size:1.02rem;letter-spacing:-.012em;font-weight:640;margin:var(--sp-section) 0 var(--sp-2)}
 /* eyebrow / etiqueta de sección: voz mono = "instrumento" */
-.sect{font:600 .68rem/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--tx3);margin:1.7rem 0 .6rem;display:flex;align-items:center;gap:.5rem}
+.sect{font:600 .68rem/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--tx3);margin:var(--sp-section) 0 var(--sp-2);display:flex;align-items:center;gap:.5rem}
 .sect::before{content:'';width:14px;height:2px;border-radius:2px;background:var(--accent);opacity:.85}
 code{background:var(--bg2);border:1px solid var(--bd2);border-radius:6px;padding:.05rem .36rem;font:.84em var(--mono);color:var(--tx)}
 .muted{color:var(--tx2)}
@@ -62,20 +64,23 @@ code{background:var(--bg2);border:1px solid var(--bd2);border-radius:6px;padding
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 /* TARJETAS de métrica — readout de instrumento (label mono, número tabular) */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:.65rem;margin:0 0 1.4rem}
-.card{border:1px solid var(--bd);border-radius:var(--r);padding:.85rem 1rem;background:var(--card);box-shadow:var(--sh);transition:border-color .15s,transform .15s,box-shadow .15s}
+/* flex (no grid auto-fit): las tarjetas de la última fila CRECEN para llenarla → una métrica suelta (p.ej. AI Credits) deja de quedar huérfana a 1/6 de ancho */
+.cards{display:flex;flex-wrap:wrap;gap:var(--sp-3);margin:0 0 var(--sp-5)}
+/* flex-grow llena la fila; max-width evita que una métrica SUELTA en la última fila se estire a barra de ancho completo (queda a tamaño normal, alineada a la izquierda) */
+.card{flex:1 1 140px;max-width:260px;border:1px solid var(--bd);border-radius:var(--r);padding:var(--sp-3) var(--sp-4);background:var(--card);box-shadow:var(--sh);transition:border-color .15s,transform .15s,box-shadow .15s}
 .card:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--bd));transform:translateY(-1px);box-shadow:var(--shlg)}
 .card small{display:block;color:var(--tx3);font:700 .62rem/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;margin-bottom:.5rem}
 .card span,.card b{font-size:1.34rem;font-weight:660;font-variant-numeric:tabular-nums;letter-spacing:-.015em;display:block;color:var(--tx)}
 .card.ok b,.card.ok span{color:var(--ok)} .card.no b,.card.no span{color:var(--bad)} .card.warn b{color:var(--warn)}
 
 /* BOTONES — acción primaria con el acento, secundarias silenciosas */
-.btn{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent);color:#fff;border:1px solid transparent;border-radius:var(--r-sm);padding:.46rem .9rem;font:600 .82rem var(--font);cursor:pointer;text-decoration:none;box-shadow:var(--sh);transition:filter .14s,transform .14s,background .14s}
-.btn:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:40px;background:var(--accent);color:#fff;border:1px solid transparent;border-radius:var(--r-sm);padding:.46rem .9rem;font:600 .82rem var(--font);cursor:pointer;text-decoration:none;box-shadow:var(--sh);transition:filter .14s,transform .14s,background .14s}
+.btn:not(:disabled):hover{filter:brightness(1.06);transform:translateY(-1px)}
 .btn:active{transform:translateY(0)}
+.btn:disabled,.btn[disabled]{opacity:.55;cursor:not-allowed;transform:none;filter:none;box-shadow:none}
 .btn.sec{background:var(--bg2);color:var(--tx);border-color:var(--bd);box-shadow:none}
-.btn.sec:hover{background:var(--card);border-color:var(--accent);filter:none}
-.btn.sm{padding:.3rem .62rem;font-size:.76rem}
+.btn.sec:not(:disabled):hover{background:var(--card);border-color:var(--accent);filter:none}
+.btn.sm{padding:.45rem .72rem;font-size:.76rem;min-height:36px}
 
 /* TABLAS */
 table{border-collapse:collapse;width:100%;font-size:.88em;background:var(--card);border:1px solid var(--bd);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}

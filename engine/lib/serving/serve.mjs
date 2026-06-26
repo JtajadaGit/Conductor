@@ -639,7 +639,7 @@ const DEMO_STATE = () => ({
   complexity: 'medium', verdict: null, done: false, resumed: true, total_ms: 754000, now: Date.now(),
   plan: ['propose', 'spec', 'apply', 'verify'],
   current: null,
-  pending: { before: 'fix', role: 'coder', findings: ['REQ-HEADER: el scenario "shows title" no tiene test asociado', 'tasks.md: 2/3 tareas sin cerrar'] },
+  pending: { before: 'fix', role: 'coder', findings: [{ message: 'REQ-HEADER: el scenario "shows title" no tiene test asociado', severity: 'error', file: 'verify-report.md' }, { message: 'tasks.md: 2/3 tareas sin cerrar', severity: 'warning', file: 'tasks.md' }] },
   approvals: [{ phase: 'apply', at: new Date().toISOString(), via: 'human-web' }],
   phases: [
     { phase: 'propose', role: 'planner', model: 'qwen36-msc1', provider: 'byok', attempts: 1, ms: 61000, tokens: { in: 433000, out: 1300 }, files: [{ p: 'proposal.md', k: 'create' }], ok: true },

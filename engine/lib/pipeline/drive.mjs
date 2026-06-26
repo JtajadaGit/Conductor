@@ -663,7 +663,9 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     if (onPause && (pauseEff.includes(phase) || phase === 'fix')) {
       currentInfo = null; writeTimeline('running');
       log(`⏸ pausado antes de "${phase}" — revisa${phase === 'fix' ? ' los hallazgos del gate y elige cuáles arreglar' : ' los artefactos'} y aprueba para continuar`);
-      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => f.message) : undefined }));
+      // findings ESTRUCTURADOS a la decisión humana (message + severidad + fichero): el revisor ve qué es ERROR vs
+      // aviso y a qué fichero apunta cada hallazgo (antes solo el texto). El `selected` sigue mapeando por índice.
+      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined }));
       if (pr === REVIEW_ABORT) { writeTimeline('STOPPED'); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
       // FIX DIRIGIDO: el humano elige qué hallazgos van al prompt del fix (default: todos)
