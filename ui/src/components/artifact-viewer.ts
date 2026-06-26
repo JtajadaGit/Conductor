@@ -101,6 +101,12 @@ export class ArtifactViewer extends CElement {
     if (line.startsWith('-')) return 'dl-del';
     return 'dl-ctx';
   }
+  // magnitud del cambio (líneas +/−) para la cabecera del visor — un vistazo a "cómo de grande es este diff".
+  private diffStats(): { add: number; del: number } {
+    let add = 0, del = 0;
+    for (const l of this.content.split('\n')) { const c = this.diffClass(l); if (c === 'dl-add') add++; else if (c === 'dl-del') del++; }
+    return { add, del };
+  }
   // diff COLOREADO: una línea por bloque, fondo tintado por tipo (idiom de verdict: añadido=teal, quitado=rojo).
   private diffBody(): TemplateResult {
     const lines = this.content.split('\n');
@@ -114,6 +120,7 @@ export class ArtifactViewer extends CElement {
       <div class="vb" role="dialog" aria-modal="true" aria-label=${this.vbTitle} tabindex="-1">
         <header>
           <span class="vb-t">${this.vbTitle}</span>
+          ${this.vkind === 'diff' && !this.loading && !this.editing ? (() => { const s = this.diffStats(); return html`<span class="vb-stat" title="líneas añadidas / quitadas"><span class="vb-add">+${s.add}</span><span class="vb-del">−${s.del}</span></span>`; })() : nothing}
           ${this.editing && this.dirty ? html`<span class="vb-dirty" title="cambios sin guardar" style="color:var(--warn);font:700 .64rem/1 var(--mono);letter-spacing:.04em">● sin guardar</span>` : nothing}
           ${this.editable ? html`<button class="btn sm sec" @click=${() => { if (this.editing) void this.save(); else { this.editing = true; this.saveErr = ''; this.dirty = false; } }} title=${this.editing ? 'Guardar (Ctrl/Cmd+S)' : 'Editar'}>${this.editing ? '💾 guardar' : '✏️ editar'}</button>` : nothing}
           <button class="btn sm sec" aria-label="cerrar" @click=${() => this.tryClose()}>✕</button>

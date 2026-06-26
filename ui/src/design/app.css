@@ -148,6 +148,10 @@ h1 { font-size: 1.55rem; }
 .vb { position: fixed; z-index: 41; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(860px, 92vw); max-height: 82vh; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--bd); border-radius: var(--r); box-shadow: var(--shlg); overflow: hidden; animation: scaleIn .22s cubic-bezier(.22,1,.36,1) both; }
 .vb header { display: flex; align-items: center; gap: .5rem; padding: .6rem .9rem; border-bottom: 1px solid var(--bd); }
 .vb .vb-t { font-weight: 600; font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+/* magnitud del diff en la cabecera (+añadidas / −quitadas) */
+.vb .vb-stat { display: inline-flex; gap: .45rem; font: 700 .72rem/1 var(--mono); font-variant-numeric: tabular-nums; flex: none; }
+.vb .vb-add { color: var(--ok); }
+.vb .vb-del { color: var(--bad); }
 .vb .vb-c, .vb .vb-edit { margin: 0; flex: 1; overflow: auto; padding: .8rem .95rem; font: .78rem/1.5 var(--mono); white-space: pre-wrap; border: 0; outline: 0; background: var(--card); color: var(--tx); resize: none; }
 /* DIFF coloreado (idiom de verdict): línea por bloque, fondo tintado full-bleed (padding en la línea). Revisar de un vistazo qué se añadió/quitó. */
 .vb .diffview { margin: 0; flex: 1; overflow: auto; padding: var(--sp-2) 0; font: .78rem/1.6 var(--mono); background: var(--card); color: var(--tx2); }
