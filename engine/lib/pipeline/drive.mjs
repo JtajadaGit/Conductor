@@ -601,7 +601,20 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   const t0run = Date.now();
   let currentInfo = null; // fase EN CURSO (para la mini-web): {phase, role, model, attempt, startedAt, timeoutMs, lastError}
   let testsResult = null; // verify POR EJECUCIÓN (opcional, post-gate): {ran, passed, failed[], cmds[]} — para timeline/UI
-  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  // GUARDRAIL working-tree (preflight): en un run FRESCO, ¿el árbol ya tenía cambios SIN COMMITEAR al arrancar? El diff
+  // de este run (git diff HEAD) los incluiría → atribución mezclada. NO bloquea (el experto manda); avisa + timeline.
+  // (En resume NO se chequea: el árbol sucio es el trabajo previo del propio run.)
+  let dirtyAtStart = false;
+  try {
+    if (!resumed && existsSync(join(projectRoot, '.git'))) {
+      const st = execFileSync('git', ['status', '--porcelain'], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true });
+      // cuenta SOLO cambios de CÓDIGO AJENOS: ignora los artefactos del propio conductor (openspec/ = workspace SDD que el
+      // run crea/edita, .conductor del run). Sin esto, el .conductor que el driver acaba de crear se vería como "sucio".
+      const dirty = st.split('\n').some((l) => { const p = l.slice(3).replace(/^"|"$/g, ''); return p && !p.startsWith('openspec/') && !p.startsWith('.conductor/'); });
+      if (dirty) { dirtyAtStart = true; log('⚠ el árbol de trabajo ya tenía cambios sin commitear al arrancar — el diff de este run los incluirá (no todos son del run)'); }
+    }
+  } catch {}
+  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };

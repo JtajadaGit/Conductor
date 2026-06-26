@@ -3,6 +3,7 @@ import { createRunServer, createProjectServer, listChanges, runState } from '../
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 
 process.env.CONDUCTOR_HOME = join(dirname(fileURLToPath(import.meta.url)), '.tmp-home');
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-serve');
@@ -182,7 +183,7 @@ await test('serve(seguridad): /api/launch rechaza ruta ARBITRARIA del FS (no eje
   mkdirSync(join(ROOT, 'openspec', 'changes'), { recursive: true });
   mkdirSync(ARB, { recursive: true });
   const spawned = [];
-  const srv = await createAppServer({ root: ROOT, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const srv = await createAppServer({ root: ROOT, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   const r = await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'x', name: 'sec-x', project: ARB }) });
   eq(r.status, 400, 'ruta sin openspec/.git → 400 (RCE/FS-arbitrario cerrado)');
   eq(spawned.length, 0, 'NO se spawneó ningún driver en la ruta arbitraria');
@@ -352,7 +353,7 @@ await test('serve(P0): /api/launch propaga el preset de gobierno al driver; uno 
   mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
   writeFileSync(join(R, 'openspec', 'conductor.json'), '{}'); // proyecto INICIALIZADO (gate de gobierno)
   const spawned = [];
-  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   // preset VÁLIDO viaja al spawn del driver (el dial deja de estar muerto en la UI)
   const l = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'migrar tabla', name: 'mig-x', complexity: 'complex', preset: 'migration' }) })).json();
   eq(l.ok, true);
@@ -376,7 +377,7 @@ await test('serve(checkboxes): /api/launch propaga el pipeline POR-RUN al driver
   mkdirSync(join(R, 'openspec', 'changes'), { recursive: true });
   writeFileSync(join(R, 'openspec', 'conductor.json'), '{}'); // proyecto INICIALIZADO (gate de gobierno)
   const spawned = [];
-  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   // las fases elegidas en los checkboxes viajan al driver; las desconocidas se SANEAN (allowlist KNOWN_PHASES)
   const l = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'pp-x', complexity: 'medium', pipeline: ['explore', 'spec', 'apply', 'verify', 'rm-rf', 'eval'] }) })).json();
   eq(l.ok, true);
@@ -397,7 +398,7 @@ await test('serve(test-toggle): /api/launch propaga runTests al driver; /api/est
   // cfg.checks declarados → el estimate los muestra como testCmd (consentimiento informado del toggle "test")
   writeFileSync(join(R, 'openspec', 'conductor.json'), JSON.stringify({ checks: ['npm test', 'npm run build'] }));
   const spawned = [];
-  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   // el toggle "test" (ejecutar pruebas reales tras el gate) viaja al driver como runTests
   const l = await (await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'rt-x', complexity: 'simple', runTests: true }) })).json();
   eq(l.ok, true);
@@ -419,7 +420,7 @@ await test('serve(coherencia): /api/launch RECHAZA un proyecto sin init (needsIn
   rmSync(R, { recursive: true, force: true });
   mkdirSync(join(R, '.git'), { recursive: true }); // tiene .git (pasa el gate de SEGURIDAD) pero NO openspec (sin init)
   const spawned = [];
-  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   // SIN init: el motor crearía openspec/changes a medias y correría sin gobierno → ahora se RECHAZA
   const r = await fetch(srv.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'algo', name: 'ng-x', complexity: 'simple' }) });
   eq(r.status, 400, 'sin init → 400 (no se lanza sobre proyecto sin gobierno)');
@@ -483,7 +484,7 @@ await test('serve(P0): el RESUME reusa el preset de gobierno persistido en el ti
   mkdirSync(join(R, 'openspec', 'changes', 'mig-r', '.conductor'), { recursive: true });
   writeFileSync(join(R, 'openspec', 'changes', 'mig-r', '.conductor', 'timeline.json'), JSON.stringify({ request: 'reanuda migración', complexity: 'complex', domain: 'mig', verdict: 'STOPPED', preset: { name: 'migration', label: 'Gran migración' }, phases: [] }));
   const spawned = [];
-  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
+  const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   const rs = await (await fetch(srv.url + 'api/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'mig-r' }) })).json();
   eq(rs.ok, true);
   eq(spawned[0].preset, 'migration', 'el resume reusa el preset de gobierno del timeline (no degrada a laxo)');

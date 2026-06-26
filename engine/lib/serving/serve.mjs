@@ -688,6 +688,17 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   const uiBuild = () => { if (!useStaticUi || !UI_INDEX) return null; try { return createHash('sha256').update(readFileSync(UI_INDEX)).digest('hex').slice(0, 12); } catch { return null; } };
   const projOf = (id) => registry.get(id) || null;
   const runKey = (pid, name) => pid + '/' + name;
+  // GUARDRAIL working-tree (paridad+ con la herramienta de workflows de referencia): los runs del MISMO repo comparten el
+  // árbol de trabajo (src/). Sin worktrees, dos a la vez se pisarían → lo REHUSAMOS (no "undefined behavior" como su modo
+  // shared). Señal AUTORITATIVA = activeRun (pid VIVO en el lock, que el driver BORRA al terminar) → un run recién acabado
+  // NO falso-bloquea (el flag 'exited' del Map va por detrás del exit del proceso). (a) reserva en vuelo (child===null,
+  // otro launch a medio camino, aún sin lock) cierra el TOCTOU; (b) cualquier otro cambio con un driver vivo. null si no hay.
+  const projectActiveRunOther = (proj, exceptName) => {
+    const pref = proj.id + '/';
+    for (const [k, r] of runs) if (r && !r.exited && r.child === null && k.startsWith(pref) && k.slice(pref.length) !== exceptName) return k.slice(pref.length);
+    try { for (const name of readdirSync(join(proj.root, 'openspec', 'changes'))) if (name !== exceptName && activeRun(join(proj.root, 'openspec', 'changes', name))) return name; } catch {}
+    return null;
+  };
   // ANTI-CSRF/DNS-rebinding: los POST cross-site "ciegos" llegan sin Content-Type JSON (los con JSON
   // disparan preflight CORS, que jamas aprobamos) y/o con Host ajeno. Se rechazan ANTES de enrutar.
   const guard = (req, res) => {
@@ -862,6 +873,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const ch = join(proj.root, 'openspec', 'changes', b.name);
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso', url: `/run/${proj.id}/${b.name}` });
+        // GUARDRAIL working-tree: otro cambio del MISMO repo ya corriendo → un 2º run pisaría src/. Se rehúsa (1 run/repo).
+        const otherActive = projectActiveRunOther(proj,b.name);
+        if (otherActive) return json(409, { ok: false, busyProject: true, error: `Ya hay un run activo en este proyecto sobre «${otherActive}». Los runs del mismo repo comparten el árbol de trabajo (src/): dos a la vez se pisarían. Espera a que termine o ábrelo.`, url: `/run/${proj.id}/${otherActive}` });
         runs.set(k, { child: null, pending: null, stopRequested: false, exited: false }); // RESERVA síncrona: cierra el TOCTOU (dos POST casi a la vez pasarían el check de arriba antes del await de abajo → dos drivers)
         // anti-reserva-huérfana: toda la ruta reserva→launch va en try/finally. Si un await intermedio (availableModels,
         // resolvePlan…) lanza, la reserva se LIBERA; si no, quedaría un placeholder child:null → 409 PERMANENTE al
@@ -913,6 +927,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (!tl?.request) return json(404, { ok: false, error: 'sin timeline que reanudar' });
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso' });
+        const otherR = projectActiveRunOther(proj,b.name); // GUARDRAIL working-tree: no reanudar si otro cambio del repo corre
+        if (otherR) return json(409, { ok: false, busyProject: true, error: `Ya hay un run activo en este proyecto sobre «${otherR}». Termínalo antes de reanudar otro (comparten src/).`, url: `/run/${proj.id}/${otherR}` });
         launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name, tl.pipeline, tl.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
@@ -969,6 +985,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const tl2 = readJson(join(changeDir, '.conductor', 'timeline.json'));
           if (!tl2?.request) return json(404, { ok: false });
           if (activeRun(changeDir) || (reg && !reg.exited)) return json(409, { ok: false, error: 'ya en curso' });
+          const otherSR = projectActiveRunOther(proj,name); // GUARDRAIL working-tree: no reanudar si otro cambio del repo corre
+          if (otherSR) return json(409, { ok: false, busyProject: true, error: `Ya hay un run activo en este proyecto sobre «${otherSR}» (comparten src/).`, url: `/run/${proj.id}/${otherSR}` });
           launch(proj, name, tl2.request, tl2.complexity, tl2.domain, tl2.models, undefined, tl2.preset?.name, tl2.pipeline, tl2.runTests === true); // resume EXACTO: reusa modelos + preset + pipeline + runTests persistidos (RunState robusto)
           return json(200, { ok: true });
         }
