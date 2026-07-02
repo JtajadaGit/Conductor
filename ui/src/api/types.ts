@@ -5,6 +5,9 @@ export type Verdict = string | null; // 'GREEN' | 'NOT-GREEN' | 'ABORTED' | 'STO
 
 export type FileKind = 'create' | 'edit' | 'delete';
 export interface FileChange { p: string; k: FileKind; }
+// resumen de cambios del run (experiencia Git): fichero + tipo + líneas +/− (null si binario/sin git)
+export interface ChangedFile { p: string; k: FileKind; added: number | null; removed: number | null; }
+export interface RunFiles { files: ChangedFile[]; totals: { files: number; added: number; removed: number }; fromGit: boolean; }
 export interface Tokens { in: number; out: number; }
 
 export interface Phase {

@@ -3,7 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { RunPoller } from '../api/poller';
-import type { RunState, Phase, CurrentPhase, PendingDecision, DecisionFinding, FileChange, ModelsResponse } from '../api/types';
+import type { RunState, Phase, CurrentPhase, PendingDecision, DecisionFinding, FileChange, ModelsResponse, RunFiles } from '../api/types';
 import { fmt, secs, verdictClass } from '../lib/format';
 import { loader } from '../lib/loader';
 import { phaseIcon, modelIcon } from '../lib/icons';
@@ -24,6 +24,8 @@ export class RunScreen extends CElement {
   @state() private note = '';
   @state() private hotModel = '';
   @state() private models: ModelsResponse | null = null;
+  @state() private files: RunFiles | null = null; // resumen de cambios (experiencia Git)
+  private filesSig = ''; // re-fetch del changeset solo cuando cambia algo que lo afecta (no en cada poll)
   private api = new ConductorApi('/api/');
   private poller: RunPoller | null = null;
   private activeBase = '';
@@ -35,12 +37,21 @@ export class RunScreen extends CElement {
 
   private restart(): void {
     this.poller?.stop();
-    this.s = null; this.err = '';
+    this.s = null; this.err = ''; this.files = null; this.filesSig = '';
     this.api = new ConductorApi(this.apiBase);
-    this.poller = new RunPoller(this.apiBase, (s) => { this.s = s; }, (e) => { this.err = (e as Error).message; });
+    this.poller = new RunPoller(this.apiBase, (s) => { this.s = s; void this.maybeFetchFiles(s); }, (e) => { this.err = (e as Error).message; });
     this.poller.start();
     // catálogo para el select "Cambiar modelo" — los modelos son globales, siempre desde /api/ (B3)
     void new ConductorApi('/api/').models().then((m) => { this.models = m; }).catch(() => {});
+  }
+
+  // re-fetch del changeset SOLO cuando cambia algo que lo afecta (veredicto o nº de fases hechas) → no en cada poll de 5s
+  private async maybeFetchFiles(s: RunState): Promise<void> {
+    const sig = (s.verdict ?? '') + '|' + s.phases.filter((p) => p.ok).length;
+    if (sig === this.filesSig) return;
+    // #10: marca la firma SOLO tras un fetch OK. Si falla (red/carrera), no se "quema" la firma → se reintenta al
+    // siguiente poll en vez de ocultar el changeset para siempre. Conserva el último bueno ante fallo puntual.
+    try { this.files = await this.api.runFiles(); this.filesSig = sig; } catch { /* reintenta al próximo poll */ }
   }
 
   // select de modelo en caliente (sustituye al input libre): Copilot + qwen disponibles, como en el panel.
@@ -104,6 +115,7 @@ export class RunScreen extends CElement {
       ${this.phaseId ? this.phaseDetail(s) : nothing}
       ${s.pending ? this.pendingCard(s.pending) : nothing}
       ${this.cards(s)}
+      ${this.changesSection()}
       ${this.pipeline(s)}
       ${s.cost ? html`<model-breakdown .cost=${s.cost}></model-breakdown>` : nothing}
       ${this.logBox(s)}
@@ -179,6 +191,28 @@ export class RunScreen extends CElement {
       ${s.usage ? html`<div class="card"><small>qwen · LiteLLM</small><span>$${s.usage.spend.toFixed(2)}${s.usage.budget ? html` / $${s.usage.budget.toFixed(0)}` : nothing}</span>${s.usage.budget ? html`<div class="pbar ${s.usage.spend / s.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (s.usage.spend / s.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
       ${gh ? html`<div class="card aic"><small>AI Credits</small><span>${gh.used}/${gh.entitlement}</span><div class="pbar ${gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, gh.percentUsed)}%"></i></div></div>` : nothing}
     </div>`;
+  }
+
+  // CAMBIOS del run (experiencia Git): changeset consolidado — fichero × tipo × +/− líneas, clic → diff coloreado.
+  private changesSection(): TemplateResult | typeof nothing {
+    const f = this.files;
+    if (!f || !f.files.length) return nothing;
+    const t = f.totals;
+    return html`
+      <div class="sectrow"><h2 class="sect">Cambios</h2>${f.fromGit ? nothing : html`<span class="muted" style="font-size:.72rem">aprox. (sin git)</span>`}</div>
+      <div class="changes">
+        <div class="changes-head">
+          <span class="ch-n">${t.files} fichero${t.files === 1 ? '' : 's'}</span>
+          <span class="ch-stat"><span class="ch-add">+${fmt(t.added)}</span><span class="ch-del">−${fmt(t.removed)}</span></span>
+        </div>
+        <ul class="ch-list">
+          ${f.files.map((c) => html`<li class="ch-row">
+            <span class="k ${c.k}" title=${c.k}>${this.sign(c.k)}</span>
+            <button class="ch-path" @click=${() => this.viewDiff(c.p)} title="ver diff de ${c.p}">${c.p}</button>
+            ${c.added != null ? html`<span class="ch-rstat"><span class="ch-add">+${c.added}</span><span class="ch-del">−${c.removed}</span></span>` : nothing}
+          </li>`)}
+        </ul>
+      </div>`;
   }
 
   private pipeline(s: RunState): TemplateResult {

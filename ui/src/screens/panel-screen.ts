@@ -6,6 +6,7 @@ import { router } from '../router';
 import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate, PlanCheck } from '../api/types';
 import { fmt, kebab, verdictClass } from '../lib/format';
 import '../components/status-pill';
+import '../components/mention-input';
 
 // El usuario NO clasifica la tarea (ni "complejidad" ni "gobierno", ni etiquetas de talla). Describe el cambio y
 // le ENSEÑAMOS el PLAN como las FASES SDD REALES de OpenSpec (propose/spec/design/tasks/apply/verify) — cada una
@@ -115,11 +116,11 @@ export class PanelScreen extends CElement {
   private persistActive(): void { try { if (this.projId) localStorage.setItem('conductor.activeProject', this.projId); } catch { /* sin storage */ } }
 
   private nameTouched = false; // el usuario editó el nombre a mano → dejamos de auto-rellenarlo desde la descripción
-  private onReq(e: Event): void {
-    this.req = (e.target as HTMLTextAreaElement).value;
-    // auto-nombre: SIGUE a la descripción mientras el usuario no lo haya tocado (antes se bloqueaba en la 1ª letra
-    // porque la condición era `!this.name`, que se vuelve falsa tras el primer carácter).
-    if (!this.nameTouched) this.name = kebab(this.req.split(/\s+/).slice(0, 6).join(' '));
+  private onReq(v: string): void {
+    this.req = v;
+    // auto-nombre: SIGUE a la descripción mientras el usuario no lo haya tocado. Ignora las menciones @fichero y /skill
+    // (son contexto, no parte del nombre del cambio) para no ensuciar el kebab.
+    if (!this.nameTouched) this.name = kebab(this.req.replace(/[@/]\S+/g, ' ').split(/\s+/).slice(0, 6).join(' '));
     this.scheduleEstimate();
   }
   // coste visible en el punto de decisión: estima tokens (preflight, sin API) con debounce
@@ -465,7 +466,7 @@ export class PanelScreen extends CElement {
     const launchForm = html`
       <form class="launch-form" @submit=${(e: Event) => void this.launch(e)}>
         <label class="fl">Qué quieres construir
-          <textarea rows="3" placeholder="Describe el cambio en una frase o pega una especificación completa" .value=${this.req} @input=${(e: Event) => this.onReq(e)} required></textarea>
+          <mention-input .value=${this.req} .projId=${this.projId} placeholder="Describe el cambio en una frase o pega una spec. Escribe @ para dar contexto de un fichero · / para aplicar una skill del equipo" @cdr-input=${(e: Event) => this.onReq((e as CustomEvent).detail.value)}></mention-input>
         </label>
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">

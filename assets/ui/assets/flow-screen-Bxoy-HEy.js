@@ -1,4 +1,4 @@
-import{f as e,l as t,m as n,t as r}from"./index-C3Zl-fLv.js";var i=class extends t{constructor(...e){super(...e),this.phases=[{ph:`propose`,role:`planner`,prov:`Copilot/qwen`,does:`Propuesta: Why / What / Impact (lenguaje de dominio, sin nombres de framework).`,guard:`No avanza hasta que existe proposal.md.`},{ph:`spec`,role:`planner`,prov:`Copilot/qwen`,does:`Spec OpenSpec: requisitos SHALL + escenarios GIVEN/WHEN/THEN, con id REQ-…`,guard:`No avanza sin spec.md con cabecera delta + ≥1 requisito con escenario.`},{ph:`apply`,role:`coder`,prov:`qwen / Copilot`,does:`Implementa la spec a calidad de producción; comenta @conductor REQ-… en cada fichero.`,guard:`No avanza si el agente no escribió ningún fichero (reintenta).`},{ph:`verify`,role:`reviewer`,prov:`Copilot/qwen`,does:`Revisa por escenario (lentes paralelas: correctness/security/tests) + emite Verdict.`,guard:`GATE determinista (sin LLM) + el Verdict del reviewer: si FAIL → no cierra.`}]}render(){return n`
+import{f as e,h as t,l as n,t as r}from"./index-BbJHMIIU.js";var i=class extends n{constructor(...e){super(...e),this.phases=[{ph:`propose`,role:`planner`,prov:`Copilot/qwen`,does:`Propuesta: Why / What / Impact (lenguaje de dominio, sin nombres de framework).`,guard:`No avanza hasta que existe proposal.md.`},{ph:`spec`,role:`planner`,prov:`Copilot/qwen`,does:`Spec OpenSpec: requisitos SHALL + escenarios GIVEN/WHEN/THEN, con id REQ-…`,guard:`No avanza sin spec.md con cabecera delta + ≥1 requisito con escenario.`},{ph:`apply`,role:`coder`,prov:`qwen / Copilot`,does:`Implementa la spec a calidad de producción; comenta @conductor REQ-… en cada fichero.`,guard:`No avanza si el agente no escribió ningún fichero (reintenta).`},{ph:`verify`,role:`reviewer`,prov:`Copilot/qwen`,does:`Revisa por escenario (lentes paralelas: correctness/security/tests) + emite Verdict.`,guard:`GATE determinista (sin LLM) + el Verdict del reviewer: si FAIL → no cierra.`}]}render(){return t`
       <h1>Cómo conduce conductor</h1>
       <p class="muted">El <b>código</b> conduce las fases en orden; el modelo solo rellena el contenido de cada una.
         Ningún modelo puede saltarse una fase, no delegar, ni "freestylear": un modelo flojo da peor contenido,
@@ -6,13 +6,13 @@ import{f as e,l as t,m as n,t as r}from"./index-C3Zl-fLv.js";var i=class extends
 
       <h2 class="sect">El pipeline (complejidad <code>simple</code>)</h2>
       <div class="flow">
-        ${this.phases.map((e,t)=>n`
+        ${this.phases.map((e,n)=>t`
           <div class="flow-step">
-            <div class="fs-top"><span class="fs-n">${t+1}</span><span class="fs-ph">${e.ph}</span><span class="fs-role">${e.role}</span><span class="fs-prov">${e.prov}</span></div>
+            <div class="fs-top"><span class="fs-n">${n+1}</span><span class="fs-ph">${e.ph}</span><span class="fs-role">${e.role}</span><span class="fs-prov">${e.prov}</span></div>
             <p class="fs-does">${e.does}</p>
             <p class="fs-guard"><span class="fs-lock">▣</span> ${e.guard}</p>
           </div>
-          ${t<this.phases.length-1?n`<div class="flow-arrow" aria-hidden="true">↓</div>`:a()}
+          ${n<this.phases.length-1?t`<div class="flow-arrow" aria-hidden="true">↓</div>`:a()}
         `)}
         <div class="flow-arrow" aria-hidden="true">↓</div>
         <div class="flow-gate">
@@ -33,4 +33,4 @@ import{f as e,l as t,m as n,t as r}from"./index-C3Zl-fLv.js";var i=class extends
         <li><b>Pausas de revisión</b>: el tech-lead aprueba, edita la spec, deja nota o cambia el modelo en caliente antes de implementar/verificar (salvo Auto-aprobar).</li>
       </ul>
       <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/">Dashboard</a></p>
-    `}};i=r([e(`flow-screen`)],i);function a(){return n``}export{i as FlowScreen};
+    `}};i=r([e(`flow-screen`)],i);function a(){return t``}export{i as FlowScreen};

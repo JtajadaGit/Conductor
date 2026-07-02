@@ -1,6 +1,6 @@
 // Cliente HTTP tipado contra el contrato REAL del motor. apiBase inyectable: '/api/' para el panel,
 // '/api/run/<projId>/<change>/' para un run, '/api/demo/' para el showcase. Cero LLM aquí (token-first).
-import type { ChangesResponse, ModelsResponse, RunState, LaunchBody, ContinueBody, ApiResult, EstimateResponse, SearchResponse, ArchiveResponse, SessionEvents } from './types';
+import type { ChangesResponse, ModelsResponse, RunState, LaunchBody, ContinueBody, ApiResult, EstimateResponse, SearchResponse, ArchiveResponse, SessionEvents, RunFiles } from './types';
 
 export class ConductorApi {
   constructor(public apiBase = '/api/') {}
@@ -47,6 +47,8 @@ export class ConductorApi {
   artifact(p: string): Promise<string> { return this.getText('artifact?p=' + encodeURIComponent(p)); }
   saveArtifact(p: string, content: string): Promise<ApiResult> { return this.post('artifact', { p, content }); }
   diff(p: string): Promise<string> { return this.getText('diff?p=' + encodeURIComponent(p)); }
+  // resumen de cambios del run (experiencia Git): changeset real vs HEAD
+  runFiles(): Promise<RunFiles> { return this.getJson<RunFiles>('files'); }
   raw(phase: string): Promise<string> { return this.getText('raw?phase=' + encodeURIComponent(phase)); }
   // ── visor de sesión (events.jsonl) ──
   events(opts: { cat?: string[]; q?: string; limit?: number; offset?: number } = {}): Promise<SessionEvents> {

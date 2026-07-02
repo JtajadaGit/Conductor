@@ -208,4 +208,24 @@ await test('drive(R-A5 FASE 3): resume con tasks.md parcial → prompt de apply 
   } finally { restoreEnv(saved); }
 });
 
+await test('drive(#6): los patrones de equipo llegan también a la PLANIFICACIÓN (spec), no solo a apply/fix', async () => {
+  fresh();
+  const saved = clearEnv();
+  const savedHome = process.env.CONDUCTOR_HOME;
+  process.env.CONDUCTOR_HOME = join(TMP, '.home-empty'); // aísla los globales del usuario real (includeGlobal)
+  try {
+    mkdirSync(join(TMP, 'openspec'), { recursive: true });
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false }));
+    // patrón de equipo GLOBAL (sin match) → aplica a todas las fases, incluidas las de planificación
+    w(join(TMP, '.conductor', 'skills', 'zzz-planning-pattern.md'), '---\nname: zzz-planning-pattern\n---\nDocumenta cada decision con un ADR breve.');
+    let specPrompt = '';
+    const rec = (a) => { if (a.phase === 'spec') specPrompt = a.prompt || ''; return goodAgent(a); };
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'sk'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: rec });
+    eq(r.verdict, 'GREEN');
+    assert(specPrompt.length > 0, 'el agente de spec recibió un prompt');
+    assert(/TEAM PATTERNS/.test(specPrompt), 'el bloque de patrones de equipo aparece en la fase de planificación (spec)');
+    assert(/Documenta cada decision con un ADR/.test(specPrompt), 'con el cuerpo del patrón global');
+  } finally { restoreEnv(saved); if (savedHome === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = savedHome; }
+});
+
 rmSync(TMP, { recursive: true, force: true });

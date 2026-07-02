@@ -4,13 +4,13 @@
 // con la fase en curso viva (progress bar vs timeout, intento N/M, último error) y totales de tokens.
 // Cero coste de tokens: aquí no hay LLM, solo ficheros locales.
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, renameSync, chmodSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, renameSync, chmodSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { PRICE } from '../core/cost.mjs';
-import { activeRun, rollbackTo, readDriveConfig, scrubSecrets } from '../pipeline/drive.mjs';
+import { activeRun, rollbackTo, readDriveConfig, scrubSecrets, SECRET_FILE } from '../pipeline/drive.mjs';
 import { PRESET_NAMES } from '../pipeline/presets.mjs';
 import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
@@ -29,6 +29,7 @@ import { initConfig } from '../analysis/scaffold.mjs';
 import { aggregateStats } from '../core/stats.mjs';
 import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
+import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard } from './dashboard.mjs';
 import { decryptSecret, encryptSecret } from '../provenance/secret.mjs';
 
@@ -46,16 +47,96 @@ function safeRead(root, rel, maxLen = 20000) {
 // SEGMENTO de ruta (inicio/sep … sep/fin) para no marcar ficheros tipo `.conductorX`.
 const touchesPlumbing = (rel) => /(^|[\\/])\.conductor([\\/]|$)/i.test(String(rel || ''));
 // diff de UN fichero del proyecto (git diff; si es nuevo/untracked → contenido)
-function fileDiff(srcDir, rel) {
+function fileDiff(srcDir, rel, changeDir) {
   if (!srcDir || !rel) return null;
   const r = relative(resolve(srcDir), resolve(srcDir, rel));
   if (r.startsWith('..') || isAbsolute(r)) return null;
+  // MISMO baseline que el changeset: si el run capturó base-tree, diffea contra él → el diff muestra SOLO lo que tocó
+  // este run (coherente con el +X/−Y de la fila), no la suciedad previa. Sin base-tree → HEAD (compat). quotePath=false: rutas no-ASCII crudas.
+  let base = 'HEAD';
+  if (changeDir) try { const t = readFileSync(join(changeDir, '.conductor', 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
   try {
-    const d = execFileSync('git', ['diff', 'HEAD', '--', rel], { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true });
+    const d = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', base, '--', rel], { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true });
     if (d.trim()) return d.slice(0, 30000);
   } catch {}
   const c = safeRead(srcDir, rel, 30000);
   return c != null ? `+++ ${rel} (nuevo)\n` + c.split('\n').map((l) => '+ ' + l).join('\n') : null;
+}
+
+// CHANGESET del run (experiencia Git): ficheros tocados + tipo + líneas +/− vs HEAD, INCLUIDO lo untracked. Stage-a todo
+// en un ÍNDICE PROPIO (GIT_INDEX_FILE) → NO toca el índice real del usuario (mismo truco que los checkpoints). Excluye
+// .conductor (plumbing interno). Devuelve null si no hay git → el caller cae a los ficheros de las fases del timeline.
+function gitChangedFiles(srcDir, changeDir) {
+  if (!srcDir || !changeDir || !existsSync(changeDir) || !existsSync(join(srcDir, '.git'))) return null;
+  try {
+    // BASELINE del run: diffea contra el árbol capturado AL ARRANCAR (.conductor/base-tree) → SOLO los cambios de ESTE
+    // run, nunca lo que ya estaba sin commitear. Sin baseline (runs viejos / sin git al arrancar) → HEAD (como antes).
+    let base = 'HEAD';
+    try { const t = readFileSync(join(changeDir, '.conductor', 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
+    // índice EFÍMERO en tmpdir (no dentro del change: un slug válido pero inexistente no debe materializar .conductor/).
+    // Clave por hash del changeDir → runs simultáneos de distintos changes no colisionan.
+    const idx = join(tmpdir(), 'conductor-chg-' + createHash('sha1').update(String(changeDir)).digest('hex').slice(0, 16) + '.idx');
+    // core.quotePath=false + -z: git emite las rutas CRUDAS en UTF-8 (sin octal-escape ni comillas) y separadas por NUL,
+    // así los paths no-ASCII/con espacios llegan intactos y los renames traen old\0new sin ambigüedad de campos.
+    const opt = { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000, windowsHide: true, env: { ...process.env, GIT_INDEX_FILE: idx } };
+    const gitZ = (...a) => execFileSync('git', ['-c', 'core.quotePath=false', ...a], opt);
+    const NUL = String.fromCharCode(0); // separador de -z (byte NUL) — sin literal crudo en la fuente
+    gitZ('add', '-A'); // stage TODO (tracked + untracked) en el índice propio
+    const ns = gitZ('diff', '--cached', '-M', '--numstat', '-z', base); // -M: detección de renames ON aunque el dev tenga diff.renames=false
+    const names = gitZ('diff', '--cached', '-M', '--name-status', '-z', base);
+    try { rmSync(idx, { force: true }); } catch {}
+    // numstat -z: "add\trem\tpath\0"  ·  rename/copy: "add\trem\t\0oldpath\0newpath\0" (path vacío → dos tokens siguientes)
+    const stat = new Map();
+    const nsT = ns.split(NUL); let i = 0;
+    while (i < nsT.length) {
+      const tok = nsT[i]; if (!tok) { i++; continue; }
+      const m = tok.match(/^(\d+|-)\t(\d+|-)\t([\s\S]*)$/); if (!m) { i++; continue; }
+      const rec = { added: m[1] === '-' ? null : +m[1], removed: m[2] === '-' ? null : +m[2] };
+      if (m[3] === '') { if (nsT[i + 2]) stat.set(nsT[i + 2], rec); i += 3; } // rename/copy → clave por el DESTINO
+      else { stat.set(m[3], rec); i += 1; }
+    }
+    // name-status -z: "status\0path\0"  ·  rename/copy: "Rxx\0oldpath\0newpath\0" (destino = 2º token)
+    const out = [];
+    const nT = names.split(NUL); let j = 0;
+    while (j < nT.length) {
+      const status = nT[j]; if (!status) { j++; continue; }
+      const code = status[0]; // A(dded)/M(odified)/D(eleted)/R(ename)/C(opy)
+      const p = (code === 'R' || code === 'C') ? nT[j + 2] : nT[j + 1];
+      j += (code === 'R' || code === 'C') ? 3 : 2;
+      if (!p || /(^|[\\/])\.conductor([\\/]|$)/.test(p)) continue; // plumbing interno
+      const s = stat.get(p) || {};
+      out.push({ p, k: code === 'A' ? 'create' : code === 'D' ? 'delete' : 'edit', added: s.added ?? null, removed: s.removed ?? null });
+    }
+    out.sort((a, b) => a.p.localeCompare(b.p));
+    return out;
+  } catch { return null; }
+}
+
+// LISTA de ficheros del proyecto para el autocompletado "@fichero" del prompt (experiencia Copilot). Walk ACOTADO
+// (salta dirs pesados + .copilotignore best-effort), tope de resultados y de ficheros escaneados (nunca cuelga en repos
+// enormes). Confinado a root. Match por substring; prioriza coincidencia en el basename y rutas cortas (más relevantes).
+const FILE_SKIP = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'target', 'coverage', '.angular', '.conductor', 'vendor', '__pycache__', '.next', '.cache', 'tmp', '.vscode', '.idea', 'bin', 'obj']);
+function listProjectFiles(root, q = '', cap = 40) {
+  if (!root) return [];
+  const ql = String(q).toLowerCase().replace(/^@/, '');
+  let ignore = [];
+  try { ignore = readFileSync(join(root, '.copilotignore'), 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => l.replace(/^\/+|\/+$/g, '')); } catch {}
+  const ignored = (rel, name) => ignore.some((ig) => rel === ig || name === ig || rel.startsWith(ig + '/'));
+  const out = []; let scanned = 0;
+  const walk = (dir, rel) => {
+    if (out.length >= cap * 4 || scanned > 15000) return;
+    let entries; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (out.length >= cap * 4 || scanned > 15000) return;
+      scanned++;
+      const relPath = rel ? rel + '/' + e.name : e.name;
+      if (e.isDirectory()) { if (FILE_SKIP.has(e.name) || e.name.startsWith('.') || ignored(relPath, e.name)) continue; walk(join(dir, e.name), relPath); }
+      else if (e.isFile() && !ignored(relPath, e.name) && !SECRET_FILE.test(relPath) && (!ql || relPath.toLowerCase().includes(ql))) out.push(relPath); // nunca ofrecer .env/.pem/credenciales al autocompletado @
+    }
+  };
+  walk(root, '');
+  out.sort((a, b) => { const ab = a.split('/').pop().toLowerCase().includes(ql), bb = b.split('/').pop().toLowerCase().includes(ql); if (ab !== bb) return ab ? -1 : 1; return a.length - b.length; });
+  return out.slice(0, cap);
 }
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
@@ -65,7 +146,7 @@ const readHead = (p, n = 600) => { try { return readFileSync(p, 'utf8').slice(0,
 // de la fase (suciedad previa del repo excluida — solo lo que ESTA fase cambia). Cache 3s = coste ~0.
 function gitMap(srcDir) {
   try {
-    const out = execSync('git status --porcelain -uall', { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000, windowsHide: true });
+    const out = execSync('git -c core.quotePath=false status --porcelain -uall', { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000, windowsHide: true });
     const m = new Map();
     for (const l of out.split('\n')) { if (!l.trim()) continue; const p = l.slice(3).trim().replace(/^"|"$/g, ''); if (p) m.set(p, l.slice(0, 2)); }
     return m;
@@ -286,9 +367,10 @@ export function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/diff')) {
-      // diff real de un fichero del proyecto (git; nuevo → contenido) — confinado al srcDir
+      // diff real de un fichero del proyecto (git; nuevo → contenido) — confinado al srcDir + scrub de claves
       const u = new URL(req.url, 'http://x');
-      const body = fileDiff(srcDir, u.searchParams.get('p') || '');
+      const raw = fileDiff(srcDir, u.searchParams.get('p') || '', changeDir);
+      const body = raw != null ? scrubSecrets(raw, process.env, scrubExtra()) : null;
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/raw')) {
@@ -506,16 +588,18 @@ export function isCopilotFamily(id) {
 async function availableModels(registry) {
   if (Date.now() - _models.at < 600000 && _models.data) return _models.data;
   const byok = new Set(), copilot = new Set();
-  // observados en TODOS los proyectos (requested y reported) — red de seguridad
+  // OBSERVADOS (timelines + config de cada proyecto): SOLO red de seguridad. NO se mezclan con el catálogo AUTORITATIVO
+  // — contaminaban la lista con modelos de test / typos / retirados de runs viejos. Se usan únicamente si NO hay catálogo.
+  const obsByok = new Set(), obsCop = new Set();
   for (const p of registry.values()) {
     for (const c of listChanges(p.root)) {
       const tl = readJson(join(p.root, 'openspec', 'changes', c.name, '.conductor', 'timeline.json'));
       for (const ph of tl?.phases ?? []) {
         const m = ph.modelReported || ph.model; if (!m) continue;
-        (ph.provider === 'byok' ? byok : copilot).add(m);
+        (ph.provider === 'byok' ? obsByok : obsCop).add(m);
       }
     }
-    try { const cfg = readDriveConfig(p.root).models || {}; for (const v of Object.values(cfg)) { if (typeof v !== 'string') continue; if (v.startsWith('byok:')) byok.add(v.slice(5)); else if (v.startsWith('copilot:')) copilot.add(v.slice(8)); } } catch {}
+    try { const cfg = readDriveConfig(p.root).models || {}; for (const v of Object.values(cfg)) { if (typeof v !== 'string') continue; if (v.startsWith('byok:')) obsByok.add(v.slice(5)); else if (v.startsWith('copilot:')) obsCop.add(v.slice(8)); } } catch {}
   }
   // byok: 1) en vivo desde el proveedor si hay creds (y CACHEA los nombres); 2) si no, lee la cache; 3) observados
   let byokSource = 'observados', byokCachedAt = null, live = false, byokReason = null;
@@ -535,6 +619,7 @@ async function availableModels(registry) {
     const cache = readModelsCache();
     if (cache?.byok?.models?.length) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; }
   }
+  if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
   _models.at = Date.now();
   // catálogo REAL de Copilot (SDK client.listModels) fusionado con lo observado. Refresco en BACKGROUND
   // (no bloquea el panel) + cache 10 min; si aún no hay catálogo del SDK, NO inventamos — solo lo observado.
@@ -542,6 +627,7 @@ async function availableModels(registry) {
   // si el fetch en vivo del SDK no aportó catálogo (caso actual: API auth-gated), siembra los modelos Copilot
   // conocidos (tabla PRICE mantenida) para que el picker no quede en solo lo observado. Etiquetado en copilotSource.
   if (!_copilotCat.models.length) for (const m of KNOWN_COPILOT) copilot.add(m);
+  if (!copilot.size) for (const m of obsCop) copilot.add(m); // ni catálogo del CLI (HELP_VISIBLE_MODELS) ni tabla conocida → último recurso: observados
   if (!_copilotCat.fetching && Date.now() - _copilotCat.at > 600000) {
     _copilotCat.fetching = true;
     let sdkBundle = null; try { sdkBundle = [join(resolve(process.argv[1]), '..', 'copilot-sdk.mjs')].find(existsSync) || null; } catch {}
@@ -768,6 +854,19 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         let testCmd = null;
         try { const ec = readDriveConfig(root); testCmd = (Array.isArray(ec.checks) && ec.checks.length) ? ec.checks.join(' && ') : (detectStack(root).testCmd || null); } catch { /* hint opcional */ }
         return json(200, { ...est, complexity: plan.complexity, actions, checks: plan.checks, testCmd });
+      }
+      // autocompletado "@fichero" del prompt (experiencia Copilot): ficheros del proyecto que casan con ?q= (confinado)
+      if (u.pathname === '/api/files') {
+        const pid = u.searchParams.get('project'); const proj = pid ? projOf(pid) : DEFAULT;
+        if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
+        return json(200, { files: listProjectFiles(proj.root, u.searchParams.get('q') || '', 40) });
+      }
+      // autocompletado "/skill" del prompt: patrones de equipo del proyecto + globales del usuario (nombre + título + scope)
+      if (u.pathname === '/api/skills') {
+        const pid = u.searchParams.get('project'); const proj = pid ? projOf(pid) : DEFAULT;
+        if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
+        const skills = loadSkills(proj.root, { includeGlobal: true }).map((s) => ({ name: s.name, title: s.title || '', scope: s.scope, match: s.match || [] }));
+        return json(200, { skills });
       }
       // explain app-native: borrador de spec por ingeniería inversa del código (motor determinista, 0 LLM,
       // 0 red). Por ?projectId= o el default; ?src= opcional (subdir confinado). Devuelve CONTEOS + borradores
@@ -1014,8 +1113,19 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'diff') {
-          const body = fileDiff(proj.root, u.searchParams.get('p') || '');
+          // scrub: el diff/contenido puede arrastrar una clave que el agente escribió en el código → redactar al servir (misma vía que artifact/raw)
+          const raw = fileDiff(proj.root, u.searchParams.get('p') || '', changeDir);
+          const body = raw != null ? scrubSecrets(raw, process.env, scrubExtra()) : null;
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
+        }
+        if (action === 'files') {
+          // resumen de CAMBIOS del run (experiencia Git): changeset real vs HEAD; sin git → ficheros de las fases del timeline.
+          if (!existsSync(changeDir)) return json(404, { ok: false, error: 'change inexistente' }); // slug válido pero sin run → no materializar nada
+          let files = gitChangedFiles(proj.root, changeDir);
+          const fromGit = files != null;
+          if (!fromGit) { const stt = runState(changeDir, proj.root); const seen = new Map(); for (const ph of (stt.phases || [])) for (const f of (ph.files || [])) seen.set(f.p, { p: f.p, k: f.k, added: null, removed: null }); files = [...seen.values()].sort((a, b) => a.p.localeCompare(b.p)); }
+          const totals = files.reduce((t, f) => ({ files: t.files + 1, added: t.added + (f.added || 0), removed: t.removed + (f.removed || 0) }), { files: 0, added: 0, removed: 0 });
+          return json(200, { files, totals, fromGit });
         }
         if (req.method === 'POST' && action === 'rollback') {
           const { phase } = await readBody(req);

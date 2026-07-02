@@ -48,6 +48,9 @@ export async function copilotCatalogFromCli(env = process.env) {
     const { execFile } = requireNode('node:child_process');
     const { pathToFileURL } = await import('node:url');
     const cand = [join(dirname(cliPath), 'sdk', 'index.js'), join(dirname(cliPath), '..', 'sdk', 'index.js')];
+    // ROBUSTO: resuelve el subpath-export "@github/copilot/sdk" por el mapa de exports del PROPIO paquete (no depende
+    // de adivinar dist/sdk/…). Es LA fuente del catálogo (HELP_VISIBLE_MODELS); si el guess de arriba falla, esto acierta.
+    try { cand.unshift(createRequire(pathToFileURL(cliPath).href).resolve('@github/copilot/sdk')); } catch {}
     const entry = cand.find((p) => { try { return existsSync(p); } catch { return false; } });
     if (!entry) return [];
     // El CLI cambió de superficie con el tiempo: versiones viejas exportaban las CONSTANTES
