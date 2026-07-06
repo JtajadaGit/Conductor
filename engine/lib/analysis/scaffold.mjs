@@ -29,13 +29,13 @@ export const CONFIG_SCHEMA = {
       description: 'Pipeline declarativo: fases en orden (subconjunto de las conocidas). Reordena/omite fases manteniendo el gate determinista; "verify" se exige (se añade si falta). NO aplica a complejidad "micro". Una entrada puede ser el nombre de fase, o {"phase","when"} para incluirla SOLO si se cumple una condición determinista (sin LLM): exists:<ruta> | missing:<ruta> | "complexity>=medium" | request~<substr>. Ej: ["propose","spec",{"phase":"explore","when":"missing:proposal.md"},"apply","verify"].',
       items: {
         oneOf: [
-          { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
+          { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'] },
           {
             type: 'object',
             additionalProperties: false,
             required: ['phase'],
             properties: {
-              phase: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
+              phase: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'] },
               when: { type: 'string', description: 'condición determinista (sin LLM): exists:<ruta> | missing:<ruta> | "complexity>=|==|<= nivel" | request~<substr>' },
             },
           },
@@ -45,8 +45,19 @@ export const CONFIG_SCHEMA = {
     pauseAt: {
       type: 'array',
       description: 'Fases ANTES de las que el run pausa para revisión humana (gana sobre el default). La fase "fix" siempre pausa. Ej: ["apply"].',
-      items: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
+      items: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'] },
     },
+    lenses: {
+      description: 'Lentes de review paralelas en verify: subconjunto de ["correctness","security","tests","contract"], o false para desactivarlas. Default: correctness+security+tests. (Funcionaba pero el schema la rechazaba — deriva corregida.)',
+      oneOf: [
+        { type: 'boolean' },
+        { type: 'array', items: { type: 'string' } },
+      ],
+    },
+    strictTrace: { type: 'boolean', description: 'Trazabilidad REQ↔código↔test BLOQUEANTE (un hueco tumba el GREEN). Lo activan los presets feature/migration; aquí lo fuerzas fuera de preset.' },
+    strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
+    strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
+    semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
     byokFallback: { type: 'boolean', default: false, description: 'true = si se pide byok: sin credenciales, permite caer al catálogo Business (gasta créditos). Por defecto se BLOQUEA.' },
     preconditions: {
       type: 'object',
@@ -83,7 +94,7 @@ export const CONFIG_SCHEMA = {
     dataGate: { type: 'boolean', default: false, description: 'Gate de DATOS: el SQL escrito pasa el linter de seguridad de migraciones (DDL destructivo/irreversible + PII en columnas). Lo activa el preset "migration"; ponlo aquí para forzarlo en otros flujos.' },
     hollowTests: { type: 'boolean', default: false, description: 'Gate de TESTS HUECOS: marca tests que pasan sin verificar nada (sin aserciones, tautológicos, cuerpo vacío, todos skip) sobre los tests escritos; un hallazgo error tumba el GREEN. Opt-in (algunos repos usan placeholders a propósito).' },
     contractDiff: { type: 'array', description: 'Gate de CONTRATO: diffea base↔head con los motores deterministas (autodetecta dominio por extensión: .json OpenAPI · .sql esquema BD · .ts contrato público) y un cambio incompatible tumba el GREEN. Rutas relativas al proyecto.', items: { type: 'object', required: ['base', 'head'], properties: { base: { type: 'string', description: 'ruta del contrato ANTES (relativa al proyecto)' }, head: { type: 'string', description: 'ruta del contrato DESPUÉS (relativa al proyecto)' } } } },
-    checks: { type: 'array', description: 'Verify POR EJECUCIÓN (opcional, post-gate): pruebas/build REALES a correr TRAS el GREEN estructural. Ej: ["npm test","npm run build"]. SIN shell. Si alguna falla → veredicto TESTS-FAIL (construido bien · pruebas fallan), distinto del NOT-GREEN estructural. Si se omite, el toggle "test" del panel usa el testCmd autodetectado del stack.', items: { type: 'string' } },
+    checks: { type: 'array', description: 'Comandos de la fase "test" (opcional, ANTES de verify): pruebas/build REALES. Ej: ["npm test","npm run build"]. SIN shell. Si alguna falla → ciclo fix → re-test → BLOCKED si no converge. Si se omite, el toggle "test" del panel usa el testCmd autodetectado del stack.', items: { type: 'string' } },
     allowChecks: { type: 'boolean', default: false, description: 'Ejecutar "checks" automáticamente (CI/headless) sin intervención. Por defecto NO se ejecuta config clonada (anti-RCE); en la app, el toggle "test" por-run es el consentimiento humano explícito equivalente.' },
     serve: { type: 'boolean', default: true, description: 'Mini-web del run en vivo.' },
     serveOpen: { type: 'boolean', default: true, description: 'Abrir el navegador automáticamente.' },
@@ -109,10 +120,11 @@ export const CONFIG_SCHEMA = {
   additionalProperties: false,
 };
 
+// sin "serve": la app única :4750 ES la superficie (decisión cerrada); la mini-web por-run del CLI headless
+// queda como opt-in explícito (--serve / CONDUCTOR_SERVE=1), no como default que el scaffold reactiva.
 const DEFAULT_CONFIG = {
   $schema: './conductor.schema.json',
   models: {},
-  serve: true,
   autoApprove: false,
 };
 

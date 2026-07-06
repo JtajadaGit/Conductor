@@ -133,7 +133,7 @@ const main = async () => {
     let app = await ping();
     if (!app?.ok) {
       process.stdout.write('la app no está viva → levantándola…\n');
-      spawn(process.execPath, [ENGINE, 'serve', project], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0', CONDUCTOR_UI_STATIC: '1' } }).unref();
+      spawn(process.execPath, [ENGINE, 'serve', project], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
       for (let i = 0; i < 14 && !app?.ok; i++) { await new Promise((r) => setTimeout(r, 500)); app = await ping(); }
     }
     if (!app?.ok) { process.stderr.write('No pude abrir la app (¿puerto 4750 ocupado por otra cosa?).\n'); process.exit(1); }
@@ -164,7 +164,7 @@ const main = async () => {
     // (puerto, error de JS, bundle stale), el motivo queda registrado en vez de perderse (stdio:'ignore').
     let outFd = null; try { mkdirSync(dirname(launchLog), { recursive: true }); outFd = openSync(launchLog, 'a'); } catch {}
     const stdio = outFd != null ? ['ignore', outFd, outFd] : 'ignore';
-    spawn(process.execPath, [ENGINE, 'serve', project], { detached: true, stdio, windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0', CONDUCTOR_UI_STATIC: '1' } }).unref();
+    spawn(process.execPath, [ENGINE, 'serve', project], { detached: true, stdio, windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
     let tries = 0;
     for (let i = 0; i < 12 && !app; i++) { tries++; await new Promise((r) => setTimeout(r, 500)); app = await ping(); }
     if (app?.ok) llog(`app levantada tras ~${(tries * 0.5).toFixed(1)}s`);

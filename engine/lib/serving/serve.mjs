@@ -10,7 +10,8 @@ import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { PRICE } from '../core/cost.mjs';
-import { activeRun, rollbackTo, readDriveConfig, scrubSecrets, SECRET_FILE } from '../pipeline/drive.mjs';
+import { activeRun, rollbackTo, readDriveConfig, scrubSecrets, SECRET_FILE, killTree } from '../pipeline/drive.mjs';
+import { KNOWN_PHASES } from '../pipeline/orchestrate.mjs';
 import { PRESET_NAMES } from '../pipeline/presets.mjs';
 import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
@@ -303,6 +304,7 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     modelOptions: modelOptions(srcDir, tl),
     verifyExcerpt: scrubSecrets(readHead(join(changeDir, 'verify-report.md')), process.env, scrubExtra()),
     verdict: tl?.verdict && tl.verdict !== 'running' ? tl.verdict : (st?.status === 'done' ? st.verdict : (alive === false && tl ? 'INTERRUMPIDO' : null)),
+    reason: tl?.reason ?? null, // porqué humano del verdict terminal (BLOCKED/ABORTED/STOPPED) — la UI lo pinta bajo la pill
     request: scrubSecrets(String(tl?.request ?? st?.request ?? '').slice(0, 8000), process.env, scrubExtra()), // L19: acota el request servido (re-render por poll)
     complexity: tl?.complexity ?? st?.complexity ?? '',
     resumed: tl?.resumed ?? false,
@@ -671,8 +673,8 @@ export function aggregateSearch(projects, q, limit = 80) {
   return hits.slice(0, limit);
 }
 
-// fases SDD válidas (para sanear el pipeline por-run que llega del cliente; verify lo reimpone el motor)
-const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify', 'fix'];
+// fases SDD válidas: lista CANÓNICA importada de orchestrate (antes vivía triplicada aquí, en drive y en
+// orchestrate con valores distintos — a este filtro le faltaba 'test' y el pipeline con test se perdía).
 // PREDICADO ÚNICO de "proyecto SDD inicializado" (coherencia: lo comparten /api/changes, el selector de la UI y el
 // GATE de /api/launch). Un proyecto pasó por init ⇔ tiene openspec/config.yaml (metadata OpenSpec) O conductor.json
 // (la config EJECUTABLE). El criterio .git es SOLO seguridad anti-ruta-arbitraria, NUNCA define "proyecto válido".
@@ -759,13 +761,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
     return registry.get(id);
   };
   const DEFAULT = ensureProject(root);
-  // UI v6 (Vite+Lit) servida como estáticos desde assets/ui. Activada por env CONDUCTOR_UI_STATIC=1, que el
-  // LAUNCHER (/sdd-run → run.mjs) SIEMPRE pone al levantar la app → los ~150 devs ven la v6 (catálogo real,
-  // tarjeta de ahorro, cockpit limpio). El default del motor sigue en legacy (cero regresión en `conductor
-  // serve` directo y en los tests, que usan engine paths de prueba). Para forzar legacy: CONDUCTOR_UI_STATIC=0.
+  // UI ÚNICA = Vite (assets/ui), por DEFECTO cuando existe el build. Sin build (o forzando
+  // CONDUCTOR_UI_STATIC=0 para depurar) se sirve el aviso mínimo "compila la UI" — la inline legacy no existe.
   const UI_DIR = uiStaticDir(engine);
-  // UI Vite por DEFECTO: si hay UI construida (assets/ui), se sirve esa. La inline legacy queda solo como
-  // fallback si NO hay build, o si se fuerza con CONDUCTOR_UI_STATIC=0. (Antes era opt-in con =1.)
   const useStaticUi = hasStaticUi(UI_DIR) && process.env.CONDUCTOR_UI_STATIC !== '0';
   // huella de build de la UI: el index.html referencia los assets HASHEADOS, así que su hash cambia en cada
   // build. El cliente lo vigila vía /api/ping y se auto-recarga cuando cambia (no más "lo veo desactualizado"
@@ -796,12 +794,16 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
     return true;
   };
   // body con TOPE (anti-OOM): un POST gigante no debe acumular sin límite en memoria
-  const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r({}); } }); req.on('end', () => { if (over) return; try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
+  // null = body inválido (JSON malformado, overflow o no-objeto) → los handlers responden 400. Antes degradaba
+  // a {} en silencio y un POST corrupto a `continue` APROBABA la pausa con payload vacío.
+  const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r(null); } }); req.on('end', () => { if (over) return; try { const j = JSON.parse(b || '{}'); r(j && typeof j === 'object' && !Array.isArray(j) ? j : null); } catch { r(null); } }); });
   const launch = (proj, name, request, complexity, domain, models, auto, preset, pipeline, runTests) => {
     const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
     child.on?.('exit', () => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; }); // exitedAt → la purga puede sacarlo del Map
+    // sin esto, un fallo de spawn (ENOENT/EPERM) emitía 'error' sin listener → uncaughtException tumbaba TODA la app y la reserva quedaba en 409 permanente
+    child.on?.('error', (e) => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; reg.error = String(e?.message || e); });
     runs.set(runKey(proj.id, name), reg);
     return reg;
   };
@@ -824,7 +826,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const activos = [...runs.values()].filter((r2) => !r2.exited).length;
         if (activos && u.searchParams.get('force') !== '1') return json(409, { ok: false, error: 'hay ' + activos + ' run(s) en curso' });
         json(200, { ok: true, bye: true });
-        for (const [, r2] of runs) { try { r2.child.kill?.(); } catch {} }
+        for (const [, r2] of runs) { try { if (r2.child) killTree(r2.child); } catch {} } // árbol completo: con shell:true, kill() solo mataba el cmd.exe intermedio
         if (onShutdown) onShutdown(); else server.close();
         return;
       }
@@ -886,6 +888,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       // idempotente (initConfig NUNCA pisa la config del usuario). Proyecto = el registrado (projectId) o el default.
       if (req.method === 'POST' && u.pathname === '/api/init') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
         try { const r = initConfig(join(proj.root, 'openspec')); return json(200, { ok: true, created: r.created, copilotignore: r.copilotignore }); }
@@ -905,6 +908,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       }
       if (req.method === 'POST' && u.pathname === '/api/byok/save') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         const { url: bUrl, key, type } = b;
         if (!bUrl || !key) return json(400, { ok: false, error: 'url y key requeridos' });
         try {
@@ -932,7 +936,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       }
       if (u.pathname === '/api/changes') {
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
-        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
+        // pending=true ⇔ ese run espera una DECISIÓN humana ahora mismo → el panel/sidebar lo señalan (un run
+        // pausado era invisible fuera de su propia pantalla, justo en la herramienta cuyo corazón es la pausa).
+        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
         const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
@@ -944,6 +950,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       // (anti-ruta-arbitraria). Es un acto DELIBERADO del usuario → se persiste (coherencia #7: registro consciente).
       if (req.method === 'POST' && u.pathname === '/api/register') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'ruta no válida' });
         const rp = resolve(b.project);
         if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'debe ser una ruta con openspec/ o .git' });
@@ -952,7 +959,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       }
       if (req.method === 'POST' && u.pathname === '/api/launch') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!b.request || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(b.name || '')) return json(400, { ok: false, error: 'request y name (kebab) requeridos' });
+        b.request = String(b.request).slice(0, 8000); // acotado ANTES de viajar como argv al driver (coherente con el slice de runState)
         // SEGURIDAD (auditoría P1 — ejecución en FS arbitrario): b.project llega por HTTP. NO lanzar el agente
         // (--allow-all-tools en la fase coder) en una ruta ARBITRARIA del FS ni auto-persistirla. Solo se acepta
         // si es el root servido por defecto, o un proyecto REAL (tiene openspec/ o .git). Un dir cualquiera
@@ -1018,6 +1027,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(b.name || ''))) return json(400, { ok: false });
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto desconocido' });
@@ -1057,6 +1067,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (seg[2] === 'state') return json(200, DEMO_STATE());
         if (seg[2] === 'artifact') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(['## ADDED Requirements (demo)', '<!-- id: REQ-HEADER -->', '### Requirement: Header', 'The system SHALL show a header.'].join(String.fromCharCode(10))); }
         if (seg[2] === 'diff') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(['+++ src/header.js (nuevo)', '+ // @conductor REQ-HEADER', '+ export const header = (t) => ...'].join(String.fromCharCode(10))); }
+        // files con la MISMA forma que el endpoint real: sin esto el run-screen del demo casca leyendo .files.length
+        if (seg[2] === 'files') return json(200, { files: [{ p: 'src/header.js', k: 'A', added: 34, removed: 0 }, { p: 'src/header.test.js', k: 'A', added: 21, removed: 0 }, { p: 'src/app.js', k: 'M', added: 3, removed: 1 }], totals: { files: 3, added: 58, removed: 1 }, fromGit: true });
         return json(200, { ok: true });
       }
       // /run/<name> → página del run (misma app, misma pestaña)
@@ -1076,8 +1088,13 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         }
         if (req.method === 'POST' && action === 'continue') {
           const payload = await readBody(req);
+          if (!payload) return json(400, { ok: false, error: 'body JSON inválido' });
           if (!reg || reg.exited || !reg.pending) return json(409, { ok: false });
-          reg.pending = null; try { reg.child.send({ t: 'continue', payload }); } catch {}
+          // enviar PRIMERO, limpiar pending solo si el canal respondió: antes un send fallido dejaba la pausa
+          // irrecuperable (pending ya borrado, driver esperando) y aun así respondía ok.
+          let sent = false; try { sent = reg.child.send({ t: 'continue', payload }) !== false; } catch { sent = false; }
+          if (!sent) return json(502, { ok: false, error: 'canal IPC caído — reanuda o detén el run' });
+          reg.pending = null;
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'resume') {
@@ -1095,7 +1112,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           return json(200, { ok: true });
         }
         if (action === 'artifact' && req.method === 'POST') {
-          const { p: rel, content } = await readBody(req);
+          const bodyArt = await readBody(req);
+          if (!bodyArt) return json(400, { ok: false, error: 'body JSON inválido' });
+          const { p: rel, content } = bodyArt;
           const okPath = rel && rel.endsWith('.md') && !touchesPlumbing(rel) && safeRead(changeDir, rel) !== null;
           if (!okPath || typeof content !== 'string' || content.length > 200000) return json(400, { ok: false });
           writeFileSync(join(changeDir, rel), content);
@@ -1128,7 +1147,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           return json(200, { files, totals, fromGit });
         }
         if (req.method === 'POST' && action === 'rollback') {
-          const { phase } = await readBody(req);
+          const bodyRb = await readBody(req);
+          if (!bodyRb) return json(400, { ok: false, error: 'body JSON inválido' });
+          const { phase } = bodyRb;
           if (reg && !reg.exited && !reg.pending) return json(409, { ok: false, error: 'el run está en marcha — pausa o detén antes de deshacer' });
           try { const r2 = rollbackTo(proj.root, changeDir, String(phase || '')); return json(200, { ok: true, restored: r2.restored.length, removed: r2.removed.length }); }
           catch (e) { return json(500, { ok: false, error: e.message }); }

@@ -1,13 +1,4 @@
-import { html, type TemplateResult } from 'lit';
-import { customElement } from 'lit/decorators.js';
-import { CElement } from '../core/element';
-
-/** Ayuda: empezar DESDE LA APP (autosuficiente), el pipeline real, leyenda de estados y qué garantiza GREEN.
- *  Texto, sin emojis como único significante. La skill /sdd-run se menciona solo como atajo de arranque. */
-@customElement('help-screen')
-export class HelpScreen extends CElement {
-  override render(): TemplateResult {
-    return html`
+import{g as e,p as t,t as n,u as r}from"./index-Bfc-rE4S.js";var i=class extends r{render(){return e`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluido qwen vía LiteLLM a coste 0 de AI Credits.</p>
 
@@ -48,10 +39,4 @@ export class HelpScreen extends CElement {
 
       <h2 class="sect">Transparencia (AI Act)</h2>
       <p class="muted">Cada run produce evidencia: informe del run, sello de procedencia firmado (Ed25519) encadenado al ledger del proyecto, y el informe de transparencia AI Act (modelos usados, aprobaciones humanas, verificación, firma).</p>
-    `;
-  }
-}
-
-declare global {
-  interface HTMLElementTagNameMap { 'help-screen': HelpScreen; }
-}
+    `}};i=n([t(`help-screen`)],i);export{i as HelpScreen};

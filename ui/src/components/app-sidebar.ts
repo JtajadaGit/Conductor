@@ -35,11 +35,13 @@ export class AppSidebar extends CElement {
     } catch { this.appMsg = 'Aplicación detenida. Vuelve a abrirla con /sdd-run.'; }
   }
   private dotClass(c: ChangeSummary): string {
+    if (c.pending) return 'CURSO'; // pausa esperando decisión → punto "vivo" (ámbar pulsante)
     const v = verdictClass(c.verdict);
     return v === 'GREEN' ? 'GREEN' : v === 'CURSO' ? 'CURSO' : v === 'G' ? 'G' : 'bad';
   }
   // L25: etiqueta HUMANA para lectores de pantalla (antes se leía el token de clase CSS 'G'/'bad'/'CURSO').
   private dotLabel(c: ChangeSummary): string {
+    if (c.pending) return 'esperando tu decisión';
     const v = verdictClass(c.verdict);
     return v === 'GREEN' ? 'completado' : v === 'CURSO' ? 'en curso' : v === 'G' ? 'estado desconocido' : 'no completado';
   }
@@ -59,7 +61,7 @@ export class AppSidebar extends CElement {
     return html`
       <div class="sb-logo" role="img" aria-label="conductor"><span class="logo" aria-hidden="true">C</span> conductor</div>
       <nav class="sb-nav" aria-label="Navegación principal">
-        <a class="sb-link primary ${this.activeRoute === 'panel' ? 'active' : ''}" href="/" aria-current=${this.activeRoute === 'panel' ? 'page' : nothing}>📋 Dashboard</a>
+        <a class="sb-link primary ${this.activeRoute === 'panel' ? 'active' : ''}" href="/" aria-current=${this.activeRoute === 'panel' ? 'page' : nothing}>📋 Panel</a>
       </nav>
       <nav class="sb-runs" aria-label="Runs recientes">
       ${shown.map((p) => {

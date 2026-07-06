@@ -512,7 +512,7 @@ export class PanelScreen extends CElement {
     const active = this.projects.find((p) => p.id === this.projId) ?? null;
     const launchSurface = (active && active.openspec === false) ? this.initPanel(active) : launchForm;
     return html`
-      <div class="apphdr"><h1>Dashboard</h1></div>
+      <div class="apphdr"><h1>Panel</h1></div>
       <p class="subhead">
         ${active ? html`Proyecto activo: <strong style="font-weight:600;color:var(--tx)">${active.name}</strong> <span style="opacity:.7">· ${active.root}</span>` : html`${this.projects.length} proyecto${this.projects.length === 1 ? '' : 's'}`}
         ${this.projects.length > 1 ? html` · <button type="button" @click=${() => { this.showAll = !this.showAll; }} style="background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline">${this.showAll ? 'ver solo este' : `ver todos (${this.projects.length})`}</button>` : nothing}
@@ -623,14 +623,14 @@ export class PanelScreen extends CElement {
       <div class="run-row ${verdictClass(c.verdict) === 'CURSO' ? 'run-active' : ''}">
         <div class="run-l">
           <a class="main" href="/run/${p.id}/${c.name}">
-            <span class="nm">${c.name} <status-pill .verdict=${c.verdict}></status-pill></span>
+            <span class="nm">${c.name} <status-pill .verdict=${c.pending ? 'EN PAUSA' : c.verdict}></status-pill>${c.pending ? html`<span class="pill CURSO" title="el run espera tu revisión">⏸ tu decisión</span>` : nothing}</span>
             <span class="rq">${c.request}</span>
             <span class="proj">📁 ${p.name}</span>
           </a>
           <div class="run-foot">
             <span class="meta">${c.phases} fases · ↓ ${fmt(c.tokens?.in)} entrada · ↑ ${fmt(c.tokens?.out)} salida</span>
             ${c.resumable ? html`<button class="btn sm resume" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">⏯ Reanudar</button>` : nothing}
-            ${c.hasDashboard ? html`<a class="btn sm dash" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="dashboard de ${c.name}">📊 Dashboard</a>` : nothing}
+            ${c.hasDashboard ? html`<a class="btn sm dash" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}">📊 Informe</a>` : nothing}
             ${c.phases > 0 ? html`<a class="btn sm aiact" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}">🛡 AI Act</a>` : nothing}
           </div>
         </div>

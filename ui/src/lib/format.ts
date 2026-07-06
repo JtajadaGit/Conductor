@@ -32,6 +32,26 @@ export function verdictClass(verdict: string | null | undefined): string {
   const v = verdict.toUpperCase();
   if (v === 'GREEN') return 'GREEN';
   if (v === 'EN CURSO' || v === 'CURSO' || v === 'RUNNING' || v.includes('PAUSA')) return 'CURSO';
-  if (['NOT-GREEN', 'ABORTED', 'STOPPED', 'INTERRUMPIDO', 'BLOCKED'].includes(v)) return v;
+  if (v.startsWith('BLOCKED')) return 'BLOCKED'; // incluye BLOCKED-NEEDS-HUMAN (antes caía a neutral)
+  if (['NOT-GREEN', 'ABORTED', 'STOPPED', 'INTERRUMPIDO'].includes(v)) return v;
   return 'G';
+}
+
+// VOCABULARIO HUMANO de veredictos: la pill muestra esto; el token técnico (GREEN/BLOCKED…) va al title/aria
+// para el tech-lead. Un junior no debería necesitar glosario para saber si su run acabó bien.
+const VERDICT_LABEL: Record<string, { label: string; hint: string }> = {
+  'GREEN': { label: 'Verificado', hint: 'El gate determinista confirmó coherencia spec↔código↔tests. Listo para archivar.' },
+  'NOT-GREEN': { label: 'No verificado', hint: 'El gate encontró incumplimientos tras los ciclos de corrección. Revisa el informe.' },
+  'BLOCKED': { label: 'Bloqueado', hint: 'El gobierno detuvo el run. El motivo aparece bajo la cabecera.' },
+  'BLOCKED-NEEDS-HUMAN': { label: 'Necesita tu decisión', hint: 'El run no converge solo: revisa el motivo y decide cómo seguir.' },
+  'ABORTED': { label: 'Abortado', hint: 'Una fase no produjo su artefacto; la secuencia no se salta. Revisa el registro.' },
+  'STOPPED': { label: 'Detenido', hint: 'Lo detuviste tú. Reanudar continúa donde quedó sin re-pagar fases.' },
+  'INTERRUMPIDO': { label: 'Interrumpido', hint: 'El proceso se cortó. Reanudar continúa donde quedó sin re-pagar fases.' },
+  'EN CURSO': { label: 'En curso', hint: 'El driver está ejecutando las fases del plan.' },
+  'EN PAUSA': { label: 'Tu revisión', hint: 'El run espera tu decisión: revisa los artefactos y aprueba.' },
+};
+export function verdictLabel(verdict: string | null | undefined): { label: string; hint: string; token: string } {
+  const token = (verdict || 'EN CURSO').toUpperCase();
+  const e = VERDICT_LABEL[token];
+  return e ? { ...e, token } : { label: verdict || 'En curso', hint: '', token };
 }

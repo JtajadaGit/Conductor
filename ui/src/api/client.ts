@@ -44,6 +44,8 @@ export class ConductorApi {
   stop(): Promise<ApiResult> { return this.post('stop'); }
   resume(): Promise<ApiResult> { return this.post('resume'); }
   rollback(phase: string): Promise<ApiResult> { return this.post('rollback', { phase }); }
+  // cierra el happy path: promueve la spec (delta aditivo) y mueve el change a archive/ — solo con GREEN
+  archiveRun(): Promise<ApiResult & { promoted?: string[]; needsManualMerge?: string[]; archivedDir?: string }> { return this.post('archive'); }
   artifact(p: string): Promise<string> { return this.getText('artifact?p=' + encodeURIComponent(p)); }
   saveArtifact(p: string, content: string): Promise<ApiResult> { return this.post('artifact', { p, content }); }
   diff(p: string): Promise<string> { return this.getText('diff?p=' + encodeURIComponent(p)); }

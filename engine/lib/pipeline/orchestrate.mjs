@@ -15,6 +15,10 @@ const PHASES = {
   medium: ['explore', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify'],
   complex: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'],
 };
+// lista CANÓNICA de fases conocidas — ÚNICA fuente (la consumen serve para sanear el pipeline por HTTP y
+// drive para pauseAt; antes vivía triplicada con valores distintos y el filtro de serve perdía 'test').
+// 'fix' la inserta el gate en caliente; 'test' la reubica resolvePhases justo antes de verify.
+export const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'fix', 'verify'];
 const ROLE = { explore: 'planner', propose: 'planner', clarify: 'planner', spec: 'planner', design: 'planner', tasks: 'planner', apply: 'coder', fix: 'coder', test: 'tester', verify: 'reviewer' };
 const artifactOf = (phase, domain) => ({
   explore: 'exploration.md', propose: 'proposal.md', clarify: 'questions.md',

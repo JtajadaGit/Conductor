@@ -67,6 +67,7 @@ export interface RunState {
   modelOptions: string[];
   verifyExcerpt: string | null;
   verdict: Verdict;
+  reason: string | null; // porqué humano del verdict terminal (BLOCKED/ABORTED/STOPPED) — se pinta bajo la pill
   request: string;
   complexity: string;
   resumed: boolean;
@@ -86,7 +87,7 @@ export interface RunState {
   tests?: TestRun | null; // verify por ejecución (opcional): pruebas reales del proyecto corridas tras el gate
 }
 
-// resultado de ejecutar las pruebas reales del proyecto (post-gate, opcional). Si !passed → verdict 'TESTS-FAIL'.
+// resultado de la fase "test" (opcional, antes de verify). Si !passed → ciclo fix → re-test → BLOCKED si no converge.
 export interface TestRun { ran: boolean; passed: boolean; failed: string[]; cmds: string[]; }
 
 export interface ChangeSummary {
@@ -100,6 +101,7 @@ export interface ChangeSummary {
   hasDashboard: boolean;
   resumable: boolean;
   mtime: number;
+  pending?: boolean; // true ⇔ el run espera una decisión humana AHORA (el panel/sidebar lo señalan)
 }
 
 export interface ProjectSummary {

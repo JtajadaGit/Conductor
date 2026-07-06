@@ -3163,6 +3163,10 @@ const PHASES = {
   medium: ['explore', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify'],
   complex: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'],
 };
+// lista CANÓNICA de fases conocidas — ÚNICA fuente (la consumen serve para sanear el pipeline por HTTP y
+// drive para pauseAt; antes vivía triplicada con valores distintos y el filtro de serve perdía 'test').
+// 'fix' la inserta el gate en caliente; 'test' la reubica resolvePhases justo antes de verify.
+const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'fix', 'verify'];
 const ROLE = { explore: 'planner', propose: 'planner', clarify: 'planner', spec: 'planner', design: 'planner', tasks: 'planner', apply: 'coder', fix: 'coder', test: 'tester', verify: 'reviewer' };
 const artifactOf = (phase, domain) => ({
   explore: 'exploration.md', propose: 'proposal.md', clarify: 'questions.md',
@@ -3437,7 +3441,7 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
   return stepFor(changeDir, s);
 }
 
-return { phaseCondMet, resolvePhases, start, liveSpecIds, next, stateFile };
+return { phaseCondMet, resolvePhases, start, liveSpecIds, next, KNOWN_PHASES, stateFile };
 })();
 
 // ===== lib/sysops/confine.mjs =====
@@ -3498,13 +3502,13 @@ const CONFIG_SCHEMA = {
       description: 'Pipeline declarativo: fases en orden (subconjunto de las conocidas). Reordena/omite fases manteniendo el gate determinista; "verify" se exige (se añade si falta). NO aplica a complejidad "micro". Una entrada puede ser el nombre de fase, o {"phase","when"} para incluirla SOLO si se cumple una condición determinista (sin LLM): exists:<ruta> | missing:<ruta> | "complexity>=medium" | request~<substr>. Ej: ["propose","spec",{"phase":"explore","when":"missing:proposal.md"},"apply","verify"].',
       items: {
         oneOf: [
-          { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
+          { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'] },
           {
             type: 'object',
             additionalProperties: false,
             required: ['phase'],
             properties: {
-              phase: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
+              phase: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'] },
               when: { type: 'string', description: 'condición determinista (sin LLM): exists:<ruta> | missing:<ruta> | "complexity>=|==|<= nivel" | request~<substr>' },
             },
           },
@@ -3514,8 +3518,19 @@ const CONFIG_SCHEMA = {
     pauseAt: {
       type: 'array',
       description: 'Fases ANTES de las que el run pausa para revisión humana (gana sobre el default). La fase "fix" siempre pausa. Ej: ["apply"].',
-      items: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
+      items: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'] },
     },
+    lenses: {
+      description: 'Lentes de review paralelas en verify: subconjunto de ["correctness","security","tests","contract"], o false para desactivarlas. Default: correctness+security+tests. (Funcionaba pero el schema la rechazaba — deriva corregida.)',
+      oneOf: [
+        { type: 'boolean' },
+        { type: 'array', items: { type: 'string' } },
+      ],
+    },
+    strictTrace: { type: 'boolean', description: 'Trazabilidad REQ↔código↔test BLOQUEANTE (un hueco tumba el GREEN). Lo activan los presets feature/migration; aquí lo fuerzas fuera de preset.' },
+    strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
+    strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
+    semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
     byokFallback: { type: 'boolean', default: false, description: 'true = si se pide byok: sin credenciales, permite caer al catálogo Business (gasta créditos). Por defecto se BLOQUEA.' },
     preconditions: {
       type: 'object',
@@ -3552,7 +3567,7 @@ const CONFIG_SCHEMA = {
     dataGate: { type: 'boolean', default: false, description: 'Gate de DATOS: el SQL escrito pasa el linter de seguridad de migraciones (DDL destructivo/irreversible + PII en columnas). Lo activa el preset "migration"; ponlo aquí para forzarlo en otros flujos.' },
     hollowTests: { type: 'boolean', default: false, description: 'Gate de TESTS HUECOS: marca tests que pasan sin verificar nada (sin aserciones, tautológicos, cuerpo vacío, todos skip) sobre los tests escritos; un hallazgo error tumba el GREEN. Opt-in (algunos repos usan placeholders a propósito).' },
     contractDiff: { type: 'array', description: 'Gate de CONTRATO: diffea base↔head con los motores deterministas (autodetecta dominio por extensión: .json OpenAPI · .sql esquema BD · .ts contrato público) y un cambio incompatible tumba el GREEN. Rutas relativas al proyecto.', items: { type: 'object', required: ['base', 'head'], properties: { base: { type: 'string', description: 'ruta del contrato ANTES (relativa al proyecto)' }, head: { type: 'string', description: 'ruta del contrato DESPUÉS (relativa al proyecto)' } } } },
-    checks: { type: 'array', description: 'Verify POR EJECUCIÓN (opcional, post-gate): pruebas/build REALES a correr TRAS el GREEN estructural. Ej: ["npm test","npm run build"]. SIN shell. Si alguna falla → veredicto TESTS-FAIL (construido bien · pruebas fallan), distinto del NOT-GREEN estructural. Si se omite, el toggle "test" del panel usa el testCmd autodetectado del stack.', items: { type: 'string' } },
+    checks: { type: 'array', description: 'Comandos de la fase "test" (opcional, ANTES de verify): pruebas/build REALES. Ej: ["npm test","npm run build"]. SIN shell. Si alguna falla → ciclo fix → re-test → BLOCKED si no converge. Si se omite, el toggle "test" del panel usa el testCmd autodetectado del stack.', items: { type: 'string' } },
     allowChecks: { type: 'boolean', default: false, description: 'Ejecutar "checks" automáticamente (CI/headless) sin intervención. Por defecto NO se ejecuta config clonada (anti-RCE); en la app, el toggle "test" por-run es el consentimiento humano explícito equivalente.' },
     serve: { type: 'boolean', default: true, description: 'Mini-web del run en vivo.' },
     serveOpen: { type: 'boolean', default: true, description: 'Abrir el navegador automáticamente.' },
@@ -3578,10 +3593,11 @@ const CONFIG_SCHEMA = {
   additionalProperties: false,
 };
 
+// sin "serve": la app única :4750 ES la superficie (decisión cerrada); la mini-web por-run del CLI headless
+// queda como opt-in explícito (--serve / CONDUCTOR_SERVE=1), no como default que el scaffold reactiva.
 const DEFAULT_CONFIG = {
   $schema: './conductor.schema.json',
   models: {},
-  serve: true,
   autoApprove: false,
 };
 
@@ -3876,7 +3892,7 @@ __M['drive'] = (function(){
 
 
 
-const { start, next, resolvePhases } = __M['orchestrate'];
+const { start, next, resolvePhases, KNOWN_PHASES } = __M['orchestrate'];
 const { resolvePreset } = __M['presets'];
 const { checkCoherence, parseReport } = __M['coherence'];
 const { checkArtifacts } = __M['artifacts'];
@@ -4133,6 +4149,16 @@ function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_ARGS, a
   return args;
 }
 
+// con shell:true en Windows, child.kill() solo mata el cmd.exe intermedio — el copilot real seguía VIVO
+// escribiendo en el repo tras un timeout/STOP. taskkill /T /F tumba el árbol completo; POSIX no lo necesita.
+function killTree(child) {
+  if (!child || typeof child.pid !== 'number') return;
+  if (process.platform === 'win32') {
+    try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); return; } catch {}
+  }
+  try { child.kill(); } catch {}
+}
+
 function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, role, phase, mcp, allowTools }) {
   const cmd = process.env.CONDUCTOR_AGENT_CMD || 'copilot';
   const args = agentArgs(role, mcp, process.env.CONDUCTOR_AGENT_ARGS, allowTools || {});
@@ -4158,13 +4184,14 @@ function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, 
     let out = '', err = '';
     let stopPoll = null;
     const finish = (r) => { if (stopPoll) clearInterval(stopPoll); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
-    const timer = setTimeout(() => { try { child.kill(); } catch {} finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
+    const timer = setTimeout(() => { killTree(child); finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
     // STOP del usuario: mata la fase en vuelo (la sesión efímera se limpia igualmente en finish)
-    if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); try { child.kill(); } catch {} finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
+    if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); killTree(child); finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
     child.stdout.on('data', (d) => { out += d; if (out.length > 262144) out = out.slice(-262144); }); // tope 256KB (anti-leak en runs verbosos)
     child.stderr.on('data', (d) => { err += d; if (err.length > 262144) err = err.slice(-262144); });
     child.on('error', (e) => { clearTimeout(timer); finish({ code: -1, err: `'${cmd}': ${e.message}` }); });
     child.on('close', (code) => { clearTimeout(timer); finish({ code, out, err }); });
+    child.stdin.on('error', () => {}); // EPIPE asíncrono (agente muerto antes de leer) mataba el driver por uncaughtException
     try { child.stdin.write(prompt); child.stdin.end(); } catch {}
   });
 }
@@ -4439,8 +4466,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   }
   // configurable-pauseat: dónde pausa la revisión es del proyecto. Si openspec/conductor.json define
   // "pauseAt" (subconjunto de fases), gana sobre el default que pase el llamador. La fase "fix" SIEMPRE pausa.
-  const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'];
-  const pauseEff = Array.isArray(cfg.pauseAt) ? cfg.pauseAt.filter((p) => KNOWN_PHASES.includes(p)) : (preset?.pauseAt ?? pauseAt);
+  const pauseEff = Array.isArray(cfg.pauseAt) ? cfg.pauseAt.filter((p) => KNOWN_PHASES.includes(p)) : (preset?.pauseAt ?? pauseAt); // KNOWN_PHASES = lista canónica de orchestrate
 
   // TIMEOUT DE REVISIÓN HUMANA (R-A3): en headless/CI/--auto nadie atiende la pausa → el run colgaría
   // indefinidamente. Política cfg.onReviewTimeout: 'wait' (def · sin timeout = cero regresión) | 'continue'
@@ -4534,7 +4560,9 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // BASELINE del run (solo fresh): captura el árbol AL ARRANCAR → el resumen de "Cambios" diffea contra él y enseña
   // SOLO los cambios de ESTE run, nunca lo pre-existente sin commitear. En resume se reusa el baseline ya persistido.
   if (!resumed) captureBaseTree(projectRoot, changeDir);
-  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  // `reason` (2º arg, solo en verdicts terminales): el porqué humano del BLOCKED/ABORTED/STOPPED — la UI lo
+  // pinta bajo la pill; sin esto el run moría con una pill muda y el motivo solo vivía en el return/log.
+  const writeTimeline = (verdict, reason) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
@@ -4563,7 +4591,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // STOP limpio: conserva lo hecho (el resume retoma con el mismo comando), cierra runner y sesiones.
   const stopped = async () => {
     log('■ run DETENIDO por el usuario — lo completado se conserva; relanza el mismo comando para reanudar');
-    currentInfo = null; writeTimeline('STOPPED'); writeDashboard('STOPPED');
+    currentInfo = null; writeTimeline('STOPPED', 'detenido por el usuario — lo completado se conserva; Reanudar continúa donde quedó'); writeDashboard('STOPPED');
     await runAgent.close?.();
     releaseLock();
     return { done: false, verdict: 'STOPPED', phase: step.phase, trail, timeline };
@@ -4587,7 +4615,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     // real: la 3ª fase salió null y el agente "no producía el artefacto de undefined" 2× quemando opus.
     if (!phase) {
       log('❌ plan de fases corrupto: fase null/vacía — ABORTO SIN llamar al modelo (cero coste). Revisa la config del proyecto.');
-      writeTimeline('ABORTED'); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock();
+      writeTimeline('ABORTED', 'plan de fases corrupto (fase null/vacía) — no se lanzó el agente; revisa openspec/conductor.json'); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock();
       return { done: false, verdict: 'ABORTED', phase: null, reason: 'fase null en el plan (no se lanzó el agente)', trail, timeline };
     }
     if (stopSignal?.requested) return stopped();
@@ -4598,8 +4626,13 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       log(`⏸ pausado antes de "${phase}" — revisa${phase === 'fix' ? ' los hallazgos del gate y elige cuáles arreglar' : ' los artefactos'} y aprueba para continuar`);
       // findings ESTRUCTURADOS a la decisión humana (message + severidad + fichero): el revisor ve qué es ERROR vs
       // aviso y a qué fichero apunta cada hallazgo (antes solo el texto). El `selected` sigue mapeando por índice.
-      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined }));
-      if (pr === REVIEW_ABORT) { writeTimeline('STOPPED'); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`, trail, timeline }; }
+      // heartbeat del lock DURANTE la pausa: sin esto, a los 15 min de espera humana el lock caducaba y el
+      // guardrail 1-run/repo desaparecía (otro run podía arrancar encima del pausado).
+      const pauseHb = setInterval(takeLock, 5 * 60_000);
+      let pr;
+      try { pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined })); }
+      finally { clearInterval(pauseHb); }
+      if (pr === REVIEW_ABORT) { const why = `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`; writeTimeline('STOPPED', why); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: why, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
       // FIX DIRIGIDO: el humano elige qué hallazgos van al prompt del fix (default: todos)
       if (phase === 'fix' && Array.isArray(pr?.selected) && step.findings) {
@@ -4675,7 +4708,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     if (projPolicy && mspec.model && !modelAllowed(mspec.model, projPolicy)) {
       const why = `el modelo "${mspec.model}" (fase "${phase}") no está en allowedModels de openspec/policy.json — bloqueado por gobierno`;
       log(`⛔ BLOCKED: ${why}`);
-      currentInfo = null; writeTimeline('BLOCKED'); writeDashboard('BLOCKED');
+      currentInfo = null; writeTimeline('BLOCKED', why); writeDashboard('BLOCKED');
       await runAgent.close?.(); releaseLock();
       return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline };
     }
@@ -4696,7 +4729,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         && cfg.byokFallback !== true && process.env.CONDUCTOR_BYOK_FALLBACK !== '1') {
       const reason = `la fase "${phase}" pidió byok:${mspec.model} pero no hay credenciales BYOK (ni env COPILOT_PROVIDER_* ni ~/.conductor/byok.json). Para no gastar AI Credits de pago sin querer, el run se DETIENE. Arregla con \`conductor byok save\`, o permite el fallback con "byokFallback": true en openspec/conductor.json.`;
       log(`⛔ BLOCKED: ${reason}`);
-      currentInfo = null; writeTimeline('BLOCKED'); writeDashboard('BLOCKED');
+      currentInfo = null; writeTimeline('BLOCKED', reason); writeDashboard('BLOCKED');
       await runAgent.close?.();
       releaseLock();
       return { done: false, verdict: 'BLOCKED', phase, reason, trail, timeline };
@@ -4707,7 +4740,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     if (failedPre.length) {
       const why = `fase "${phase}" bloqueada: pre-condición no cumplida (${failedPre.join(', ')})`;
       log(`⛔ BLOCKED: ${why}`);
-      currentInfo = null; writeTimeline('BLOCKED'); writeDashboard('BLOCKED');
+      currentInfo = null; writeTimeline('BLOCKED', why); writeDashboard('BLOCKED');
       await runAgent.close?.(); releaseLock();
       return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline };
     }
@@ -4923,7 +4956,7 @@ ${readSafe(x.lp).trim()}`);
     timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
     writeTimeline('running'); // incremental: la mini-web en vivo (serve) lee esto tras cada fase
-    if (!ok) { log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED'); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, trail, timeline }; }
+    if (!ok) { const why = `la fase "${phase}" no produjo su artefacto tras ${maxRetries + 1} intentos — la secuencia no se salta; revisa el modelo elegido o el registro del run`; log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED', why); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, reason: why, trail, timeline }; }
     log(`✅ ${phase}`);
     trail.push(phase);
 
@@ -4953,11 +4986,11 @@ ${readSafe(x.lp).trim()}`);
         if (mode === 'pause') {
           log(`⏸ ${why} — pido decisión humana (onExceed:pause)`);
           const pr = await awaitReview(onPause({ before: 'budget', role: 'reviewer', budget: { tokens: totIn + totOut, cost_usd: +totCost.toFixed(4), limit: budget } }));
-          if (pr === REVIEW_ABORT || pr?.stop || stopSignal?.requested) { writeTimeline('BLOCKED'); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline }; }
+          if (pr === REVIEW_ABORT || pr?.stop || stopSignal?.requested) { writeTimeline('BLOCKED', why); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline }; }
           log(`   ▶ presupuesto ampliado por el revisor — continúa`);
         } else {
           log(`⛔ BLOCKED: ${why}`);
-          writeTimeline('BLOCKED'); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock();
+          writeTimeline('BLOCKED', why); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock();
           return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline };
         }
       }
@@ -5117,7 +5150,7 @@ ${readSafe(x.lp).trim()}`);
     } catch (e) { log(`   provenance: ${e.message}`); }
   }
 
-  writeTimeline(step.verdict);
+  writeTimeline(step.verdict, step.error);
   writeDashboard(step.verdict);
   await runAgent.close?.(); // si el runner mantiene un cliente vivo (SDK), se cierra aquí
   releaseLock();
@@ -5125,7 +5158,7 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, stripAnsi, parseModelSpec, byokCreds, readDriveConfig, agentArgs, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, stripAnsi, parseModelSpec, byokCreds, readDriveConfig, agentArgs, killTree, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, rollbackTo, activeRun, drive, SECRET_FILE };
 })();
 
 // ===== lib/pipeline/sdk-runner.mjs =====
@@ -5345,7 +5378,8 @@ __M['serve'] = (function(){
 
 
 const { PRICE } = __M['cost'];
-const { activeRun, rollbackTo, readDriveConfig, scrubSecrets, SECRET_FILE } = __M['drive'];
+const { activeRun, rollbackTo, readDriveConfig, scrubSecrets, SECRET_FILE, killTree } = __M['drive'];
+const { KNOWN_PHASES } = __M['orchestrate'];
 const { PRESET_NAMES } = __M['presets'];
 const { resolvePlan, PHASE_ACTION } = __M['plan'];
 const { loadPolicy } = __M['policy'];
@@ -5637,6 +5671,7 @@ function runState(changeDir, srcDir, { alive = null } = {}) {
     modelOptions: modelOptions(srcDir, tl),
     verifyExcerpt: scrubSecrets(readHead(join(changeDir, 'verify-report.md')), process.env, scrubExtra()),
     verdict: tl?.verdict && tl.verdict !== 'running' ? tl.verdict : (st?.status === 'done' ? st.verdict : (alive === false && tl ? 'INTERRUMPIDO' : null)),
+    reason: tl?.reason ?? null, // porqué humano del verdict terminal (BLOCKED/ABORTED/STOPPED) — la UI lo pinta bajo la pill
     request: scrubSecrets(String(tl?.request ?? st?.request ?? '').slice(0, 8000), process.env, scrubExtra()), // L19: acota el request servido (re-render por poll)
     complexity: tl?.complexity ?? st?.complexity ?? '',
     resumed: tl?.resumed ?? false,
@@ -6005,8 +6040,8 @@ function aggregateSearch(projects, q, limit = 80) {
   return hits.slice(0, limit);
 }
 
-// fases SDD válidas (para sanear el pipeline por-run que llega del cliente; verify lo reimpone el motor)
-const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify', 'fix'];
+// fases SDD válidas: lista CANÓNICA importada de orchestrate (antes vivía triplicada aquí, en drive y en
+// orchestrate con valores distintos — a este filtro le faltaba 'test' y el pipeline con test se perdía).
 // PREDICADO ÚNICO de "proyecto SDD inicializado" (coherencia: lo comparten /api/changes, el selector de la UI y el
 // GATE de /api/launch). Un proyecto pasó por init ⇔ tiene openspec/config.yaml (metadata OpenSpec) O conductor.json
 // (la config EJECUTABLE). El criterio .git es SOLO seguridad anti-ruta-arbitraria, NUNCA define "proyecto válido".
@@ -6093,13 +6128,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
     return registry.get(id);
   };
   const DEFAULT = ensureProject(root);
-  // UI v6 (Vite+Lit) servida como estáticos desde assets/ui. Activada por env CONDUCTOR_UI_STATIC=1, que el
-  // LAUNCHER (/sdd-run → run.mjs) SIEMPRE pone al levantar la app → los ~150 devs ven la v6 (catálogo real,
-  // tarjeta de ahorro, cockpit limpio). El default del motor sigue en legacy (cero regresión en `conductor
-  // serve` directo y en los tests, que usan engine paths de prueba). Para forzar legacy: CONDUCTOR_UI_STATIC=0.
+  // UI ÚNICA = Vite (assets/ui), por DEFECTO cuando existe el build. Sin build (o forzando
+  // CONDUCTOR_UI_STATIC=0 para depurar) se sirve el aviso mínimo "compila la UI" — la inline legacy no existe.
   const UI_DIR = uiStaticDir(engine);
-  // UI Vite por DEFECTO: si hay UI construida (assets/ui), se sirve esa. La inline legacy queda solo como
-  // fallback si NO hay build, o si se fuerza con CONDUCTOR_UI_STATIC=0. (Antes era opt-in con =1.)
   const useStaticUi = hasStaticUi(UI_DIR) && process.env.CONDUCTOR_UI_STATIC !== '0';
   // huella de build de la UI: el index.html referencia los assets HASHEADOS, así que su hash cambia en cada
   // build. El cliente lo vigila vía /api/ping y se auto-recarga cuando cambia (no más "lo veo desactualizado"
@@ -6130,12 +6161,16 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
     return true;
   };
   // body con TOPE (anti-OOM): un POST gigante no debe acumular sin límite en memoria
-  const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r({}); } }); req.on('end', () => { if (over) return; try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
+  // null = body inválido (JSON malformado, overflow o no-objeto) → los handlers responden 400. Antes degradaba
+  // a {} en silencio y un POST corrupto a `continue` APROBABA la pausa con payload vacío.
+  const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r(null); } }); req.on('end', () => { if (over) return; try { const j = JSON.parse(b || '{}'); r(j && typeof j === 'object' && !Array.isArray(j) ? j : null); } catch { r(null); } }); });
   const launch = (proj, name, request, complexity, domain, models, auto, preset, pipeline, runTests) => {
     const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
     child.on?.('exit', () => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; }); // exitedAt → la purga puede sacarlo del Map
+    // sin esto, un fallo de spawn (ENOENT/EPERM) emitía 'error' sin listener → uncaughtException tumbaba TODA la app y la reserva quedaba en 409 permanente
+    child.on?.('error', (e) => { reg.exited = true; reg.exitedAt = Date.now(); reg.pending = null; reg.error = String(e?.message || e); });
     runs.set(runKey(proj.id, name), reg);
     return reg;
   };
@@ -6158,7 +6193,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const activos = [...runs.values()].filter((r2) => !r2.exited).length;
         if (activos && u.searchParams.get('force') !== '1') return json(409, { ok: false, error: 'hay ' + activos + ' run(s) en curso' });
         json(200, { ok: true, bye: true });
-        for (const [, r2] of runs) { try { r2.child.kill?.(); } catch {} }
+        for (const [, r2] of runs) { try { if (r2.child) killTree(r2.child); } catch {} } // árbol completo: con shell:true, kill() solo mataba el cmd.exe intermedio
         if (onShutdown) onShutdown(); else server.close();
         return;
       }
@@ -6220,6 +6255,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       // idempotente (initConfig NUNCA pisa la config del usuario). Proyecto = el registrado (projectId) o el default.
       if (req.method === 'POST' && u.pathname === '/api/init') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
         try { const r = initConfig(join(proj.root, 'openspec')); return json(200, { ok: true, created: r.created, copilotignore: r.copilotignore }); }
@@ -6239,6 +6275,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       }
       if (req.method === 'POST' && u.pathname === '/api/byok/save') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         const { url: bUrl, key, type } = b;
         if (!bUrl || !key) return json(400, { ok: false, error: 'url y key requeridos' });
         try {
@@ -6266,7 +6303,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       }
       if (u.pathname === '/api/changes') {
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
-        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root) }));
+        // pending=true ⇔ ese run espera una DECISIÓN humana ahora mismo → el panel/sidebar lo señalan (un run
+        // pausado era invisible fuera de su propia pantalla, justo en la herramienta cuyo corazón es la pausa).
+        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
         const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
@@ -6278,6 +6317,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       // (anti-ruta-arbitraria). Es un acto DELIBERADO del usuario → se persiste (coherencia #7: registro consciente).
       if (req.method === 'POST' && u.pathname === '/api/register') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'ruta no válida' });
         const rp = resolve(b.project);
         if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'debe ser una ruta con openspec/ o .git' });
@@ -6286,7 +6326,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       }
       if (req.method === 'POST' && u.pathname === '/api/launch') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!b.request || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(b.name || '')) return json(400, { ok: false, error: 'request y name (kebab) requeridos' });
+        b.request = String(b.request).slice(0, 8000); // acotado ANTES de viajar como argv al driver (coherente con el slice de runState)
         // SEGURIDAD (auditoría P1 — ejecución en FS arbitrario): b.project llega por HTTP. NO lanzar el agente
         // (--allow-all-tools en la fase coder) en una ruta ARBITRARIA del FS ni auto-persistirla. Solo se acepta
         // si es el root servido por defecto, o un proyecto REAL (tiene openspec/ o .git). Un dir cualquiera
@@ -6352,6 +6394,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       }
       if (req.method === 'POST' && u.pathname === '/api/resume') {
         const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(b.name || ''))) return json(400, { ok: false });
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto desconocido' });
@@ -6391,6 +6434,8 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         if (seg[2] === 'state') return json(200, DEMO_STATE());
         if (seg[2] === 'artifact') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(['## ADDED Requirements (demo)', '<!-- id: REQ-HEADER -->', '### Requirement: Header', 'The system SHALL show a header.'].join(String.fromCharCode(10))); }
         if (seg[2] === 'diff') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(['+++ src/header.js (nuevo)', '+ // @conductor REQ-HEADER', '+ export const header = (t) => ...'].join(String.fromCharCode(10))); }
+        // files con la MISMA forma que el endpoint real: sin esto el run-screen del demo casca leyendo .files.length
+        if (seg[2] === 'files') return json(200, { files: [{ p: 'src/header.js', k: 'A', added: 34, removed: 0 }, { p: 'src/header.test.js', k: 'A', added: 21, removed: 0 }, { p: 'src/app.js', k: 'M', added: 3, removed: 1 }], totals: { files: 3, added: 58, removed: 1 }, fromGit: true });
         return json(200, { ok: true });
       }
       // /run/<name> → página del run (misma app, misma pestaña)
@@ -6410,8 +6455,13 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         }
         if (req.method === 'POST' && action === 'continue') {
           const payload = await readBody(req);
+          if (!payload) return json(400, { ok: false, error: 'body JSON inválido' });
           if (!reg || reg.exited || !reg.pending) return json(409, { ok: false });
-          reg.pending = null; try { reg.child.send({ t: 'continue', payload }); } catch {}
+          // enviar PRIMERO, limpiar pending solo si el canal respondió: antes un send fallido dejaba la pausa
+          // irrecuperable (pending ya borrado, driver esperando) y aun así respondía ok.
+          let sent = false; try { sent = reg.child.send({ t: 'continue', payload }) !== false; } catch { sent = false; }
+          if (!sent) return json(502, { ok: false, error: 'canal IPC caído — reanuda o detén el run' });
+          reg.pending = null;
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'resume') {
@@ -6429,7 +6479,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           return json(200, { ok: true });
         }
         if (action === 'artifact' && req.method === 'POST') {
-          const { p: rel, content } = await readBody(req);
+          const bodyArt = await readBody(req);
+          if (!bodyArt) return json(400, { ok: false, error: 'body JSON inválido' });
+          const { p: rel, content } = bodyArt;
           const okPath = rel && rel.endsWith('.md') && !touchesPlumbing(rel) && safeRead(changeDir, rel) !== null;
           if (!okPath || typeof content !== 'string' || content.length > 200000) return json(400, { ok: false });
           writeFileSync(join(changeDir, rel), content);
@@ -6462,7 +6514,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           return json(200, { files, totals, fromGit });
         }
         if (req.method === 'POST' && action === 'rollback') {
-          const { phase } = await readBody(req);
+          const bodyRb = await readBody(req);
+          if (!bodyRb) return json(400, { ok: false, error: 'body JSON inválido' });
+          const { phase } = bodyRb;
           if (reg && !reg.exited && !reg.pending) return json(409, { ok: false, error: 'el run está en marcha — pausa o detén antes de deshacer' });
           try { const r2 = rollbackTo(proj.root, changeDir, String(phase || '')); return json(200, { ok: true, restored: r2.restored.length, removed: r2.removed.length }); }
           catch (e) { return json(500, { ok: false, error: e.message }); }
@@ -6873,6 +6927,9 @@ switch (cmd) {
         if (m.t === 'continue' && resolver) { const r2 = resolver; resolver = null; r2(m.payload || {}); }
         if (m.t === 'stop') { stopSig.requested = true; if (resolver) { const r2 = resolver; resolver = null; r2({ stop: true }); } }
       });
+      // la app padre cayó o se relevó → sin canal no hay quien apruebe pausas ni pare el run: STOP limpio
+      // (drive persiste STOPPED, libera el lock y el run queda reanudable) en vez de zombi huérfano.
+      process.on('disconnect', () => { stopSig.requested = true; if (resolver) { const r2 = resolver; resolver = null; r2({ stop: true }); } });
       const auto0 = has('--auto') || ucfg.autoApprove === true;
       ipcPause = {
         stopSignal: stopSig,
@@ -7387,4 +7444,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 10bf86f7ea388c7d66cccdc49f8a55482075ed1c2e50f2c0f500f7b227d2fa48
+// build-inputs-sha256: fd05fb9ab459f12875c9ebaf185f5927b17641d343fd09bbc654aaec7f439387

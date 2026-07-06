@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
-import { start, next, resolvePhases } from './orchestrate.mjs';
+import { start, next, resolvePhases, KNOWN_PHASES } from './orchestrate.mjs';
 import { resolvePreset } from './presets.mjs';
 import { checkCoherence, parseReport } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
@@ -273,6 +273,16 @@ export function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_
   return args;
 }
 
+// con shell:true en Windows, child.kill() solo mata el cmd.exe intermedio — el copilot real seguía VIVO
+// escribiendo en el repo tras un timeout/STOP. taskkill /T /F tumba el árbol completo; POSIX no lo necesita.
+export function killTree(child) {
+  if (!child || typeof child.pid !== 'number') return;
+  if (process.platform === 'win32') {
+    try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); return; } catch {}
+  }
+  try { child.kill(); } catch {}
+}
+
 export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, role, phase, mcp, allowTools }) {
   const cmd = process.env.CONDUCTOR_AGENT_CMD || 'copilot';
   const args = agentArgs(role, mcp, process.env.CONDUCTOR_AGENT_ARGS, allowTools || {});
@@ -298,13 +308,14 @@ export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopS
     let out = '', err = '';
     let stopPoll = null;
     const finish = (r) => { if (stopPoll) clearInterval(stopPoll); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
-    const timer = setTimeout(() => { try { child.kill(); } catch {} finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
+    const timer = setTimeout(() => { killTree(child); finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
     // STOP del usuario: mata la fase en vuelo (la sesión efímera se limpia igualmente en finish)
-    if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); try { child.kill(); } catch {} finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
+    if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); killTree(child); finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
     child.stdout.on('data', (d) => { out += d; if (out.length > 262144) out = out.slice(-262144); }); // tope 256KB (anti-leak en runs verbosos)
     child.stderr.on('data', (d) => { err += d; if (err.length > 262144) err = err.slice(-262144); });
     child.on('error', (e) => { clearTimeout(timer); finish({ code: -1, err: `'${cmd}': ${e.message}` }); });
     child.on('close', (code) => { clearTimeout(timer); finish({ code, out, err }); });
+    child.stdin.on('error', () => {}); // EPIPE asíncrono (agente muerto antes de leer) mataba el driver por uncaughtException
     try { child.stdin.write(prompt); child.stdin.end(); } catch {}
   });
 }
@@ -579,8 +590,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   }
   // configurable-pauseat: dónde pausa la revisión es del proyecto. Si openspec/conductor.json define
   // "pauseAt" (subconjunto de fases), gana sobre el default que pase el llamador. La fase "fix" SIEMPRE pausa.
-  const KNOWN_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'];
-  const pauseEff = Array.isArray(cfg.pauseAt) ? cfg.pauseAt.filter((p) => KNOWN_PHASES.includes(p)) : (preset?.pauseAt ?? pauseAt);
+  const pauseEff = Array.isArray(cfg.pauseAt) ? cfg.pauseAt.filter((p) => KNOWN_PHASES.includes(p)) : (preset?.pauseAt ?? pauseAt); // KNOWN_PHASES = lista canónica de orchestrate
 
   // TIMEOUT DE REVISIÓN HUMANA (R-A3): en headless/CI/--auto nadie atiende la pausa → el run colgaría
   // indefinidamente. Política cfg.onReviewTimeout: 'wait' (def · sin timeout = cero regresión) | 'continue'
@@ -674,7 +684,9 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // BASELINE del run (solo fresh): captura el árbol AL ARRANCAR → el resumen de "Cambios" diffea contra él y enseña
   // SOLO los cambios de ESTE run, nunca lo pre-existente sin commitear. En resume se reusa el baseline ya persistido.
   if (!resumed) captureBaseTree(projectRoot, changeDir);
-  const writeTimeline = (verdict) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  // `reason` (2º arg, solo en verdicts terminales): el porqué humano del BLOCKED/ABORTED/STOPPED — la UI lo
+  // pinta bajo la pill; sin esto el run moría con una pill muda y el motivo solo vivía en el return/log.
+  const writeTimeline = (verdict, reason) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
@@ -703,7 +715,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // STOP limpio: conserva lo hecho (el resume retoma con el mismo comando), cierra runner y sesiones.
   const stopped = async () => {
     log('■ run DETENIDO por el usuario — lo completado se conserva; relanza el mismo comando para reanudar');
-    currentInfo = null; writeTimeline('STOPPED'); writeDashboard('STOPPED');
+    currentInfo = null; writeTimeline('STOPPED', 'detenido por el usuario — lo completado se conserva; Reanudar continúa donde quedó'); writeDashboard('STOPPED');
     await runAgent.close?.();
     releaseLock();
     return { done: false, verdict: 'STOPPED', phase: step.phase, trail, timeline };
@@ -727,7 +739,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     // real: la 3ª fase salió null y el agente "no producía el artefacto de undefined" 2× quemando opus.
     if (!phase) {
       log('❌ plan de fases corrupto: fase null/vacía — ABORTO SIN llamar al modelo (cero coste). Revisa la config del proyecto.');
-      writeTimeline('ABORTED'); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock();
+      writeTimeline('ABORTED', 'plan de fases corrupto (fase null/vacía) — no se lanzó el agente; revisa openspec/conductor.json'); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock();
       return { done: false, verdict: 'ABORTED', phase: null, reason: 'fase null en el plan (no se lanzó el agente)', trail, timeline };
     }
     if (stopSignal?.requested) return stopped();
@@ -738,8 +750,13 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       log(`⏸ pausado antes de "${phase}" — revisa${phase === 'fix' ? ' los hallazgos del gate y elige cuáles arreglar' : ' los artefactos'} y aprueba para continuar`);
       // findings ESTRUCTURADOS a la decisión humana (message + severidad + fichero): el revisor ve qué es ERROR vs
       // aviso y a qué fichero apunta cada hallazgo (antes solo el texto). El `selected` sigue mapeando por índice.
-      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined }));
-      if (pr === REVIEW_ABORT) { writeTimeline('STOPPED'); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`, trail, timeline }; }
+      // heartbeat del lock DURANTE la pausa: sin esto, a los 15 min de espera humana el lock caducaba y el
+      // guardrail 1-run/repo desaparecía (otro run podía arrancar encima del pausado).
+      const pauseHb = setInterval(takeLock, 5 * 60_000);
+      let pr;
+      try { pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined })); }
+      finally { clearInterval(pauseHb); }
+      if (pr === REVIEW_ABORT) { const why = `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`; writeTimeline('STOPPED', why); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: why, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
       // FIX DIRIGIDO: el humano elige qué hallazgos van al prompt del fix (default: todos)
       if (phase === 'fix' && Array.isArray(pr?.selected) && step.findings) {
@@ -815,7 +832,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     if (projPolicy && mspec.model && !modelAllowed(mspec.model, projPolicy)) {
       const why = `el modelo "${mspec.model}" (fase "${phase}") no está en allowedModels de openspec/policy.json — bloqueado por gobierno`;
       log(`⛔ BLOCKED: ${why}`);
-      currentInfo = null; writeTimeline('BLOCKED'); writeDashboard('BLOCKED');
+      currentInfo = null; writeTimeline('BLOCKED', why); writeDashboard('BLOCKED');
       await runAgent.close?.(); releaseLock();
       return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline };
     }
@@ -836,7 +853,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         && cfg.byokFallback !== true && process.env.CONDUCTOR_BYOK_FALLBACK !== '1') {
       const reason = `la fase "${phase}" pidió byok:${mspec.model} pero no hay credenciales BYOK (ni env COPILOT_PROVIDER_* ni ~/.conductor/byok.json). Para no gastar AI Credits de pago sin querer, el run se DETIENE. Arregla con \`conductor byok save\`, o permite el fallback con "byokFallback": true en openspec/conductor.json.`;
       log(`⛔ BLOCKED: ${reason}`);
-      currentInfo = null; writeTimeline('BLOCKED'); writeDashboard('BLOCKED');
+      currentInfo = null; writeTimeline('BLOCKED', reason); writeDashboard('BLOCKED');
       await runAgent.close?.();
       releaseLock();
       return { done: false, verdict: 'BLOCKED', phase, reason, trail, timeline };
@@ -847,7 +864,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     if (failedPre.length) {
       const why = `fase "${phase}" bloqueada: pre-condición no cumplida (${failedPre.join(', ')})`;
       log(`⛔ BLOCKED: ${why}`);
-      currentInfo = null; writeTimeline('BLOCKED'); writeDashboard('BLOCKED');
+      currentInfo = null; writeTimeline('BLOCKED', why); writeDashboard('BLOCKED');
       await runAgent.close?.(); releaseLock();
       return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline };
     }
@@ -1063,7 +1080,7 @@ ${readSafe(x.lp).trim()}`);
     timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
     writeTimeline('running'); // incremental: la mini-web en vivo (serve) lee esto tras cada fase
-    if (!ok) { log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED'); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, trail, timeline }; }
+    if (!ok) { const why = `la fase "${phase}" no produjo su artefacto tras ${maxRetries + 1} intentos — la secuencia no se salta; revisa el modelo elegido o el registro del run`; log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED', why); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, reason: why, trail, timeline }; }
     log(`✅ ${phase}`);
     trail.push(phase);
 
@@ -1093,11 +1110,11 @@ ${readSafe(x.lp).trim()}`);
         if (mode === 'pause') {
           log(`⏸ ${why} — pido decisión humana (onExceed:pause)`);
           const pr = await awaitReview(onPause({ before: 'budget', role: 'reviewer', budget: { tokens: totIn + totOut, cost_usd: +totCost.toFixed(4), limit: budget } }));
-          if (pr === REVIEW_ABORT || pr?.stop || stopSignal?.requested) { writeTimeline('BLOCKED'); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline }; }
+          if (pr === REVIEW_ABORT || pr?.stop || stopSignal?.requested) { writeTimeline('BLOCKED', why); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline }; }
           log(`   ▶ presupuesto ampliado por el revisor — continúa`);
         } else {
           log(`⛔ BLOCKED: ${why}`);
-          writeTimeline('BLOCKED'); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock();
+          writeTimeline('BLOCKED', why); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock();
           return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline };
         }
       }
@@ -1257,7 +1274,7 @@ ${readSafe(x.lp).trim()}`);
     } catch (e) { log(`   provenance: ${e.message}`); }
   }
 
-  writeTimeline(step.verdict);
+  writeTimeline(step.verdict, step.error);
   writeDashboard(step.verdict);
   await runAgent.close?.(); // si el runner mantiene un cliente vivo (SDK), se cierra aquí
   releaseLock();

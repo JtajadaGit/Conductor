@@ -25,6 +25,9 @@ export class RunScreen extends CElement {
   @state() private hotModel = '';
   @state() private models: ModelsResponse | null = null;
   @state() private files: RunFiles | null = null; // resumen de cambios (experiencia Git)
+  @state() private busy = ''; // acción POST en vuelo ('resume'|'approve'|'rollback'|'archive') → botón deshabilitado con texto de progreso
+  @state() private actionErr = ''; // error de la última acción — inline, nunca en silencio
+  @state() private archivedMsg = ''; // resultado del archivado (promoted/needsManualMerge)
   private filesSig = ''; // re-fetch del changeset solo cuando cambia algo que lo afecta (no en cada poll)
   private api = new ConductorApi('/api/');
   private poller: RunPoller | null = null;
@@ -33,13 +36,17 @@ export class RunScreen extends CElement {
   override updated(_changed: PropertyValues): void {
     if (this.apiBase && this.apiBase !== this.activeBase) { this.activeBase = this.apiBase; this.restart(); }
   }
-  override disconnectedCallback(): void { super.disconnectedCallback(); this.poller?.stop(); }
+  override disconnectedCallback(): void { super.disconnectedCallback(); this.poller?.stop(); document.title = 'conductor'; }
 
   private restart(): void {
     this.poller?.stop();
     this.s = null; this.err = ''; this.files = null; this.filesSig = '';
     this.api = new ConductorApi(this.apiBase);
-    this.poller = new RunPoller(this.apiBase, (s) => { this.s = s; void this.maybeFetchFiles(s); }, (e) => { this.err = (e as Error).message; });
+    this.poller = new RunPoller(this.apiBase, (s) => {
+      this.s = s; void this.maybeFetchFiles(s);
+      // señal de atención en la pestaña: una pausa esperando decisión no debe ser invisible con la pestaña de fondo
+      document.title = s.pending ? '⏸ tu decisión — conductor' : 'conductor';
+    }, (e) => { this.err = (e as Error).message; });
     this.poller.start();
     // catálogo para el select "Cambiar modelo" — los modelos son globales, siempre desde /api/ (B3)
     void new ConductorApi('/api/').models().then((m) => { this.models = m; }).catch(() => {});
@@ -68,8 +75,33 @@ export class RunScreen extends CElement {
   }
 
   private async approve(fix: boolean): Promise<void> {
-    await this.api.continue({ selected: fix ? [...this.selected] : undefined, note: this.note || undefined, model: this.hotModel || undefined });
-    this.note = ''; this.hotModel = ''; this.selected = new Set();
+    this.busy = 'approve'; this.actionErr = '';
+    try {
+      const r = await this.api.continue({ selected: fix ? [...this.selected] : undefined, note: this.note || undefined, model: this.hotModel || undefined });
+      if (!r.ok) { this.actionErr = r.error || 'no se pudo aprobar — reintenta o detén el run'; return; }
+      this.note = ''; this.hotModel = ''; this.selected = new Set();
+      if (this.s) this.s = { ...this.s, pending: null }; // óptimista: la card desaparece ya (el poll confirma en ≤2s)
+    } finally { this.busy = ''; }
+  }
+  // Reanudar reinicia el POLLER: éste se auto-detiene en done, así que sin restart() la pantalla quedaba
+  // congelada mostrando el estado terminado aunque el run ya corría de nuevo en el servidor.
+  private async resumeRun(): Promise<void> {
+    this.busy = 'resume'; this.actionErr = '';
+    try {
+      const r = await this.api.resume();
+      if (!r.ok) { this.actionErr = r.error || 'no se pudo reanudar'; return; }
+      this.restart();
+    } finally { this.busy = ''; }
+  }
+  private async archiveRun(): Promise<void> {
+    if (!confirm('¿Archivar este change? Se promueve la spec a la fuente de verdad y el change pasa al histórico. Tu código no se toca.')) return;
+    this.busy = 'archive'; this.actionErr = '';
+    try {
+      const r = await this.api.archiveRun();
+      if (!r.ok) { this.actionErr = r.error || 'no se pudo archivar'; return; }
+      const manual = r.needsManualMerge?.length ? ` · ${r.needsManualMerge.length} spec(s) requieren merge manual (cambios no aditivos)` : '';
+      this.archivedMsg = `Archivado. ${r.promoted?.length ?? 0} spec(s) promovidas${manual}.`;
+    } finally { this.busy = ''; }
   }
   private toggleSel(i: number, on: boolean): void {
     const next = new Set(this.selected);
@@ -78,7 +110,11 @@ export class RunScreen extends CElement {
   }
   private async rollback(phase: string): Promise<void> {
     if (!confirm(`¿Deshacer "${phase}"? Se restaurarán los archivos al estado previo a esta fase. La rama de git no se modifica.`)) return;
-    await this.api.rollback(phase);
+    this.busy = 'rollback'; this.actionErr = '';
+    try {
+      const r = await this.api.rollback(phase);
+      if (!r.ok) this.actionErr = r.error || 'no se pudo deshacer';
+    } finally { this.busy = ''; }
   }
   private viewDiff(path: string): void {
     document.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'diff', path } }));
@@ -105,18 +141,22 @@ export class RunScreen extends CElement {
       <p class="subhead">${s.project || '—'}${s.branch ? html` · ${s.branch}` : ''}</p>
       <div class="actbar">
         <a class="btn sm sec" href=${this.sessionHref()}>Ver sesión</a>
-        ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm sec resume" @click=${() => void this.api.resume()}>↻ Reanudar</button>` : nothing}
+        ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm sec resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
+        ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm sec" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : '⬆ Archivar'}</button>` : nothing}
         ${s.hasDashboard ? html`<a class="btn sm sec dash" href=${this.dashboardHref()} target="_blank">Informe</a>` : nothing}
         <a class="btn sm sec aiact" href=${this.apiBase + 'aiact'} target="_blank">AI Act</a>
         ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested} @click=${() => void this.api.stop()}>${s.stopRequested ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
       </div>
+      ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
+      ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
+      ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><b>Por qué:</b> ${s.reason}</div>` : nothing}
       ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (antes de verify): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
       ${this.requestBox(s)}
       ${this.phaseId ? this.phaseDetail(s) : nothing}
-      ${s.pending ? this.pendingCard(s.pending) : nothing}
+      ${s.pending ? this.pendingCard(s.pending, s) : nothing}
       ${this.cards(s)}
-      ${this.changesSection()}
       ${this.pipeline(s)}
+      ${this.changesSection()}
       ${s.cost ? html`<model-breakdown .cost=${s.cost}></model-breakdown>` : nothing}
       ${this.logBox(s)}
     `;
@@ -144,7 +184,25 @@ export class RunScreen extends CElement {
     </div>`;
   }
 
-  private pendingCard(pd: PendingDecision): TemplateResult {
+  // artefactos YA producidos por fases previas — la pausa dice "revisa los artefactos" pero antes no enlazaba
+  // ninguno: "editar la spec" era inalcanzable sin bajar a la barra de fases. Aquí, a un clic (viewArtifact = editable).
+  private reviewArtifacts(s: RunState): Array<{ label: string; path: string }> {
+    const FIXED: Record<string, string> = { explore: 'exploration.md', propose: 'proposal.md', clarify: 'questions.md', design: 'design.md', tasks: 'tasks.md', apply: 'apply-report.md' };
+    const out: Array<{ label: string; path: string }> = [];
+    for (const p of s.phases) {
+      if (!p.ok) continue;
+      if (p.phase === 'spec') {
+        // la ruta real de la spec depende del dominio → se extrae del fichero que la fase escribió
+        const f = p.files?.find((x) => /specs[\\/].+[\\/]spec\.md$/i.test(x.p));
+        const rel = f ? f.p.replace(/\\/g, '/').replace(/^.*openspec\/changes\/[^/]+\//, '') : '';
+        if (rel && rel.startsWith('specs/')) out.push({ label: 'spec.md', path: rel });
+      } else if (FIXED[p.phase]) out.push({ label: FIXED[p.phase], path: FIXED[p.phase] });
+    }
+    return out.filter((a, i) => out.findIndex((b) => b.path === a.path) === i);
+  }
+
+  private pendingCard(pd: PendingDecision, s: RunState): TemplateResult {
+    const arts = this.reviewArtifacts(s);
     // hallazgos tolerantes: string (compat/estados viejos) u objeto {message, severity, file}. Se muestra la SEVERIDAD
     // (error vs aviso — antes invisible, todos parecían igual de graves) y el FICHERO (clickable si es un artefacto del
     // cambio) → el revisor decide qué corregir VIENDO qué es grave y dónde, sin bajar a la barra de fases.
@@ -158,6 +216,7 @@ export class RunScreen extends CElement {
         </div>
       </header>
       <div class="decision-body">
+        ${arts.length ? html`<div class="decision-arts"><span class="ctx-lbl">Revisar</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}</div>` : nothing}
         ${fnd.length ? html`<ul class="decision-findings">${fnd.map((f, i) => html`
           <li>
             <label><input type="checkbox" .checked=${this.selected.has(i)} @change=${(e: Event) => this.toggleSel(i, (e.target as HTMLInputElement).checked)}>
@@ -170,7 +229,7 @@ export class RunScreen extends CElement {
           <label class="fl" style="flex:1;min-width:14rem">Nota (opcional)<textarea class="pend-note" rows="2" .value=${this.note} @input=${(e: Event) => { this.note = (e.target as HTMLTextAreaElement).value; }} placeholder="Instrucción para esta fase (opcional)"></textarea></label>
           ${this.hotModelSelect()}
         </div>
-        <button class="approve" @click=${() => void this.approve(fnd.length > 0)}>${fnd.length ? 'Corregir los hallazgos seleccionados' : 'Aprobar y continuar'}</button>
+        <button class="approve" ?disabled=${this.busy === 'approve'} @click=${() => void this.approve(fnd.length > 0)}>${this.busy === 'approve' ? 'Enviando…' : (fnd.length ? 'Corregir los hallazgos seleccionados' : 'Aprobar y continuar')}</button>
       </div>
     </section>`;
   }
@@ -190,13 +249,14 @@ export class RunScreen extends CElement {
       <div class="card"><small>Tiempo</small><span>${secs(s.total_ms ?? (s.current ? s.now - s.current.startedAt : null))}</span></div>
       ${s.usage ? html`<div class="card"><small>qwen · LiteLLM</small><span>$${s.usage.spend.toFixed(2)}${s.usage.budget ? html` / $${s.usage.budget.toFixed(0)}` : nothing}</span>${s.usage.budget ? html`<div class="pbar ${s.usage.spend / s.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (s.usage.spend / s.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
       ${gh ? html`<div class="card aic"><small>AI Credits</small><span>${gh.used}/${gh.entitlement}</span><div class="pbar ${gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, gh.percentUsed)}%"></i></div></div>` : nothing}
+      ${s.savings && s.savings.byok_phases > 0 ? html`<div class="card ok" title="Fases ejecutadas en qwen vía LiteLLM: no consumen AI Credits (↓${fmt(s.savings.byok_in)} ↑${fmt(s.savings.byok_out)} tokens fuera de Copilot)"><small>Ahorro qwen</small><span>${s.savings.byok_phases}/${s.savings.byok_phases + s.savings.copilot_phases} fases · 0 AIC</span></div>` : nothing}
     </div>`;
   }
 
   // CAMBIOS del run (experiencia Git): changeset consolidado — fichero × tipo × +/− líneas, clic → diff coloreado.
   private changesSection(): TemplateResult | typeof nothing {
     const f = this.files;
-    if (!f || !f.files.length) return nothing;
+    if (!f?.files?.length) return nothing; // el modo demo (u otro backend parcial) puede servir un objeto sin `files`
     const t = f.totals;
     return html`
       <div class="sectrow"><h2 class="sect">Cambios</h2>${f.fromGit ? nothing : html`<span class="muted" style="font-size:.72rem">aprox. (sin git)</span>`}</div>
@@ -253,7 +313,7 @@ export class RunScreen extends CElement {
         <span class="name"><a href="${this.runPath()}?phase=${p.phase}">${p.ok ? '✅' : '❌'} ${phaseIcon(p.phase)} ${p.phase}</a></span>
         <span class="role">${p.role}</span>
         ${p.model ? html`<span class="badge prov-${p.provider ?? 'none'}">${modelIcon(p.model, p.provider)} ${p.model}</span>` : nothing}
-        ${p.modelMismatch ? html`<span class="badge warn" title="el proveedor reportó otro modelo">⚠ modelo</span>` : nothing}
+        ${p.modelMismatch ? html`<span class="badge warn" title="pedido ${p.modelRequested ?? '?'} → el proveedor reportó ${p.modelReported ?? '?'}">⚠ modelo</span>` : nothing}
         ${p.attempts > 1 ? html`<span class="badge">${p.attempts}×</span>` : nothing}
         ${p.lenses ? html`<span class="badge">${p.lenses.length} lentes</span>` : nothing}
         ${p.resumed ? html`<span class="badge">⏯ heredada</span>` : nothing}
@@ -261,7 +321,7 @@ export class RunScreen extends CElement {
       </div>
       ${this.fileList(p.files)}
       ${this.phaseContext(p)}
-      ${(p.phase === 'apply' || p.phase === 'fix') ? html`<div style="margin-top:var(--sp-2)"><button class="rollbtn" @click=${() => void this.rollback(p.phase)}>↩ Deshacer</button></div>` : nothing}
+      ${(p.phase === 'apply' || p.phase === 'fix') ? html`<div style="margin-top:var(--sp-2)"><button class="rollbtn" ?disabled=${this.busy === 'rollback'} @click=${() => void this.rollback(p.phase)}>${this.busy === 'rollback' ? 'Deshaciendo…' : '↩ Deshacer'}</button></div>` : nothing}
       ${p.hasRaw ? html`<raw-output .apiBase=${this.apiBase} .phase=${p.phase}></raw-output>` : nothing}
       ${p.lastError ? html`<div class="errline">${p.lastError}</div>` : nothing}
     </div>`;

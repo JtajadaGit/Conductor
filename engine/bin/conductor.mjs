@@ -161,6 +161,9 @@ switch (cmd) {
         if (m.t === 'continue' && resolver) { const r2 = resolver; resolver = null; r2(m.payload || {}); }
         if (m.t === 'stop') { stopSig.requested = true; if (resolver) { const r2 = resolver; resolver = null; r2({ stop: true }); } }
       });
+      // la app padre cayó o se relevó → sin canal no hay quien apruebe pausas ni pare el run: STOP limpio
+      // (drive persiste STOPPED, libera el lock y el run queda reanudable) en vez de zombi huérfano.
+      process.on('disconnect', () => { stopSig.requested = true; if (resolver) { const r2 = resolver; resolver = null; r2({ stop: true }); } });
       const auto0 = has('--auto') || ucfg.autoApprove === true;
       ipcPause = {
         stopSignal: stopSig,

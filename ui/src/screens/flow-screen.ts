@@ -13,6 +13,7 @@ export class FlowScreen extends CElement {
     { ph: 'propose', role: 'planner', prov: 'Copilot/qwen', does: 'Propuesta: Why / What / Impact (lenguaje de dominio, sin nombres de framework).', guard: 'No avanza hasta que existe proposal.md.' },
     { ph: 'spec', role: 'planner', prov: 'Copilot/qwen', does: 'Spec OpenSpec: requisitos SHALL + escenarios GIVEN/WHEN/THEN, con id REQ-…', guard: 'No avanza sin spec.md con cabecera delta + ≥1 requisito con escenario.' },
     { ph: 'apply', role: 'coder', prov: 'qwen / Copilot', does: 'Implementa la spec a calidad de producción; comenta @conductor REQ-… en cada fichero.', guard: 'No avanza si el agente no escribió ningún fichero (reintenta).' },
+    { ph: 'test (opcional)', role: 'tester', prov: '0 tokens', does: 'Ejecuta TUS pruebas reales (toggle «test» al lanzar, o checks de conductor.json) — determinista, sin LLM.', guard: 'Si fallan → ciclo fix → re-test; si no converge, escala a ti.' },
     { ph: 'verify', role: 'reviewer', prov: 'Copilot/qwen', does: 'Revisa por escenario (lentes paralelas: correctness/security/tests) + emite Verdict.', guard: 'GATE determinista (sin LLM) + el Verdict del reviewer: si FAIL → no cierra.' },
   ];
 
@@ -23,7 +24,7 @@ export class FlowScreen extends CElement {
         Ningún modelo puede saltarse una fase, no delegar, ni "freestylear": un modelo flojo da peor contenido,
         <b>no rompe la secuencia</b>. Esta página es 100% local — <b>0 tokens</b>.</p>
 
-      <h2 class="sect">El pipeline (complejidad <code>simple</code>)</h2>
+      <h2 class="sect">El pipeline (cambio típico — los grandes añaden explore/clarify/design/tasks)</h2>
       <div class="flow">
         ${this.phases.map((p, i) => html`
           <div class="flow-step">
@@ -36,9 +37,8 @@ export class FlowScreen extends CElement {
         <div class="flow-arrow" aria-hidden="true">↓</div>
         <div class="flow-gate">
           <b>GATE determinista (sin LLM)</b>
-          <p class="muted">Coherencia spec↔tareas↔apply-report + trazabilidad REQ↔código↔test (@conductor). PASA → <span class="g-ok">GREEN</span>.
-            FALLA o el reviewer marca <code>FAIL</code> → inserta <b>fix → verify</b> (máx. 2 ciclos; si sigue fallando → <span class="g-no">NOT-GREEN</span>, escala a humano).
-            Con <code>checks</code> declarados, exige además <b>build/test reales</b>.</p>
+          <p class="muted">Coherencia spec↔tareas↔apply-report + trazabilidad REQ↔código↔test (@conductor). PASA → <span class="g-ok">GREEN</span> (Verificado).
+            FALLA o el reviewer marca <code>FAIL</code> → inserta <b>fix → verify</b>; si tras los ciclos no converge → <span class="g-no">BLOCKED</span> («Necesita tu decisión»): el run escala a ti en vez de iterar a ciegas, con el motivo a la vista.</p>
         </div>
         <div class="flow-arrow" aria-hidden="true">↓</div>
         <div class="flow-seal"><b>GREEN</b> → código + spec + informe + <b>sello de procedencia</b> firmado + entrada en el <i>ledger</i> (audit trail).</div>

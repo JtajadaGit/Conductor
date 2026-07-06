@@ -10,7 +10,7 @@ Una instalación. Cero dependencias. Cero servidores.
 
 ## Contenido
 
-[Por qué Conductor](#por-qué-conductor) | [Cómo funciona](#cómo-funciona) | [Primeros pasos](#primeros-pasos) | [La mini-web](#la-mini-web-del-run) | [Coste y modelos](#coste-y-modelos) | [Seguridad](#seguridad) | [Documentación](#documentación)
+[Por qué Conductor](#por-qué-conductor) | [Cómo funciona](#cómo-funciona) | [Primeros pasos](#primeros-pasos) | [La app](#la-app-de-conductor) | [Coste y modelos](#coste-y-modelos) | [Seguridad](#seguridad) | [Documentación](#documentación)
 
 ---
 
@@ -33,19 +33,19 @@ Una instalación. Cero dependencias. Cero servidores.
 Dos formas de uso, mismo motor, mismo gate:
 
 ### ⭐ `/sdd-run` — el pipeline garantizado (recomendado)
-Pides una feature en una frase. Un **driver determinista** (código, no LLM) recorre las fases — `propose → spec → apply → verify` — lanzando al agente de Copilot en cada una, **pausando para tu revisión** antes de implementar y verificar, y validando con el gate. Al terminar: código + spec + informe + sello firmado.
+Pides una feature en una frase. Un **driver determinista** (código, no LLM) recorre las fases del plan — de `propose` y `spec` a `apply`, `test` (opcional, antes de verificar) y `verify` — lanzando al agente de Copilot en cada una, **pausando para tu revisión** antes de implementar y verificar, y validando con el gate. Al terminar: código + spec + informe + sello firmado.
 
 ```
 /conductor:sdd-run añade un componente Counter con botones +/- y un test
 ```
 
-- 🌐 **Mini-web en vivo** (se abre sola): fases, progreso, archivos tocados, tokens, coste, botones **Aprobar** y **■ Detener**.
+- 🌐 **App local en vivo** (se abre sola): fases, progreso, archivos tocados, tokens, coste, botones **Aprobar** y **■ Detener**.
 - ⏸ **Pausas de revisión** por defecto antes de `apply` y `verify` (quítalas con `autoApprove: true`).
 - 🔁 **Resume**: si se corta (o lo detienes), relanzar el mismo comando continúa donde quedó **sin re-pagar** las fases hechas.
 - 🔏 Al cerrar GREEN: `provenance.json` firmado + entrada en el ledger + `dashboard.html`.
 
-### Forma conversacional
-Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) y los agentes SDD siguen disponibles para trabajar en chat. La garantía dura la da `/sdd-run`.
+### Atajos desde el chat
+Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) existen como atajos conversacionales, pero todo lo que hacen está también en la app local — que es la superficie recomendada. La garantía dura la da `/sdd-run`.
 
 ---
 
@@ -55,7 +55,7 @@ Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) y los ag
 
 **Copilot CLI:**
 ```bash
-/plugin install https://gitlabdes.hiberus.com/iasmartcommerce/conductor
+/plugin install <URL del repo interno de conductor>
 ```
 
 **VS Code:** activa `chat.plugins.enabled` y `chat.subagents.allowInvocationsFromSubagents` en settings, luego Command Palette → `Chat: Install Plugin from Source` → URL del repo.
@@ -66,7 +66,7 @@ Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) y los ag
 ```
 /sdd-init
 ```
-Detecta stack/testing/arquitectura, genera `openspec/config.yaml` y deja el `.gitignore` preparado.
+Detecta stack/testing/arquitectura y genera `openspec/conductor.json` (tu configuración ejecutable) + `config.yaml` (metadata del stack). También puedes inicializar desde la propia app (botón «Inicializar este proyecto»).
 
 ### 3. (Opcional) Instruction files
 ```
@@ -87,7 +87,7 @@ Promueve los specs a la fuente de verdad y encadena la provenance al ledger.
 
 ---
 
-## La App de conductor (v3 — una sola URL)
+## La app de conductor
 
 Todo vive en **una app local**: `http://127.0.0.1:4750` (127.0.0.1, solo tú, **0 tokens** — código leyendo estado, sin LLM). El panel lista todos los runs del proyecto; cada run es una ruta (`/run/<nombre>`). `/sdd-run` lanza el run en la app y el chat termina ahí — el modelo de sesión ya no espera, narra ni puede estorbar. Instalable como app de escritorio (PWA) desde Chrome.
 
@@ -117,7 +117,6 @@ Conductor es **token-first**: prompts mínimos, sin narración del LLM (la web i
     "coder":    "copilot:claude-haiku-4.5",
     "reviewer": "byok:qwen36-msc1"
   },
-  "serve": true,
   "autoApprove": false
 }
 ```
@@ -135,7 +134,7 @@ Conductor es **token-first**: prompts mínimos, sin narración del LLM (la web i
 - **Provenance Ed25519** + ledger hash-encadenado (manipular una entrada rompe la cadena) + firma del propio motor (`selfcheck --pub`).
 - Agentes con scope estricto: **sin git, sin red, sin comandos destructivos**; reviewer read-only. El contenido del repo se trata como **datos**, no como instrucciones.
 - El motor (0 dependencias, un solo fichero) viaja dentro del plugin como servidor MCP; confinamiento de rutas con `CONDUCTOR_ROOT`.
-- Tests/build del proyecto → CI (no bloquean el pipeline interactivo; tech-agnóstico por diseño).
+- Tests del proyecto: fase `test` **opcional** justo antes de `verify` (FAIL → ciclo `fix` → re-test → BLOCKED si no converge); apagada por defecto y solo ejecuta con tu consentimiento explícito. El resto va a tu CI.
 
 ---
 

@@ -1,1 +1,0 @@
-import{a as e,d as t,f as n,h as r,l as i,t as a}from"./index-BbJHMIIU.js";var o=class extends i{constructor(...e){super(...e),this.verdict=null}render(){return r`<span class="pill ${e(this.verdict)}">${this.verdict??`EN CURSO`}</span>`}};a([t()],o.prototype,`verdict`,void 0),o=a([n(`status-pill`)],o);
