@@ -22,6 +22,7 @@ const INCLUDE = [
   'assets/conductor.mjs',
   'assets/ui',
   'plugin/skills',
+  'plugin/hooks', // guard-hook.mjs legible: los devs lo referencian desde su PreToolUse (defensa en profundidad)
 ];
 
 let ok = 0, skipped = 0;

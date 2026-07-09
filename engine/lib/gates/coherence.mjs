@@ -98,16 +98,19 @@ export function checkCoherence(dir, opts = {}) {
     }
   }
   if (tasks && !tasks.length) E('tasks.empty', 'tasks.md sin tareas', 'tasks.md');
+  // "hecho SIN evidencia" NO depende de tasks.md: un apply-report con Status: done y CERO ficheros creados/
+  // modificados debe bloquear SIEMPRE. Antes vivía bajo `if (tasks && report)` → en simple/quick-fix (que no
+  // llevan tasks.md) el chequeo se saltaba y un "done sin ficheros" pasaba a GREEN (hallazgo real).
+  if (report && report.status === 'done' && !report.filesCreated.length && !report.filesModified.length) {
+    E('status.done-no-files', 'Status: done sin ficheros listados', 'apply-report.md');
+  }
   if (tasks && report) {
     const total = tasks.length, done = tasks.filter((t) => t.done).length;
     if (report.tasksCompleted) {
       if (report.tasksCompleted.y !== total) E('report.total-mismatch', `report ${report.tasksCompleted.x}/${report.tasksCompleted.y} vs ${total} tareas reales (deriva)`, 'apply-report.md');
       if (report.tasksCompleted.x !== done) E('report.done-mismatch', `report dice ${report.tasksCompleted.x} hechas vs ${done} marcadas [x] (deriva)`, 'apply-report.md');
     } else W('report.no-count', 'apply-report sin "Tasks completed: X/Y"', 'apply-report.md');
-    if (report.status === 'done') {
-      if (done !== total) E('status.done-incomplete', `Status: done pero ${done}/${total} tareas [x]`, 'apply-report.md');
-      if (!report.filesCreated.length && !report.filesModified.length) E('status.done-no-files', 'Status: done sin ficheros listados', 'apply-report.md');
-    }
+    if (report.status === 'done' && done !== total) E('status.done-incomplete', `Status: done pero ${done}/${total} tareas [x]`, 'apply-report.md');
     if (report.status === 'partial' && done === total) W('status.partial-complete', 'Status: partial con todas las tareas [x]', 'apply-report.md');
   }
   return F;

@@ -1,8 +1,8 @@
 // conductor/lib/explain.mjs — ingeniería inversa: código (legacy) → borrador de spec OpenSpec.
 // Determinista, multi-stack (JS/TS, Java, PHP, Python). Extrae endpoints HTTP, clases/servicios y
-// genera spec.md (delta) + tasks.md + un OpenAPI esqueleto. El borrador se entrega al sdd-planner
-// (LLM) para refinarlo: determinista para la estructura, IA para el matiz. Ingeniería inversa
-// generalizada a cualquier stack.
+// genera spec.md (delta) + tasks.md + un OpenAPI esqueleto. El borrador se entrega a la fase de
+// planificación (LLM) para refinarlo: determinista para la estructura, IA para el matiz. Ingeniería
+// inversa generalizada a cualquier stack.
 import { readFileSync, readdirSync, statSync, lstatSync } from 'node:fs';
 import { join, relative, basename, extname } from 'node:path';
 

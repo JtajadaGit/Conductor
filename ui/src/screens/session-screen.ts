@@ -48,6 +48,18 @@ export class SessionScreen extends CElement {
     try { const d = await this.api.events({ cat: [...this.cats], q: this.q, limit: this.limit }); if (my !== this.seq) return; this.data = d; this.err = ''; }
     catch (e) { if (my !== this.seq) return; this.err = (e as Error).message; this.data = null; }
   }
+  // "cargar más" por OFFSET + append. Antes crecía `limit` y re-pedía desde 0 → topaba el cap 500 del server y un
+  // run con >500 eventos NUNCA cargaba del todo (botón inútil). Ahora pide la SIGUIENTE página y la concatena.
+  private async loadMore(): Promise<void> {
+    if (!this.data) return;
+    const my = ++this.seq;
+    const off = this.data.events.length;
+    try {
+      const d = await this.api.events({ cat: [...this.cats], q: this.q, limit: this.limit, offset: off });
+      if (my !== this.seq || !this.data) return;
+      this.data = { ...this.data, events: [...this.data.events, ...d.events] };
+    } catch { /* mantiene lo ya cargado */ }
+  }
   private toggleCat(k: string): void { const n = new Set(this.cats); if (n.has(k)) n.delete(k); else n.add(k); this.cats = n; void this.load(); }
   private onSearch(e: Event): void { this.q = (e.target as HTMLInputElement).value; if (this.qTimer) clearTimeout(this.qTimer); this.qTimer = setTimeout(() => void this.load(), 250); }
   private runPath(): string { return this.projId ? `/run/${this.projId}/${this.change}` : `/run/${this.change}`; }
@@ -68,6 +80,14 @@ export class SessionScreen extends CElement {
     }
     const d = this.data;
     if (!d) return loader('Cargando sesión');
+    // "sin traza" ahora llega como 200 vacío (noTrace) en vez de 404 — mismo estado vacío, sin ruido de consola.
+    // AUSENCIA REAL = summary.total (total del run, SIN filtrar). Antes se usaba d.total (conteo FILTRADO): buscar/
+    // filtrar a 0 resultados disparaba el dead-end "sin traza" y OCULTABA la barra de filtro → usuario atrapado.
+    if (d.noTrace || !d.summary || d.summary.total === 0) {
+      return html`<div class="apphdr"><h1 class="trunc">Sesión</h1></div>
+        <p class="muted" style="margin-top:.6rem">Este run no dejó traza de sesión (ni del CLI ni telemetría). Aún no ha producido pasos, o se lanzó con un runner que no la emite.</p>
+        <p style="margin-top:.8rem"><a class="btn sm sec" href=${this.runPath()}>Volver al run</a></p>`;
+    }
     const s = d.summary;
     return html`
       <div class="apphdr"><h1 class="trunc">Sesión · ${this.change}</h1><a class="btn sm sec" href=${this.runPath()}>Volver al run</a></div>
@@ -83,7 +103,7 @@ export class SessionScreen extends CElement {
         <input class="search se-q" type="search" placeholder="Buscar en la sesión" .value=${this.q} @input=${(e: Event) => this.onSearch(e)} aria-label="buscar eventos de la sesión">
       </div>
       <div class="se-rail" role="list">${d.events.map((e) => this.row(e))}</div>
-      ${d.total > d.events.length ? html`<button class="btn sm sec" style="margin:.7rem 0" @click=${() => { this.limit += 250; void this.load(); }}>cargar más · ${d.events.length}/${d.total}</button>` : nothing}
+      ${d.total > d.events.length ? html`<button class="btn sm sec" style="margin:.7rem 0" @click=${() => void this.loadMore()}>cargar más · ${d.events.length}/${d.total}</button>` : nothing}
       ${d.total === 0 ? html`<p class="muted" style="margin-top:.6rem">Sin eventos para este filtro.</p>` : nothing}
     `;
   }

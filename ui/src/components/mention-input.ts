@@ -27,6 +27,7 @@ export class MentionInput extends CElement {
   private seq = 0;
   private pendingCaret: number | null = null;
   private skillsCache: { name: string; title?: string }[] | null = null;
+  private skillsCacheProj = ''; // proyecto para el que se cacheó — invalida al cambiar de proyecto (skills son por equipo/proyecto)
 
   override disconnectedCallback(): void { super.disconnectedCallback(); clearTimeout(this.timer); }
 
@@ -50,15 +51,20 @@ export class MentionInput extends CElement {
 
   private async fetchItems(): Promise<void> {
     const seq = ++this.seq;
+    const proj = this.projId; // captura al inicio: en un cambio de proyecto rápido, la clave de caché no se desincroniza del fetch
     try {
-      const p = new URLSearchParams(); if (this.projId) p.set('project', this.projId);
+      const p = new URLSearchParams(); if (proj) p.set('project', proj);
       if (this.kind === '@') {
         p.set('q', this.query);
         const d = await (await fetch('/api/files?' + p)).json();
         if (seq !== this.seq) return;
         this.items = (d.files || []).slice(0, 30).map((f: string): Item => ({ v: f, label: f }));
       } else {
-        if (!this.skillsCache) this.skillsCache = ((await (await fetch('/api/skills?' + p)).json()).skills || []);
+        // skills cacheadas POR PROYECTO: al cambiar el proyecto activo se re-piden (antes quedaban las del 1er proyecto)
+        if (!this.skillsCache || this.skillsCacheProj !== proj) {
+          this.skillsCache = ((await (await fetch('/api/skills?' + p)).json()).skills || []);
+          this.skillsCacheProj = proj;
+        }
         if (seq !== this.seq) return;
         const ql = this.query.toLowerCase();
         this.items = (this.skillsCache || []).filter((s) => !ql || s.name.toLowerCase().includes(ql)).slice(0, 20).map((s): Item => ({ v: s.name, label: s.name, sub: s.title }));

@@ -39,6 +39,9 @@ export class ArtifactViewer extends CElement {
   }
 
   private onOpen = (e: Event): void => {
+    // defensa en profundidad: hoy el backdrop hace inalcanzable disparar otra vista con un edit abierto, pero si
+    // una futura superficie emite 'cdr-view' con cambios sin guardar en curso, no se descartan en silencio.
+    if (this.open && this.editing && this.dirty && !confirm('Tienes cambios sin guardar en el documento actual. ¿Descartarlos y abrir el nuevo?')) return;
     const d = (e as CustomEvent<ViewDetail>).detail;
     this.apiBase = d.apiBase; this.path = d.path; this.vkind = d.kind;
     this.editable = d.kind === 'art' && /\.md$/.test(d.path);

@@ -40,6 +40,7 @@ export interface CurrentPhase {
   startedAt: number;
   timeoutMs: number;
   lastError?: string | null;
+  lastActivity?: string | null; // última acción REAL del agente (tool × ruta) — la barra deja de ser solo reloj
 }
 
 export interface DecisionFinding { message: string; severity?: string; file?: string; }
@@ -128,6 +129,7 @@ export interface ModelsResponse {
   tiers?: Record<string, string>; // id de modelo → 'economy' | 'balanced' | 'premium' (presets de coste)
   byokSource: string;
   copilotSource: string;
+  copilotPending?: boolean; // true = el catálogo REAL del CLI aún no llegó; la lista son solo modelos observados
   byokCreds: boolean;
   byokUrl: string; // URL base guardada (sin key) → el panel muestra "conectado a …" y no re-pide la URL
   byokCachedAt: number | null;
@@ -154,7 +156,7 @@ export interface SessionSummary {
   start: { cwd: string | null; branch: string | null; copilotVersion: string | null } | null;
   reconstructed?: boolean; // true si la traza se reconstruyó desde OTel (qwen/LiteLLM), no del events.jsonl del CLI
 }
-export interface SessionEvents { total: number; offset: number; limit: number; summary: SessionSummary; events: SessionEvent[]; }
+export interface SessionEvents { total: number; offset: number; limit: number; summary: SessionSummary; events: SessionEvent[]; noTrace?: boolean; }
 
 export interface ModelsByRole { planner?: string; coder?: string; reviewer?: string; all?: string; }
 export interface LaunchBody {

@@ -29,6 +29,7 @@ export class RunScreen extends CElement {
   @state() private actionErr = ''; // error de la última acción — inline, nunca en silencio
   @state() private archivedMsg = ''; // resultado del archivado (promoted/needsManualMerge)
   private filesSig = ''; // re-fetch del changeset solo cuando cambia algo que lo afecta (no en cada poll)
+  private pendingKey = ''; // identidad de la pausa actual (before|nFindings) → limpia la selección al cambiar de decisión
   private api = new ConductorApi('/api/');
   private poller: RunPoller | null = null;
   private activeBase = '';
@@ -40,9 +41,18 @@ export class RunScreen extends CElement {
 
   private restart(): void {
     this.poller?.stop();
-    this.s = null; this.err = ''; this.files = null; this.filesSig = '';
+    this.s = null; this.err = ''; this.files = null; this.filesSig = ''; this.stopping = false; this.pendingKey = '';
+    // limpia el estado de la DECISIÓN al reiniciar/reanudar: sin esto, la selección de hallazgos (por índice),
+    // la nota y el modelo-en-caliente de una pausa anterior se filtraban al `continue` de la SIGUIENTE decisión
+    // (targeteando hallazgos equivocados). Solo approve() los limpiaba, y solo tras éxito.
+    this.selected = new Set(); this.note = ''; this.hotModel = '';
     this.api = new ConductorApi(this.apiBase);
     this.poller = new RunPoller(this.apiBase, (s) => {
+      if (s.done) this.stopping = false; // el run terminó (STOPPED/GREEN/…): reactiva el botón para un futuro resume
+      // si llega una decisión DISTINTA a la anterior (nueva pausa tras un fix, otra fase), limpia selección/nota/
+      // modelo de la previa → no se envían índices de hallazgos obsoletos contra los de OTRA decisión.
+      const pk = s.pending ? `${s.pending.before}|${(s.pending.findings || []).length}` : '';
+      if (pk !== this.pendingKey) { this.pendingKey = pk; if (pk) { this.selected = new Set(); this.note = ''; this.hotModel = ''; } }
       this.s = s; void this.maybeFetchFiles(s);
       // señal de atención en la pestaña: una pausa esperando decisión no debe ser invisible con la pestaña de fondo
       document.title = s.pending ? '⏸ tu decisión — conductor' : 'conductor';
@@ -67,9 +77,9 @@ export class RunScreen extends CElement {
     const cop = m?.copilot ?? [];
     const byok = m?.byok ?? [];
     const creds = !!m?.byokCreds;
-    return html`<label class="fl">Cambiar modelo<select .value=${this.hotModel} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
+    return html`<label class="fl">Cambiar modelo<select .value=${this.hotModel} title=${m ? `Copilot: ${m.copilotSource} · qwen: ${m.byokSource}` : ''} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
       <option value="">Mantener el modelo de esta fase</option>
-      ${cop.length ? html`<optgroup label="Copilot">${cop.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>` : nothing}
+      ${cop.length ? html`<optgroup label="Copilot${m?.copilotPending ? ' · vistos en tus runs' : ''}">${cop.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>` : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
       ${creds && byok.length ? html`<optgroup label="qwen · LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : nothing}
     </select></label>`;
   }
@@ -99,14 +109,30 @@ export class RunScreen extends CElement {
     try {
       const r = await this.api.archiveRun();
       if (!r.ok) { this.actionErr = r.error || 'no se pudo archivar'; return; }
-      const manual = r.needsManualMerge?.length ? ` · ${r.needsManualMerge.length} spec(s) requieren merge manual (cambios no aditivos)` : '';
-      this.archivedMsg = `Archivado. ${r.promoted?.length ?? 0} spec(s) promovidas${manual}.`;
+      const nMerge = r.needsManualMerge?.length ?? 0;
+      const manual = nMerge ? ` · ${nMerge} spec${nMerge === 1 ? '' : 's'} ${nMerge === 1 ? 'requiere' : 'requieren'} merge manual (cambios no aditivos)` : '';
+      const nProm = r.promoted?.length ?? 0;
+      this.archivedMsg = `Archivado. ${nProm} spec${nProm === 1 ? '' : 's'} ${nProm === 1 ? 'promovida' : 'promovidas'}${manual}.`;
     } finally { this.busy = ''; }
   }
   private toggleSel(i: number, on: boolean): void {
     const next = new Set(this.selected);
     if (on) next.add(i); else next.delete(i);
     this.selected = next;
+  }
+  // Detener con feedback INMEDIATO: durante una pausa el poll es lento (5s) y el botón parecía no responder.
+  // Marca el estado local al instante (botón «Deteniendo…» + oculta la card de decisión de forma óptima).
+  @state() private stopping = false;
+  private async stopRun(): Promise<void> {
+    const prevPending = this.s?.pending ?? null; // para RESTAURAR la card de decisión si el stop falla
+    this.stopping = true; this.actionErr = '';
+    if (this.s) this.s = { ...this.s, pending: null };
+    try {
+      const r = await this.api.stop();
+      // si el stop FALLA, restaurar `pending`: el run sigue pausado y el poller dedupe un /state idéntico → sin
+      // esto la card de Decisión (Aprobar/Corregir/Continuar) quedaba oculta para siempre (solo un reload la traía).
+      if (!r.ok) { this.actionErr = r.error || 'no se pudo detener'; this.stopping = false; if (this.s) this.s = { ...this.s, pending: prevPending }; }
+    } catch { this.actionErr = 'no se pudo detener'; this.stopping = false; if (this.s) this.s = { ...this.s, pending: prevPending }; }
   }
   private async rollback(phase: string): Promise<void> {
     if (!confirm(`¿Deshacer "${phase}"? Se restaurarán los archivos al estado previo a esta fase. La rama de git no se modifica.`)) return;
@@ -133,24 +159,27 @@ export class RunScreen extends CElement {
     if (this.err && !this.s) return html`<p class="errline" role="alert">Error: ${this.err}</p>`;
     const s = this.s;
     if (!s) return loader('Cargando run');
+    const isDemo = this.apiBase.includes('/demo');
     return html`
+      ${isDemo ? html`<div class="whybox ok" role="note" style="margin-bottom:1rem"><b>Demo</b> — pantalla de muestra con datos ficticios (modelos, cambios y coste no son reales). <a href="/">Ir a tu panel</a></div>` : nothing}
       <div class="apphdr">
         <h1 class="trunc">${this.change || s.project || 'run'}</h1>
         <span role="status" aria-live="polite"><status-pill .verdict=${s.pending ? 'EN PAUSA' : (s.verdict ?? 'EN CURSO')}></status-pill></span>
       </div>
       <p class="subhead">${s.project || '—'}${s.branch ? html` · ${s.branch}` : ''}</p>
       <div class="actbar">
-        <a class="btn sm sec" href=${this.sessionHref()}>Ver sesión</a>
-        ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm sec resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
-        ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm sec" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : '⬆ Archivar'}</button>` : nothing}
-        ${s.hasDashboard ? html`<a class="btn sm sec dash" href=${this.dashboardHref()} target="_blank">Informe</a>` : nothing}
-        <a class="btn sm sec aiact" href=${this.apiBase + 'aiact'} target="_blank">AI Act</a>
-        ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested} @click=${() => void this.api.stop()}>${s.stopRequested ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
+        <a class="btn sm sec" href=${this.sessionHref()}>📃 Ver sesión</a>
+        ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
+        ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : '⬆ Archivar'}</button>` : nothing}
+        ${s.hasDashboard ? html`<a class="btn sm dash" href=${this.dashboardHref()} target="_blank">📊 Informe</a>` : nothing}
+        <a class="btn sm aiact" href=${this.apiBase + 'aiact'} target="_blank">🛡 AI Act</a>
+        ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
       </div>
       ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
-      ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><b>Por qué:</b> ${s.reason}</div>` : nothing}
+      ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><svg class="why-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.3v4.4M8 11.0v.05" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span><b>Por qué:</b> ${s.reason}</span></div>` : nothing}
       ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (antes de verify): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
+      ${s.done ? (() => { const arts = this.reviewArtifacts(s); return arts.length ? html`<div class="decision-arts" style="margin:0 0 .9rem"><span class="ctx-lbl">Artefactos</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}<button type="button" class="lnk" title="abrir verify-report.md" @click=${() => this.viewArtifact('verify-report.md')}>📄 verify-report.md</button></div>` : nothing; })() : nothing}
       ${this.requestBox(s)}
       ${this.phaseId ? this.phaseDetail(s) : nothing}
       ${s.pending ? this.pendingCard(s.pending, s) : nothing}
@@ -192,8 +221,10 @@ export class RunScreen extends CElement {
     for (const p of s.phases) {
       if (!p.ok) continue;
       if (p.phase === 'spec') {
-        // la ruta real de la spec depende del dominio → se extrae del fichero que la fase escribió
-        const f = p.files?.find((x) => /specs[\\/].+[\\/]spec\.md$/i.test(x.p));
+        // la ruta real de la spec depende del dominio → se extrae del fichero que la fase escribió.
+        // Array.isArray: el poller solo coacciona `phases` (top-level), no `p.files`; un timeline corrupto con
+        // files:"str" hacía `.find` no-función → crash de TODO el run screen (mismo blindaje que fileList).
+        const f = Array.isArray(p.files) ? p.files.find((x) => /specs[\\/].+[\\/]spec\.md$/i.test(x.p)) : undefined;
         const rel = f ? f.p.replace(/\\/g, '/').replace(/^.*openspec\/changes\/[^/]+\//, '') : '';
         if (rel && rel.startsWith('specs/')) out.push({ label: 'spec.md', path: rel });
       } else if (FIXED[p.phase]) out.push({ label: FIXED[p.phase], path: FIXED[p.phase] });
@@ -207,6 +238,8 @@ export class RunScreen extends CElement {
     // (error vs aviso — antes invisible, todos parecían igual de graves) y el FICHERO (clickable si es un artefacto del
     // cambio) → el revisor decide qué corregir VIENDO qué es grave y dónde, sin bajar a la barra de fases.
     const fnd: DecisionFinding[] = (pd.findings ?? []).map((f) => (typeof f === 'string' ? { message: f } : f));
+    const nSel = this.selected.size; // corregir se basa en lo SELECCIONADO, no en si EXISTEN hallazgos
+    const errSev = (s?: string) => s === 'error' || s === 'breaking'; // breaking = lo más grave → bucket rojo, nunca "aviso"
     return html`<section class="decision">
       <header class="decision-head">
         <span class="decision-led" aria-hidden="true"></span>
@@ -220,7 +253,7 @@ export class RunScreen extends CElement {
         ${fnd.length ? html`<ul class="decision-findings">${fnd.map((f, i) => html`
           <li>
             <label><input type="checkbox" .checked=${this.selected.has(i)} @change=${(e: Event) => this.toggleSel(i, (e.target as HTMLInputElement).checked)}>
-              <span class="fnd">${f.severity ? html`<span class="sev ${f.severity === 'error' ? 'error' : 'aviso'}">${f.severity === 'error' ? 'error' : 'aviso'}</span>` : nothing}${f.message}</span></label>
+              <span class="fnd">${f.severity ? html`<span class="sev ${errSev(f.severity) ? 'error' : 'aviso'}">${errSev(f.severity) ? 'error' : 'aviso'}</span>` : nothing}${f.message}</span></label>
             ${f.file ? (/\.(md|txt)$/.test(f.file)
               ? html`<button type="button" class="lnk fnd-file" title="ver ${f.file}" @click=${() => this.viewArtifact(f.file as string)}>${f.file}</button>`
               : html`<code class="fnd-file">${f.file}</code>`) : nothing}
@@ -229,11 +262,13 @@ export class RunScreen extends CElement {
           <label class="fl" style="flex:1;min-width:14rem">Nota (opcional)<textarea class="pend-note" rows="2" .value=${this.note} @input=${(e: Event) => { this.note = (e.target as HTMLTextAreaElement).value; }} placeholder="Instrucción para esta fase (opcional)"></textarea></label>
           ${this.hotModelSelect()}
         </div>
-        <button class="approve" ?disabled=${this.busy === 'approve'} @click=${() => void this.approve(fnd.length > 0)}>${this.busy === 'approve' ? 'Enviando…' : (fnd.length ? 'Corregir los hallazgos seleccionados' : 'Aprobar y continuar')}</button>
+        <button class="approve" ?disabled=${this.busy === 'approve'} @click=${() => void this.approve(nSel > 0)}>${this.busy === 'approve' ? 'Enviando…' : (nSel > 0 ? `Corregir ${nSel} hallazgo${nSel === 1 ? '' : 's'}` : 'Aprobar y continuar')}</button>
       </div>
     </section>`;
   }
 
+  // datos del run en UNA línea (antes 6-7 tarjetas): orienta sin convertir cada pantalla en un cuadro de
+  // mandos. El desglose por modelo sigue abajo (model-breakdown) y el € de LiteLLM en el panel/Informe.
   private cards(s: RunState): TemplateResult {
     const done = s.phases.filter((p) => p.ok).length;
     const planned = s.plan?.length || s.phases.length;
@@ -241,22 +276,21 @@ export class RunScreen extends CElement {
     const tout = s.phases.reduce((a, p) => a + (p.tokens?.out ?? 0), 0);
     const files = s.phases.reduce((a, p) => a + (p.files?.length ?? 0), 0);
     const gh = s.ghUsage;
-    return html`<div class="cards">
-      <div class="card"><small>Fases</small><span>${done} / ${planned}</span></div>
-      <div class="card"><small>Tokens entrada</small><span>↓ ${fmt(tin)}</span></div>
-      <div class="card"><small>Tokens salida</small><span>↑ ${fmt(tout)}</span></div>
-      <div class="card"><small>Ficheros</small><span>${files}</span></div>
-      <div class="card"><small>Tiempo</small><span>${secs(s.total_ms ?? (s.current ? s.now - s.current.startedAt : null))}</span></div>
-      ${s.usage ? html`<div class="card"><small>qwen · LiteLLM</small><span>$${s.usage.spend.toFixed(2)}${s.usage.budget ? html` / $${s.usage.budget.toFixed(0)}` : nothing}</span>${s.usage.budget ? html`<div class="pbar ${s.usage.spend / s.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (s.usage.spend / s.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
-      ${gh ? html`<div class="card aic"><small>AI Credits</small><span>${gh.used}/${gh.entitlement}</span><div class="pbar ${gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, gh.percentUsed)}%"></i></div></div>` : nothing}
-      ${s.savings && s.savings.byok_phases > 0 ? html`<div class="card ok" title="Fases ejecutadas en qwen vía LiteLLM: no consumen AI Credits (↓${fmt(s.savings.byok_in)} ↑${fmt(s.savings.byok_out)} tokens fuera de Copilot)"><small>Ahorro qwen</small><span>${s.savings.byok_phases}/${s.savings.byok_phases + s.savings.copilot_phases} fases · 0 AIC</span></div>` : nothing}
+    const sv = s.savings;
+    return html`<div class="statline" role="status" aria-label="resumen del run">
+      <span><b>${done}/${planned}</b> fases</span>
+      <span>${secs(s.total_ms ?? (s.current ? s.now - s.current.startedAt : null))}</span>
+      ${tin + tout > 0 ? html`<span title="tokens de entrada/salida acumulados">↓${fmt(tin)} ↑${fmt(tout)}</span>` : nothing}
+      ${files ? html`<span>${files} fichero${files === 1 ? '' : 's'}</span>` : nothing}
+      ${sv && sv.byok_phases > 0 ? html`<span class="st-ok" title="fases en qwen vía LiteLLM — 0 AI Credits (↓${fmt(sv.byok_in)} ↑${fmt(sv.byok_out)} tokens fuera de Copilot)">qwen ${sv.byok_phases}/${sv.byok_phases + sv.copilot_phases} · 0 AIC</span>` : nothing}
+      ${gh ? html`<span title="AI Credits de tu cuenta Copilot">AIC ${gh.used}/${gh.entitlement}</span>` : nothing}
     </div>`;
   }
 
   // CAMBIOS del run (experiencia Git): changeset consolidado — fichero × tipo × +/− líneas, clic → diff coloreado.
   private changesSection(): TemplateResult | typeof nothing {
     const f = this.files;
-    if (!f?.files?.length) return nothing; // el modo demo (u otro backend parcial) puede servir un objeto sin `files`
+    if (!Array.isArray(f?.files) || !f.files.length) return nothing; // demo/backend parcial: objeto sin `files` array
     const t = f.totals;
     return html`
       <div class="sectrow"><h2 class="sect">Cambios</h2>${f.fromGit ? nothing : html`<span class="muted" style="font-size:.72rem">aprox. (sin git)</span>`}</div>
@@ -277,7 +311,7 @@ export class RunScreen extends CElement {
 
   private pipeline(s: RunState): TemplateResult {
     const doneNames = new Set(s.phases.map((p) => p.phase));
-    const pending = (s.plan ?? []).filter((ph) => !doneNames.has(ph) && (!s.current || s.current.phase !== ph));
+    const pending = (Array.isArray(s.plan) ? s.plan : []).filter((ph) => !doneNames.has(ph) && (!s.current || s.current.phase !== ph));
     return html`<h2 class="sect">Pipeline</h2>
       <div class="rail">
         ${s.phases.map((p) => this.phaseCard(p))}
@@ -287,9 +321,12 @@ export class RunScreen extends CElement {
     `;
   }
 
+  // ROBUSTEZ: los campos internos de una fase (files, lenses…) NO los coacciona el poller (solo `phases`).
+  // Un timeline.json corrupto (el coder escribe en .conductor con --allow-all-tools, o disco) podía traer
+  // files:"string" → `.map`/`.length` crasheaban TODO el run. Se exige Array.isArray donde se itera.
   private fileList(files: FileChange[] | undefined): TemplateResult | typeof nothing {
-    if (!files?.length) return nothing;
-    return html`<details class="files"><summary>${files.length} fichero(s)</summary><ul>
+    if (!Array.isArray(files) || !files.length) return nothing;
+    return html`<details class="files"><summary>${files.length} ${files.length === 1 ? 'fichero' : 'ficheros'}</summary><ul>
       ${files.map((f) => html`<li><span class="k ${f.k}">${this.sign(f.k)}</span> <button class="lnk" @click=${() => this.viewDiff(f.p)}>${f.p}</button></li>`)}
     </ul></details>`;
   }
@@ -297,8 +334,8 @@ export class RunScreen extends CElement {
   private phaseContext(p: Phase): TemplateResult | typeof nothing {
     const ctx = p.context;
     if (!ctx) return nothing;
-    const ins = ctx.instructions ?? [];
-    const files = ctx.contextFiles ?? [];
+    const ins = Array.isArray(ctx.instructions) ? ctx.instructions : [];
+    const files = Array.isArray(ctx.contextFiles) ? ctx.contextFiles : [];
     if (!ins.length && !files.length) return nothing;
     return html`<details class="ph-ctx">
       <summary>Contexto del agente</summary>
@@ -310,14 +347,14 @@ export class RunScreen extends CElement {
   private phaseCard(p: Phase): TemplateResult {
     return html`<div class="ph ${p.ok ? 'done' : 'bad'}">
       <div class="row">
-        <span class="name"><a href="${this.runPath()}?phase=${p.phase}">${p.ok ? '✅' : '❌'} ${phaseIcon(p.phase)} ${p.phase}</a></span>
+        <span class="name"><a href="${this.runPath()}?phase=${p.phase}">${phaseIcon(p.phase)} ${p.phase}</a></span>
         <span class="role">${p.role}</span>
         ${p.model ? html`<span class="badge prov-${p.provider ?? 'none'}">${modelIcon(p.model, p.provider)} ${p.model}</span>` : nothing}
         ${p.modelMismatch ? html`<span class="badge warn" title="pedido ${p.modelRequested ?? '?'} → el proveedor reportó ${p.modelReported ?? '?'}">⚠ modelo</span>` : nothing}
         ${p.attempts > 1 ? html`<span class="badge">${p.attempts}×</span>` : nothing}
-        ${p.lenses ? html`<span class="badge">${p.lenses.length} lentes</span>` : nothing}
+        ${Array.isArray(p.lenses) && p.lenses.length ? html`<span class="badge">${p.lenses.length} lentes</span>` : nothing}
         ${p.resumed ? html`<span class="badge">⏯ heredada</span>` : nothing}
-        <span class="right">${secs(p.ms)} · ↓${fmt(p.tokens?.in)} ↑${fmt(p.tokens?.out)}</span>
+        <span class="right">${secs(p.ms)}${p.tokens ? html` · ↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}` : nothing}</span>
       </div>
       ${this.fileList(p.files)}
       ${this.phaseContext(p)}
@@ -335,13 +372,14 @@ export class RunScreen extends CElement {
         <span class="role">${c.role} · intento ${c.attempt}/${c.maxAttempts} · ${c.model ?? 'sesión'}</span>
       </div>
       <div class="bar"><i style="width:${pct}%"></i></div>
+      ${c.lastActivity ? html`<div class="muted" style="font:.74rem var(--mono);margin-top:.3rem" title="última acción del agente">▸ ${c.lastActivity}</div>` : nothing}
       ${c.lastError ? html`<div class="errline">${c.lastError}</div>` : nothing}
     </div>`;
   }
 
   private logBox(s: RunState): TemplateResult {
     return html`<h2 class="sect">Registro</h2>
-      <pre class="logpre">${(s.logTail ?? []).join('\n') || '—'}</pre>`;
+      <pre class="logpre">${(Array.isArray(s.logTail) ? s.logTail : []).join('\n') || '—'}</pre>`;
   }
 }
 

@@ -12,7 +12,10 @@ export const RULES = [
   { re: /\b(rename\s+table|alter\s+table\s+\S+\s+rename)\b/i, rule: 'migration.rename', sev: 'breaking', msg: 'RENAME (rompe el código viejo; usa add+backfill+switch+drop)' },
   // peligrosas
   { re: /\badd\s+column\b[\s\S]{0,120}?\bnot\s+null\b(?![\s\S]{0,40}\bdefault\b)/i, rule: 'migration.add-notnull-no-default', sev: 'breaking', msg: 'ADD COLUMN NOT NULL sin DEFAULT (falla/locka con filas existentes)' },
-  { re: /\b(update|delete)\b(?![\s\S]*\bwhere\b)/i, rule: 'migration.unscoped-dml', sev: 'breaking', msg: 'UPDATE/DELETE sin WHERE (afecta toda la tabla)' },
+  // chequeo ESTRUCTURAL por sentencia (los consumidores dividen por ';'): tiene update/delete Y no tiene where.
+  // Sustituye al lookahead spanning-content: era ReDoS O(n²) sin acotar y, acotado a {0,4000}, daba falso-positivo
+  // en un UPDATE legítimo con WHERE a >4000 chars (SET enorme). `.test(st)` es O(n) lineal, sin backtracking ni distancia.
+  { test: (st) => /\b(update|delete)\b/i.test(st) && !/\bwhere\b/i.test(st), rule: 'migration.unscoped-dml', sev: 'breaking', msg: 'UPDATE/DELETE sin WHERE (afecta toda la tabla)' },
   // bloqueantes (Postgres): índice no concurrente
   { re: /\bcreate\s+(unique\s+)?index\b(?![\s\S]{0,30}\bconcurrently\b)/i, rule: 'migration.blocking-index', sev: 'warning', msg: 'CREATE INDEX sin CONCURRENTLY (bloquea escrituras en tablas grandes)' },
   { re: /\bdrop\s+(table|index|column)\b(?![\s\S]{0,30}\bif\s+exists\b)/i, rule: 'migration.drop-no-if-exists', sev: 'warning', msg: 'DROP sin IF EXISTS (migración no idempotente)' },
@@ -43,7 +46,7 @@ export function lintMigrations(target) {
     // satisfacía el lookahead negativo de unscoped-dml y colaba un DELETE/UPDATE sin filtro de la sentencia
     // anterior (hallazgo adversarial H4). Por sentencia solo se pueden AÑADIR hallazgos → fail-closed seguro.
     const statements = code.split(';');
-    for (const r of RULES) if (statements.some((st) => r.re.test(st))) out.push({ rule: r.rule, severity: r.sev, message: r.msg, file: rel });
+    for (const r of RULES) if (statements.some((st) => (r.test ? r.test(st) : r.re.test(st)))) out.push({ rule: r.rule, severity: r.sev, message: r.msg, file: rel });
   }
   // reversibilidad: cada migración up debería tener un down (fichero pareado o sección inline)
   const downNames = new Set(files.filter((f) => isDown(basename(f))).map((f) => basename(f).replace(/[._-]?(down|rollback|undo)/i, '')));

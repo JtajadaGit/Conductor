@@ -1,4 +1,4 @@
-import{g as e,p as t,t as n,u as r}from"./index-Bfc-rE4S.js";var i=class extends r{render(){return e`
+import{_ as e,d as t,m as n,t as r}from"./index-CLyU4nS-.js";var i=class extends t{render(){return e`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluido qwen vía LiteLLM a coste 0 de AI Credits.</p>
 
@@ -39,4 +39,4 @@ import{g as e,p as t,t as n,u as r}from"./index-Bfc-rE4S.js";var i=class extends
 
       <h2 class="sect">Transparencia (AI Act)</h2>
       <p class="muted">Cada run produce evidencia: informe del run, sello de procedencia firmado (Ed25519) encadenado al ledger del proyecto, y el informe de transparencia AI Act (modelos usados, aprobaciones humanas, verificación, firma).</p>
-    `}};i=n([t(`help-screen`)],i);export{i as HelpScreen};
+    `}};i=r([n(`help-screen`)],i);export{i as HelpScreen};

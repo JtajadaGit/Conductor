@@ -11,7 +11,7 @@
 //   spawn(CONDUCTOR_AGENT_CMD || 'copilot', ['--allow-all-tools','--no-auto-update','-p', <prompt>])
 // El agente hereda el entorno del proceso (BYOK) — por eso el driver se ejecuta desde la shell del
 // usuario (CLI `conductor drive` / eval), no desde el MCP server (que solo recibe PATH).
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, rmSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, rmSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
@@ -44,11 +44,41 @@ const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return
 // valores del env presentes + patrón genérico sk-.../Bearer (cubre la virtual key de LiteLLM). Sin DPAPI.
 // exportado: lo usa serve.mjs al SERVIR /api/raw y /api/events (no solo al capturar) — auditoría senior.
 // `extra` = secretos adicionales a redactar (p.ej. la key descifrada de byok.json, que NO está en env).
+// última línea de defensa al MOSTRAR contenido (artefactos/diff/log/raw en la UI): redacta claves conocidas
+// del entorno + patrones de alta confianza (prefijos específicos → falsos positivos ~0). El gate secrets.mjs
+// bloquea antes de GREEN; esto evita que un secreto ya escrito llegue al navegador. Sync con gates/secrets.mjs.
+const _SECRET_PATTERNS = [
+  /\bsk-[A-Za-z0-9_-]{8,}/g,                                   // OpenAI / genérico sk-
+  /\bBearer\s+[A-Za-z0-9._-]+/g,                               // Authorization: Bearer …
+  /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA)[0-9A-Z]{16}\b/g,   // AWS Access Key ID
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,                             // GitHub token (ghp_/gho_/ghs_/ghr_/ghu_)
+  /\bAIza[0-9A-Za-z_-]{35,}/g,                                 // Google API key (35+ greedy: no depende de \b final, robusto ante concatenación)
+  /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/g,                         // Slack token
+  /\bglpat-[0-9A-Za-z_-]{20,}\b/g,                             // GitLab PAT
+  /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g, // bloque de clave privada
+];
 export function scrubSecrets(text, env = process.env, extra = []) {
   if (!text) return text;
   let out = text;
   for (const v of [env.COPILOT_PROVIDER_API_KEY, env.CONDUCTOR_API_KEY, ...extra]) if (v && String(v).length >= 8) out = out.split(String(v)).join('«REDACTED»');
-  return out.replace(/\bsk-[A-Za-z0-9_-]{8,}/g, '«REDACTED»').replace(/\bBearer\s+[A-Za-z0-9._-]+/g, 'Bearer «REDACTED»');
+  for (const re of _SECRET_PATTERNS) out = out.replace(re, (m) => m.startsWith('Bearer') ? 'Bearer «REDACTED»' : '«REDACTED»');
+  return out;
+}
+// key BYOK para redacción, MEMOIZADA por-proceso: byokCreds() puede spawnear DPAPI (blob legacy) al descifrar →
+// llamarla en CADA drive() costaba un spawn de powershell por run. El driver corre en un HIJO por run (memo = 1
+// cómputo); en los tests (muchos drive() en el mismo proceso) evita N spawns → sin la lentitud que introdujo.
+// undefined = aún no computado; [] = computado sin key. (byokCreds está hoisted; se resuelve al llamarse.)
+let _byokScrubMemo = { sig: null, val: [] };
+function byokScrubExtra() {
+  // firma barata (env de creds + mtime de byok.json) para INVALIDAR el memo si la key cambia. Antes el memo no
+  // tenía clave → congelaba la key del 1er run del proceso (en tests que reconfiguran byok, redactaba una stale).
+  // En producción (un drive por proceso hijo) se computa una vez igual. La firma solo hace statSync, no DPAPI.
+  let sig = (process.env.CONDUCTOR_HOME || '') + '|' + (process.env.COPILOT_PROVIDER_API_KEY || '') + '|' + (process.env.COPILOT_PROVIDER_BASE_URL || '');
+  try { sig += '|' + statSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'byok.json')).mtimeMs; } catch { sig += '|-'; }
+  if (_byokScrubMemo.sig === sig) return _byokScrubMemo.val;
+  let val = []; try { const c = byokCreds(); val = c?.apiKey ? [c.apiKey] : []; } catch {}
+  _byokScrubMemo = { sig, val };
+  return val;
 }
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.runs', 'coverage', '.angular', 'tmp']);
 
@@ -273,6 +303,19 @@ export function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_
   return args;
 }
 
+// B.3 (patch post-apply-reviewer): extrae del informe del revisor FRESCO los hallazgos CONFIRMADOS y
+// graves (error/critical/breaking) como findings CONSULTIVOS para el sello — evidencia firmada de que se
+// vieron, sin poder de veto (solo el gate sin-LLM decide el verdict). Sin fichero o sin graves → [].
+export function postApplyFindings(changeDir) {
+  try {
+    const txt = readFileSync(join(changeDir, '.conductor', 'post-apply-review.md'), 'utf8');
+    return txt.split('\n')
+      .filter((l) => /confirmed/i.test(l) && /(error|critical|breaking)/i.test(l))
+      .slice(0, 20)
+      .map((l) => ({ rule: 'post-apply.confirmed', severity: 'warning', message: l.replace(/^[-*\s]+/, '').slice(0, 300), file: '.conductor/post-apply-review.md' }));
+  } catch { return []; }
+}
+
 // con shell:true en Windows, child.kill() solo mata el cmd.exe intermedio — el copilot real seguía VIVO
 // escribiendo en el repo tras un timeout/STOP. taskkill /T /F tumba el árbol completo; POSIX no lo necesita.
 export function killTree(child) {
@@ -283,7 +326,7 @@ export function killTree(child) {
   try { child.kill(); } catch {}
 }
 
-export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, role, phase, mcp, allowTools }) {
+export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, role, phase, mcp, allowTools, onActivity }) {
   const cmd = process.env.CONDUCTOR_AGENT_CMD || 'copilot';
   const args = agentArgs(role, mcp, process.env.CONDUCTOR_AGENT_ARGS, allowTools || {});
   const env = { ...process.env };
@@ -306,8 +349,8 @@ export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopS
     try { child = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], shell: true, env, windowsHide: true }); }
     catch (e) { return resolve2({ code: -1, err: `no se pudo lanzar '${cmd}': ${e.message}` }); }
     let out = '', err = '';
-    let stopPoll = null;
-    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
+    let stopPoll = null, actPoll = null;
+    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
     const timer = setTimeout(() => { killTree(child); finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
     // STOP del usuario: mata la fase en vuelo (la sesión efímera se limpia igualmente en finish)
     if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); killTree(child); finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
@@ -317,6 +360,37 @@ export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopS
     child.on('close', (code) => { clearTimeout(timer); finish({ code, out, err }); });
     child.stdin.on('error', () => {}); // EPIPE asíncrono (agente muerto antes de leer) mataba el driver por uncaughtException
     try { child.stdin.write(prompt); child.stdin.end(); } catch {}
+    // ACTIVIDAD EN VIVO (best-effort, 0 tokens): la sesión efímera del CLI escribe events.jsonl; cada 2s se
+    // lee su COLA y se extrae la última tool ejecutada → el humano ve QUÉ hace el agente, no solo un reloj.
+    // Contenido en try/catch total: si el formato cambia o no hay sesión, simplemente no hay actividad.
+    if (onActivity) actPoll = setInterval(() => {
+      try {
+        let sess = null, mt = 0;
+        for (const s of listSessions(ssd)) {
+          if (beforeSessions.has(s)) continue;
+          let st2; try { st2 = statSync(join(ssd, s)); } catch { continue; }
+          if (st2.mtimeMs >= mt) { mt = st2.mtimeMs; sess = s; }
+        }
+        if (!sess) return;
+        const f = join(ssd, sess, 'events.jsonl');
+        let st3; try { st3 = statSync(f); } catch { return; }
+        const want = Math.min(st3.size, 8192);
+        if (!want) return;
+        const fd = openSync(f, 'r');
+        const buf = Buffer.alloc(want);
+        try { readSync(fd, buf, 0, want, st3.size - want); } finally { closeSync(fd); }
+        const lines = buf.toString('utf8').split('\n').filter(Boolean);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (!lines[i].includes('tool.execution_start')) continue;
+          let e2; try { e2 = JSON.parse(lines[i]); } catch { continue; }
+          const d2 = e2.data || {};
+          const name = d2.toolName || d2.name || d2.tool_name || d2.tool?.name || 'tool';
+          const arg = d2.arguments?.path || d2.arguments?.file_path || d2.args?.path || d2.input?.path || d2.arguments?.command || '';
+          onActivity(String(name) + (arg ? ' → ' + String(arg) : ''));
+          break;
+        }
+      } catch { /* best-effort: jamás rompe la fase */ }
+    }, 2000);
   });
 }
 
@@ -388,7 +462,12 @@ export function buildPrompt(step, { changeDir, projectRoot, complexity, verified
   const planCtx = (verifiedCtx && PLANNING_PHASES.has(step.phase)) ? `\n${verifiedCtx}\n` : '';
   // mapa de orientación brownfield: SOLO a explore (la fase que mira el código existente) → localiza áreas sin escanear.
   const exploreCtx = (brownfieldMap && step.phase === 'explore') ? `\n${brownfieldMap}\n` : '';
-  return `${sentinels}\n${guard}\n${step.instruction}\n${exploreCtx}${planCtx}${refFiles}` +
+  // El TEXTO de la petición DEBE viajar en el prompt de planificación: las instrucciones dicen "base it on the
+  // request", pero antes no se inyectaba. Si `explore` se omite (complejidad simple), `propose` arrancaba SIN
+  // exploration.md NI request → el agente no sabía qué construir y no producía artefacto (run ABORTED en propose,
+  // bug real reportado). Es la petición del propio dev = la TAREA (no dato no confiable).
+  const reqBlock = step.request ? `The developer's request — THIS is what to build (it is the task, not untrusted data):\n${step.request}\n` : '';
+  return `${sentinels}\n${guard}\n${step.instruction}\n${reqBlock}${exploreCtx}${planCtx}${refFiles}` +
     `Write ONLY the artifact file at this absolute path (create parent directories if needed): ${step.write_to_abs}\n` +
     `Use your native file-writing tool. Output the artifact content into that file and nothing else.`;
 }
@@ -503,7 +582,13 @@ export function activeRun(changeDir) {
   try {
     const l = JSON.parse(readFileSync(lockPath(changeDir), 'utf8'));
     const st = statSync(lockPath(changeDir));
-    if (Date.now() - st.mtimeMs < 15 * 60 * 1000 && l.pid && l.pid !== process.pid && pidAlive(l.pid)) return l;
+    if (Date.now() - st.mtimeMs < 15 * 60 * 1000 && l.pid && l.pid !== process.pid && pidAlive(l.pid)) {
+      // Un run con verdict TERMINAL ya NO toca src/ → no cuenta como "activo" aunque su proceso siga saliendo:
+      // el verdict se escribe ANTES de liberar el lock y de que el hijo muera. Sin esto, un run recién GREEN
+      // bloqueaba (busyProject) lanzar otro en el mismo repo durante la ventana de salida — carrera real.
+      try { const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8')); if (tl && tl.verdict && tl.verdict !== 'running') return null; } catch {}
+      return l;
+    }
   } catch {}
   return null;
 }
@@ -527,13 +612,23 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   };
   // toma el lock de instancia única (se refresca en cada writeTimeline; se libera en TODAS las salidas)
   const takeLock = () => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(lockPath(changeDir), JSON.stringify({ pid: process.pid, startedAt: Date.now(), request, url: serveUrl })); } catch {} };
-  const releaseLock = () => { _inProcLocks.delete(lockKey); try { rmSync(lockPath(changeDir), { force: true }); } catch {} };
+  const releaseLock = () => {
+    _inProcLocks.delete(lockKey); // el lock EN-PROCESO siempre se libera
+    // el lock EN DISCO solo se borra si es NUESTRO (pid propio). Con el early-out por verdict terminal, un
+    // relanzamiento del MISMO change pudo haber tomado el lock ya → no borrar el de un sucesor. En error de
+    // lectura no se toca (un lock huérfano lo limpia la detección de arranque del siguiente run).
+    try { const l = JSON.parse(readFileSync(lockPath(changeDir), 'utf8')); if (l.pid === process.pid) rmSync(lockPath(changeDir), { force: true }); } catch {}
+  };
   // windows-orphan-lock (observabilidad): si quedó un lock previo y NO era un run activo (lo habría
   // capturado el dup-check de arriba), estaba huérfano/caduco → dejarlo en el registro al descartarlo.
   try { const lk = JSON.parse(readFileSync(lockPath(changeDir), 'utf8')); const age = Date.now() - statSync(lockPath(changeDir)).mtimeMs; if (lk?.pid) log(`🔓 descarto lock previo huérfano (pid ${lk.pid}, ${Math.round(age / 1000)}s sin latir)`); } catch {}
   takeLock();
   const projectRoot = srcDir ? resolve(srcDir) : resolve(changeDir, '..', '..', '..');
   const cfg = readDriveConfig(projectRoot); // config del usuario (openspec/conductor.json)
+  // key BYOK (vive SOLO en ~/.conductor/byok.json, NO en el env del server → el patrón sk-/Bearer no la cubre si
+  // es una virtual key con otro formato) para redactarla en TODOS los scrubs de captura del run. Sin esto, si el
+  // proveedor la ecoa en un error, se persistía en timeline.json (lastError/raw) y se servía por /api/state.
+  const runSecretExtra = byokScrubExtra();
   // policy de gobierno del proyecto (openspec/policy.json) — para la allowlist de modelos EN EL DRIVER
   // (defensa en profundidad sobre el boundary HTTP). Null si no hay fichero o es inválida (el gate verify
   // ya hace fail-closed sobre una policy corrupta; aquí no bloqueamos modelos sin allowlist explícita).
@@ -559,8 +654,12 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   let refFiles = ''; try { refFiles = referencedFiles(request, projectRoot); } catch { /* sin ficheros referenciados */ }
   if (refFiles) log('📎 ficheros referenciados con @ inyectados como contexto');
   let skillsLogged = false;
-  const tmo = timeoutMs || Number(process.env.CONDUCTOR_AGENT_TIMEOUT_MS) || (Number(cfg.timeoutSeconds) * 1000) || 600000;
-  maxRetries = maxRetries ?? (Number.isInteger(cfg.maxRetries) ? cfg.maxRetries : 1);
+  // conductor.json NO se valida contra CONFIG_SCHEMA en runtime → se clampan aquí los valores que causan daño real:
+  // timeoutSeconds<=0 daba tmo negativo (truthy) → TODA fase timeout al primer tick; maxRetries enorme → burn de
+  // AI Credits en reintentos casi-infinitos. Solo un timeoutSeconds POSITIVO cuenta; maxRetries se acota a 0..3 (schema).
+  const cfgTs = Number(cfg.timeoutSeconds);
+  const tmo = timeoutMs || Number(process.env.CONDUCTOR_AGENT_TIMEOUT_MS) || (cfgTs > 0 ? cfgTs * 1000 : 0) || 600000;
+  maxRetries = maxRetries ?? (Number.isInteger(cfg.maxRetries) ? Math.max(0, Math.min(3, cfg.maxRetries)) : 1);
   const gitCommit = process.env.CONDUCTOR_GIT_COMMIT === '1' || (cfg.gitCommit === true && process.env.CONDUCTOR_GIT_COMMIT !== '0');
   // PRESET (#67): paquete de knobs de gobierno (el "dial" trivial→complejo) sobre el MISMO driver. Llega por
   // (1) opción de llamada `preset` (la elige el experto en el panel/launcher POR RUN — máxima precedencia),
@@ -666,7 +765,8 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     } catch {}
   }
   const t0run = Date.now();
-  let currentInfo = null; // fase EN CURSO (para la mini-web): {phase, role, model, attempt, startedAt, timeoutMs, lastError}
+  let currentInfo = null; // fase EN CURSO (para la mini-web): {phase, role, model, attempt, startedAt, timeoutMs, lastError, lastActivity}
+  let lastActAt = 0; // throttle de la actividad en vivo: el timeline se re-escribe como mucho cada 3s por actividad
   let testsResult = null; // verify POR EJECUCIÓN (opcional, post-gate): {ran, passed, failed[], cmds[]} — para timeline/UI
   // GUARDRAIL working-tree (preflight): en un run FRESCO, ¿el árbol ya tenía cambios SIN COMMITEAR al arrancar? El diff
   // de este run (git diff HEAD) los incluiría → atribución mezclada. NO bloquea (el experto manda); avisa + timeline.
@@ -780,19 +880,22 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     }
     // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
     // tokens, sin LLM) y escribe test-report.md; next() lee el veredicto (FAIL → ciclo fix → re-test; PASS → verify).
-    // ANTI-RCE: solo EJECUTA con consentimiento (toggle "test" del run, o cfg.allowChecks/env); si no, no-op que pasa.
+    // ANTI-RCE (endurecido): el consentimiento para EJECUTAR programas NO puede venir de un fichero del repo
+    // (openspec/conductor.json es entrada NO confiable: repo clonado/otro dev → `allowChecks:true`+`checks:[…]`
+    // sería RCE al lanzar). Solo consienten: el toggle "test" del propio run (acción explícita del usuario) o el
+    // env CONDUCTOR_ALLOW_CHECKS=1 (mismo criterio que CONDUCTOR_ALLOW_CMD_PRECOND para las precondiciones cmd:).
     if (phase === 'test') {
       if (stopSignal?.requested) return stopped();
       log('⏳ test (ejecución de pruebas del proyecto)');
       const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
-      const consent = runTestsOpt === true || cfg.allowChecks === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
+      const consent = runTestsOpt === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
       const failed = []; let detail = '';
       if (cmds.length && consent) {
         for (const chk of cmds) {
           const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
           if (!a.length) continue;
           try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
-          catch (e) { failed.push(chk); detail += `FAILED: ${chk}\n${scrubSecrets(String(e.stdout || '') + String(e.stderr || '')).slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk}`); }
+          catch (e) { failed.push(chk); detail += `FAILED: ${chk}\n${scrubSecrets(String(e.stdout || '') + String(e.stderr || ''), process.env, runSecretExtra).slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk}`); }
         }
         testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
@@ -1015,14 +1118,19 @@ ${readSafe(x.lp).trim()}`);
         } else {
           usePrompt = prompt;
         }
-        r = await runAgent({ phase, role, prompt: usePrompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} });
+        r = await runAgent({ phase, role, prompt: usePrompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, onActivity: (a) => {
+          if (!currentInfo) return;
+          currentInfo.lastActivity = scrubSecrets(String(a), process.env, runSecretExtra).slice(0, 140);
+          const tNow = Date.now();
+          if (tNow - lastActAt >= 3000) { lastActAt = tNow; writeTimeline('running'); }
+        } });
         rawOut = r && typeof r.out === 'string' ? r.out : '';
       }
       if (stopSignal?.requested) return stopped();
       // SECRET-SCRUB en ORIGEN (audit): el stderr del subproceso podría contener un "Bearer <key>"/"sk-…" si el
       // proveedor lo escupe en un error. Redactar AQUÍ protege a la vez el REGISTRO, el timeline.json en disco y
       // /api/state (que sirve el timeline sin volver a scrubear, a diferencia de /api/raw y /api/events).
-      if (r && r.err) { const safeErr = scrubSecrets(r.err); log(`   agente: ${safeErr}`); currentInfo.lastError = safeErr; writeTimeline('running'); }
+      if (r && r.err) { const safeErr = scrubSecrets(r.err, process.env, runSecretExtra); log(`   agente: ${safeErr}`); currentInfo.lastError = safeErr; writeTimeline('running'); }
 
       if (isCode) {
         let files = captureChanged(projectRoot, baseline);
@@ -1075,7 +1183,7 @@ ${readSafe(x.lp).trim()}`);
     // en memoria y lo tiraba; el SDK lo devuelve en r.out — aquí queda guardado para enseñarlo en la web.
     let hasRaw = false;
     if (cfg.rawCapture !== false && rawOut && rawOut.trim()) {
-      try { const rd = join(changeDir, '.conductor', 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut)).slice(0, 40000)); hasRaw = true; } catch {}
+      try { const rd = join(changeDir, '.conductor', 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
     }
     timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
@@ -1109,7 +1217,13 @@ ${readSafe(x.lp).trim()}`);
         const mode = budget.onExceed === 'pause' && onPause ? 'pause' : 'block';
         if (mode === 'pause') {
           log(`⏸ ${why} — pido decisión humana (onExceed:pause)`);
-          const pr = await awaitReview(onPause({ before: 'budget', role: 'reviewer', budget: { tokens: totIn + totOut, cost_usd: +totCost.toFixed(4), limit: budget } }));
+          // HEARTBEAT del lock durante la pausa (igual que la pausa de revisión en 839-842): sin esto, tras 15 min
+          // el mtime del lock caduca, activeRun() lo da por muerto y un 2º driver/instancia arrancaría sobre el
+          // MISMO árbol (src/) → timeline/checkpoints corruptos. Se libera el intervalo en TODAS las salidas.
+          const budgetHb = setInterval(takeLock, 5 * 60_000);
+          let pr;
+          try { pr = await awaitReview(onPause({ before: 'budget', role: 'reviewer', budget: { tokens: totIn + totOut, cost_usd: +totCost.toFixed(4), limit: budget } })); }
+          finally { clearInterval(budgetHb); }
           if (pr === REVIEW_ABORT || pr?.stop || stopSignal?.requested) { writeTimeline('BLOCKED', why); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline }; }
           log(`   ▶ presupuesto ampliado por el revisor — continúa`);
         } else {
@@ -1256,6 +1370,9 @@ ${readSafe(x.lp).trim()}`);
   if (step.verdict === 'GREEN' && !process.env.CONDUCTOR_NO_SEAL) {
     try {
       const gates = isMicro ? [{ name: 'micro', findings: microGates() }] : [{ name: 'coherence', findings: checkCoherence(changeDir) }, { name: 'artifacts', findings: checkArtifacts(changeDir) }];
+      // B.3: hallazgos graves CONFIRMADOS por el revisor fresco → al sello como gate consultivo (warning)
+      const parF = postApplyFindings(changeDir);
+      if (parF.length) gates.push({ name: 'post-apply-review', findings: parF });
       const trace = !isMicro && existsSync(projectRoot) ? buildTrace(changeDir, projectRoot) : null;
       const privF = process.env.CONDUCTOR_PRIV_KEY;
       const privateKeyPem = privF && existsSync(privF) ? readSafe(privF) : undefined;

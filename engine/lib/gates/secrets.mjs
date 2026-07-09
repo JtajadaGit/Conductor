@@ -22,7 +22,9 @@ const TOKEN_PATTERNS = [
 
 // asignación hardcodeada de credencial: api_key/secret/password/token = "valor". Filtro de placeholders
 // para no marcar ejemplos (your_key, <token>, ${VAR}, process.env.X, changeme, etc.).
-const ASSIGN_RE = /\b(api[_-]?key|secret|password|passwd|access[_-]?token|client[_-]?secret|auth[_-]?token)\b\s*[:=]\s*['"]([^'"\n]{8,})['"]/gi;
+// incluye backtick (`) como delimitador: un secreto en template-literal (idiomático TS/JS) evadía la detección
+// y llegaba a GREEN. Mismo filtro PLACEHOLDER_RE (un `${...}` sigue exento). Multi-línea excluido por \n.
+const ASSIGN_RE = /\b(api[_-]?key|secret|password|passwd|access[_-]?token|client[_-]?secret|auth[_-]?token)\b\s*[:=]\s*['"`]([^'"`\n]{8,})['"`]/gi;
 const PLACEHOLDER_RE = /^(?:x{3,}|your[_-]?|<|\$\{|process\.env|import\.meta\.env|os\.environ|example|changeme|placeholder|dummy|redacted|none|null|undefined|true|false|sample|test[_-]?|fake|xxx)/i;
 
 // PII: número de tarjeta válido por Luhn con IIN plausible (Visa/MC/Amex/Discover). El IIN evita marcar
@@ -43,7 +45,9 @@ function scanText(text) {
     for (const [rule, re] of TOKEN_PATTERNS) if (re.test(line)) add(rule, `posible secreto (${rule}) hardcodeado`, i);
     ASSIGN_RE.lastIndex = 0;
     let m;
-    while ((m = ASSIGN_RE.exec(line))) { const val = m[2]; if (!PLACEHOLDER_RE.test(val.trim())) add('hardcoded-credential', `credencial hardcodeada en asignación a "${m[1]}"`, i); }
+    // un template-literal CON interpolación (`Bearer ${jwt}`) NO es un secreto hardcodeado — se exime aunque el
+    // `${...}` no esté al inicio (PLACEHOLDER_RE solo cubre el prefijo). Cierra el falso-positivo del backtick.
+    while ((m = ASSIGN_RE.exec(line))) { const val = m[2]; if (!/\$\{[^}]*\}/.test(val) && !PLACEHOLDER_RE.test(val.trim())) add('hardcoded-credential', `credencial hardcodeada en asignación a "${m[1]}"`, i); }
     CARD_RE.lastIndex = 0;
     let c;
     while ((c = CARD_RE.exec(line))) { const digits = c[0].replace(/\D/g, ''); if (luhnValid(digits)) add('pii-card-number', 'posible número de tarjeta (PII) válido por Luhn', i); }

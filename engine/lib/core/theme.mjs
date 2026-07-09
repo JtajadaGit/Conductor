@@ -4,9 +4,11 @@
 export const THEME = `
  :root{
   color-scheme:light;
-  --tx:#0f1822;--tx2:#46556a;--tx3:#647184;--bd:#e1e8f0;--bd2:#eef2f7;
+  /* tx3/verdicts oscurecidos un punto para despejar AA 4.5 en los informes (paridad con la SPA theme.css:
+     antes 4.3-4.45 sobre su tinte). Los *bg quedan igual — la identidad visual no cambia. */
+  --tx:#0f1822;--tx2:#46556a;--tx3:#566073;--bd:#e1e8f0;--bd2:#eef2f7;
   --bg:#f6f8fb;--bg2:#eaf0f6;--card:#ffffff;
-  --ok:#0e7c66;--okbg:#daf0e9;--bad:#c2362f;--badbg:#fbe3e1;--warn:#8a5a0c;--warnbg:#f6ecd4;
+  --ok:#0b6b57;--okbg:#daf0e9;--bad:#af2a24;--badbg:#fbe3e1;--warn:#795009;--warnbg:#f6ecd4;
   --accent:#2563eb;--accent2:#5b93ff;--accentbg:#e7efff;
   --sh:0 1px 2px rgba(15,30,55,.06),0 2px 8px rgba(15,30,55,.05);
   --shlg:0 6px 22px rgba(15,30,55,.10),0 20px 48px rgba(15,30,55,.10);--r:11px;
@@ -45,7 +47,7 @@ export const THEME = `
  .pill.GREEN{background:var(--okbg);color:var(--ok);border-color:var(--ok)}
  .pill.CURSO,.pill.run,.pill.RUNNING{background:var(--warnbg);color:var(--warn);border-color:var(--warn)}
  .pill.CURSO::before{animation:pulse 1.4s ease-in-out infinite}
- .pill.NOT-GREEN,.pill.ABORTED,.pill.STOPPED,.pill.INTERRUMPIDO,.pill.bad{background:var(--badbg);color:var(--bad);border-color:var(--bad)}
+ .pill.NOT-GREEN,.pill.ABORTED,.pill.STOPPED,.pill.INTERRUMPIDO,.pill.bad,.pill[class*=BLOCK]{background:var(--badbg);color:var(--bad);border-color:var(--bad)}
  .pill.G,.pill.neutral{background:var(--bg2);color:var(--tx3);border-color:var(--bd)}
  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
  /* cards métricas — readout de instrumento (label mono, número tabular) */

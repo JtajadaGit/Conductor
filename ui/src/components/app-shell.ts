@@ -16,41 +16,59 @@ const SB_KEY = 'conductorSbHide';
 @customElement('conductor-app')
 export class ConductorApp extends CElement {
   @state() private route: Route = router.current;
-  @state() private sbHide = localStorage.getItem(SB_KEY) === '1';
+  // en MÓVIL el sidebar es un overlay fijo: sin preferencia guardada, arranca OCULTO (si no, TAPA el
+  // contenido y todo se ve estrujado en media pantalla — bug real a ≤820px). En desktop, visible por defecto.
+  @state() private sbHide = ((): boolean => {
+    // try/catch: en modo privado estricto / políticas corporativas, localStorage LANZA al leer → sin guardar,
+    // este inicializador de campo crasheaba TODA la app antes de renderizar (bug real visto en QA).
+    let v: string | null = null;
+    try { v = localStorage.getItem(SB_KEY); } catch { /* sin storage → default por viewport */ }
+    if (v !== null) return v === '1';
+    try { return window.matchMedia('(max-width: 820px)').matches; } catch { return false; }
+  })();
   @state() private ready = false;
+  @state() private online = true; // conexión con el servidor local (el ping es el latido)
 
-  private buildTimer: ReturnType<typeof setInterval> | null = null;
+  private buildTimer: ReturnType<typeof setTimeout> | null = null;
   private bootSig: string | null = null;
 
   override connectedCallback(): void {
     super.connectedCallback();
     router.addEventListener('change', this.onRoute as EventListener);
     router.start();
-    // AUTO-RELEVO: vigila el build del servidor (versión del motor + hash de la UI) y recarga si cambia,
-    // para no quedarse con una pestaña "desactualizada" tras un redeploy. Sin esto, el SPA en memoria sigue
-    // con el JS viejo hasta un Ctrl+Shift+R manual.
+    // AUTO-RELEVO + LATIDO DE CONEXIÓN: el ping vigila (a) el build del servidor para auto-recargar tras un
+    // redeploy, y (b) que el servidor SIGA VIVO. Antes un fallo se tragaba en silencio → la UI se congelaba en
+    // datos viejos sin avisar (el dev cierra la terminal y creía el panel vivo). Ahora reprograma adaptativo.
     void this.checkBuild();
-    this.buildTimer = setInterval(() => void this.checkBuild(), 15000);
   }
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     router.removeEventListener('change', this.onRoute as EventListener);
-    if (this.buildTimer) clearInterval(this.buildTimer);
+    if (this.buildTimer) clearTimeout(this.buildTimer);
   }
 
   private async checkBuild(): Promise<void> {
+    let ok = false;
     try {
-      const r = await fetch('/api/ping', { cache: 'no-store' });
-      if (!r.ok) return;
-      const j = await r.json() as { version?: string | null; uiBuild?: string | null };
-      const sig = `${j.version ?? ''}|${j.uiBuild ?? ''}`;
-      if (this.bootSig === null) { this.bootSig = sig; return; } // primera lectura = línea base
-      if (sig !== this.bootSig) location.reload();
-    } catch { /* servidor caído: el sidebar ya lo señala; no recargamos a ciegas */ }
+      const r = await fetch('/api/ping', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+      if (r.ok) {
+        ok = true;
+        const j = await r.json() as { version?: string | null; uiBuild?: string | null };
+        const sig = `${j.version ?? ''}|${j.uiBuild ?? ''}`;
+        if (this.bootSig === null) this.bootSig = sig; // primera lectura = línea base
+        else if (sig !== this.bootSig) location.reload();
+      }
+    } catch { /* servidor caído/red: ok queda false → banner de desconexión */ }
+    this.online = ok;
+    // reprograma adaptativo: sano cada 10s (detecta la caída pronto sin martillear); caído cada 3s (recuperación rápida)
+    if (this.buildTimer) clearTimeout(this.buildTimer);
+    this.buildTimer = setTimeout(() => void this.checkBuild(), ok ? 10000 : 3000);
   }
 
   private onRoute = (e: Event): void => {
     this.route = (e as CustomEvent<Route>).detail;
+    // en móvil, navegar cierra el drawer (patrón estándar): tras elegir un run no debe quedar tapando
+    try { if (window.matchMedia('(max-width: 820px)').matches) this.sbHide = true; } catch { /* sin matchMedia */ }
     void this.preload();
   };
 
@@ -67,7 +85,13 @@ export class ConductorApp extends CElement {
 
   private toggleSb(): void {
     this.sbHide = !this.sbHide;
-    localStorage.setItem(SB_KEY, this.sbHide ? '1' : '0');
+    try { localStorage.setItem(SB_KEY, this.sbHide ? '1' : '0'); } catch { /* sin persistencia, no pasa nada */ }
+  }
+  // móvil: click en el velo (la propia .layout, fuera del aside/main) cierra el drawer
+  private onLayoutClick(e: MouseEvent): void {
+    if (this.sbHide) return;
+    try { if (!window.matchMedia('(max-width: 820px)').matches) return; } catch { return; }
+    if (e.target === e.currentTarget) this.sbHide = true;
   }
 
   private screen(): TemplateResult | typeof nothing {
@@ -83,12 +107,15 @@ export class ConductorApp extends CElement {
 
   override render(): TemplateResult {
     const active = (this.route.name === 'run' || this.route.name === 'session') ? (this.route.change ?? '') : '';
+    // proyecto de la ruta actual → el sidebar enfoca ese proyecto (dentro de un run, el foco es SU proyecto)
+    const activeProj = this.route.projId ?? this.route.query.get('project') ?? '';
     return html`
       <a class="skiplink" href="#main-content">Saltar al contenido</a>
+      ${!this.online ? html`<div class="offline-bar" role="alert"><span class="offline-dot"></span>Sin conexión con conductor — ¿se cerró el servidor? Reintentando…</div>` : nothing}
       <button class="sbtog" aria-label="alternar panel lateral" @click=${() => this.toggleSb()}>☰</button>
       <theme-toggle></theme-toggle>
-      <div class="layout ${this.sbHide ? 'sbhide' : ''}">
-        <aside class="sb" role="navigation" aria-label="Navegación de proyectos y runs"><app-sidebar .activeChange=${active} .activeRoute=${this.route.name}></app-sidebar></aside>
+      <div class="layout ${this.sbHide ? 'sbhide' : ''}" @click=${(e: MouseEvent) => this.onLayoutClick(e)}>
+        <aside class="sb" role="navigation" aria-label="Navegación de proyectos y runs"><app-sidebar .activeChange=${active} .activeRoute=${this.route.name} .activeProj=${activeProj}></app-sidebar></aside>
         <main class="content" id="main-content">${this.screen()}</main>
       </div>
       <artifact-viewer></artifact-viewer>

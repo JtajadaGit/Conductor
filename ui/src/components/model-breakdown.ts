@@ -24,7 +24,7 @@ export class ModelBreakdown extends CElement {
           return html`<div class="mb-row">
             <span class="mb-name" title=${model}>${model}</span>
             <span class="mb-track"><i style="width:${pct}%"></i></span>
-            <span class="mb-meta">${pct}% · ↓${fmt(e.in)} ↑${fmt(e.out)} · ${e.phases} fase(s)</span>
+            <span class="mb-meta">${pct}% · ↓${fmt(e.in)} ↑${fmt(e.out)} · ${e.phases} ${e.phases === 1 ? 'fase' : 'fases'}</span>
           </div>`;
         })}
       </div>`;

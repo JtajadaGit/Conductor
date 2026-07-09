@@ -12,7 +12,11 @@ export interface Route {
 
 export function parseRoute(pathname: string, search = ''): Route {
   const query = new URLSearchParams(search);
-  const p = decodeURIComponent(pathname.replace(/\/+$/, '') || '/');
+  const raw = pathname.replace(/\/+$/, '') || '/';
+  // decodeURIComponent LANZA URIError ante entradas malformadas (%zz, un % suelto). parseRoute corre en el
+  // inicializador de campo del Router → un throw aquí dejaba la SPA en blanco. Fallback al pathname crudo.
+  let p: string;
+  try { p = decodeURIComponent(raw); } catch { p = raw; }
   if (p === '/help') return { name: 'help', apiBase: '/api/', query };
   if (p === '/flow') return { name: 'flow', apiBase: '/api/', query };
   if (p === '/demo') return { name: 'demo', apiBase: '/api/demo/', query };
@@ -64,6 +68,9 @@ export class Router extends EventTarget {
     if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
     const url = new URL(a.href, location.href);
     if (url.origin !== location.origin) return;
+    // ancla en la MISMA página (p.ej. el skip-link href="#main-content"): dejar que el navegador salte al ancla.
+    // Interceptarlo hacía pushState quitando el hash → "Saltar al contenido" no hacía nada (a11y de teclado/lector).
+    if (url.hash && url.pathname === location.pathname && url.search === location.search) return;
     e.preventDefault();
     this.go(url.pathname + url.search);
   }

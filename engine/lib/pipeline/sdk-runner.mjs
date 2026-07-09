@@ -17,20 +17,25 @@ const requireNode = createRequire(import.meta.url);
 // localiza el runtime de Copilot del USUARIO (sin shippear los ~557MB): COPILOT_CLI_PATH manda; si no,
 // el paquete global @github/copilot (npm root -g). La ruta va en la opción `cliPath` del SDK (si es .js,
 // el propio SDK lo lanza con node — verificado en su dist/client.js).
+// MEMO por-proceso: `npm root -g` es un execSync que BLOQUEA el event loop hasta 8s (aun disparado desde el
+// refresco de catálogo en background). El path del CLI global no cambia en la vida del proceso → se resuelve UNA
+// vez (el server es largo → antes se congelaba cada ~10 min). undefined = sin computar; el env override no memoiza.
+let _cliPathMemo;
 export function resolveCliPath(env = process.env) {
   if (env.COPILOT_CLI_PATH) return env.COPILOT_CLI_PATH;
+  if (_cliPathMemo !== undefined) return _cliPathMemo;
   try {
     const { execSync } = requireNode('node:child_process');
     const { existsSync, readFileSync } = requireNode('node:fs');
     const { join } = requireNode('node:path');
     const root = execSync('npm root -g', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000, windowsHide: true }).trim();
     const pkgDir = join(root, '@github', 'copilot');
-    if (!existsSync(pkgDir)) return null;
+    if (!existsSync(pkgDir)) return (_cliPathMemo = null);
     const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
     const entry = pkg.bin && typeof pkg.bin === 'object' ? Object.values(pkg.bin)[0] : pkg.main || 'index.js';
     const p = join(pkgDir, entry);
-    return existsSync(p) ? p : null;
-  } catch { return null; }
+    return (_cliPathMemo = existsSync(p) ? p : null);
+  } catch { return (_cliPathMemo = null); }
 }
 
 // CATÁLOGO REAL sin runtime/auth/JSON-RPC: el paquete @github/copilot (el CLI que el usuario instala
@@ -58,16 +63,28 @@ export async function copilotCatalogFromCli(env = process.env) {
     // async getAvailableModels()/retrieveAvailableModels() (que requieren el token de login de Copilot).
     // Probamos primero las constantes (rápidas, sin auth) y, si no están, la función nueva en best-effort
     // (funciona cuando el proceso hereda un contexto autenticado; si pide auth, devuelve [] sin romper).
+    // Las versiones NUEVAS del CLI eliminaron las constantes HELP_VISIBLE_MODELS/SUPPORTED_MODELS y exponen
+    // getAvailableModels(authInfo) — que EXIGE un objeto de auth (type ∈ user|gh-cli|copilot-api-token|env|token|
+    // api-key|hmac). Antes se llamaba SIN argumento → SIEMPRE throw ("copilotUser in undefined") → catálogo vacío
+    // → caída silenciosa a "observados" (el bug "lista de modelos falsa"). Ahora: constantes primero (CLIs viejos)
+    // y, si no, getAvailableModels() probando los tipos de auth que resuelven credencial ambiental, en un
+    // subproceso que HEREDA el env (donde el contexto autenticado existe, devuelve el catálogo REAL completo).
     const script = [
       "const e=process.env.__C_SDK_ENTRY;",
       "import(e).then(async m=>{",
       "  const auto=m.AUTO_MODEL_ID; let v=[];",
+      "  const pick=r=>{const a=Array.isArray(r)?r:(r&&Array.isArray(r.models)?r.models:[]);return a.map(x=>typeof x==='string'?x:(x&&(x.id||x.name))).filter(Boolean);};",
       "  if(Array.isArray(m.HELP_VISIBLE_MODELS)&&m.HELP_VISIBLE_MODELS.length) v=m.HELP_VISIBLE_MODELS;",
       "  else if(Array.isArray(m.SUPPORTED_MODELS)&&m.SUPPORTED_MODELS.length) v=m.SUPPORTED_MODELS;",
-      "  else for(const fn of ['getAvailableModels','retrieveAvailableModels']){",
-      "    if(typeof m[fn]!=='function') continue;",
-      "    try{ const r=await m[fn](); const arr=Array.isArray(r)?r:(r&&Array.isArray(r.models)?r.models:[]);",
-      "      if(arr.length){ v=arr.map(x=>typeof x==='string'?x:(x&&(x.id||x.name))).filter(Boolean); break; } }catch{}",
+      "  else if(typeof m.getAvailableModels==='function'){",
+      // token del ENTORNO primero (vía limpia, sin parsear el almacén del CLI): setups Copilot Business suelen
+      // exportar COPILOT_API_TOKEN/COPILOT_GITHUB_TOKEN → con {type:'token'} devuelve el CATÁLOGO REAL completo.
+      "    const tok=process.env.COPILOT_API_TOKEN||process.env.COPILOT_GITHUB_TOKEN||process.env.GH_COPILOT_TOKEN||'';",
+      "    const auths=tok?[{type:'token',host:'https://github.com',token:tok}]:[];",
+      "    auths.push({type:'user'},{type:'gh-cli'},{type:'copilot-api-token'},{type:'env'});",
+      "    for(const ai of auths){",
+      "      try{ const got=pick(await m.getAvailableModels(ai)); if(got.length){ v=got; break; } }catch{}",
+      "    }",
       "  }",
       // M16: delimitar con sentinel — si el SDK escribe un banner/deprecación a stdout al importarse, el
       // JSON.parse del padre fallaba y el catálogo degradaba a [] en silencio. Ahora se extrae el tramo entre

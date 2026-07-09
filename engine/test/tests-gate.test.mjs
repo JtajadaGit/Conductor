@@ -1,7 +1,8 @@
 // tests-gate.test.mjs — FASE TEST (modelo apply → test → fix-loop → verify): ejecutar las pruebas REALES del proyecto
 // es una FASE DETERMINISTA opcional ANTES de verify (no un gate post-GREEN). Si fallan → ciclo `fix` (re-codifica) →
 // re-test → … hasta pasar o, tras N intentos, BLOCKED. `verify` (gobierno) sigue terminal. Anti-RCE: la fase solo
-// EJECUTA con consentimiento (toggle "test" por-run / allowChecks / env); en el pipeline pero sin consentimiento = no-op.
+// EJECUTA con consentimiento del USUARIO (toggle "test" por-run / env CONDUCTOR_ALLOW_CHECKS) — NUNCA por un flag
+// del fichero del repo (allowChecks-en-config sería RCE-por-config); en el pipeline pero sin consentimiento = no-op.
 import { drive } from '../lib/pipeline/drive.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,13 +87,27 @@ await test('tests-gate: fase test SIN consentimiento (sin runTests/allowChecks/e
   } finally { restoreEnv(saved); }
 });
 
-// ── 5) consentimiento por allowChecks (CI/headless, sin toggle) → ejecuta; fallo → ciclo fix → BLOCKED ──
-await test('tests-gate: fase test con allowChecks:true (sin toggle) → ejecuta; fallo → fix → BLOCKED', async () => {
+// ── 5) consentimiento por ENV (CI/headless, sin toggle) → ejecuta; fallo → ciclo fix → BLOCKED ──
+// ANTI-RCE (endurecido): el consentimiento NO puede venir del fichero del repo (openspec/conductor.json es
+// entrada no confiable → allowChecks-en-config sería RCE-por-config, como los `cmd:` precond gateados por env).
+// CI/headless consiente por CONDUCTOR_ALLOW_CHECKS=1 (o el toggle "test" por-run), nunca por el config del repo.
+await test('tests-gate: fase test con CONDUCTOR_ALLOW_CHECKS=1 (sin toggle) → ejecuta; fallo → fix → BLOCKED', async () => {
   const saved = clearEnv();
   try {
-    fresh({ checks: [FAIL], allowChecks: true });
-    const r = await runT('t-allow'); // sin runTests; el consentimiento llega por allowChecks (CI)
-    eq(r.verdict, 'BLOCKED', 'allowChecks habilita la ejecución igual que el toggle por-run');
+    process.env.CONDUCTOR_ALLOW_CHECKS = '1';
+    fresh({ checks: [FAIL] });
+    const r = await runT('t-allow'); // sin runTests; el consentimiento llega por el ENV (CI), no por el repo
+    eq(r.verdict, 'BLOCKED', 'el env habilita la ejecución igual que el toggle por-run');
+  } finally { restoreEnv(saved); }
+});
+// ── 5b) allowChecks:true en el CONFIG del repo NO habilita ejecución (anti-RCE-por-config) ──
+await test('tests-gate: allowChecks:true en el config del repo NO consiente ejecutar (RCE-por-config cerrado) → GREEN sin correr', async () => {
+  const saved = clearEnv();
+  try {
+    fresh({ checks: [FAIL], allowChecks: true }); // repo clonado hostil: el flag del fichero NO debe bastar
+    const r = await runT('t-cfgrce'); // sin runTests, sin env → el check que fallaría NO corre
+    eq(r.verdict, 'GREEN', 'un flag del fichero del repo no ejecuta comandos: el check hostil ni corre');
+    eq(tl('t-cfgrce')?.tests ?? null, null, 'no se ejecutó ninguna prueba pese a allowChecks:true en el config');
   } finally { restoreEnv(saved); }
 });
 

@@ -30,8 +30,11 @@
 .ph { position: relative; border: 1px solid var(--bd); border-radius: var(--r); background: var(--card); padding: var(--sp-3) var(--sp-4) var(--sp-3) 2.35rem; margin: var(--sp-2) 0; box-shadow: var(--sh); contain: layout paint; }
 /* nodo PENDIENTE: ligero (sin caja) — no compite con las fases ricas y aligera el ritmo del raíl */
 .ph.todo { padding-top: var(--sp-2); padding-bottom: var(--sp-2); box-shadow: none; background: transparent; }
+/* el punto de la timeline rail lleva el ESTADO (verde=hecha · rojo=falló · gris=pendiente) — único
+   indicador de estado por fase; el ✅/❌ emoji del nombre se quitó por redundante (menos ruido). */
 .ph::before { content: ''; position: absolute; left: .95rem; top: 1.2rem; width: 9px; height: 9px; border-radius: 50%; background: var(--bd); box-shadow: 0 0 0 3px var(--bg2); }
 .ph.done::before { background: var(--ok); }
+.ph.bad::before { background: var(--bad); }
 .ph.now { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accentbg), var(--sh); }
 .ph.now::before { background: var(--accent); animation: phpulse 1.6s ease-in-out infinite; }
 .ph.bad::before { background: var(--bad); }
@@ -129,8 +132,10 @@ mention-input { display: block; }
 /* logs / crudo */
 .logpre { max-height: 230px; overflow: auto; font-size: .74rem; line-height: 1.5; background: var(--bg2); border: 1px solid var(--bd2); border-radius: 8px; padding: .55rem .75rem; margin: .3rem 0 0; white-space: pre-wrap; font-family: var(--mono); color: var(--tx2); }
 .rawpre { max-height: 300px; overflow: auto; font-size: .73rem; line-height: 1.5; background: var(--bg2); border: 1px solid var(--bd2); border-radius: 8px; padding: .55rem .75rem; margin: .3rem 0 .2rem; white-space: pre-wrap; font-family: var(--mono); color: var(--tx2); }
-details.raw > summary { cursor: pointer; color: var(--tx2); user-select: none; font-size: .8rem; padding: .15rem 0; }
-details.raw > summary:hover { color: var(--tx); }
+/* affordance SECUNDARIO (se repite por fase): más pequeño y tenue que las filas primarias → recede como
+   "detalle expandible", reduce la repetición visual de "salida del modelo" en cada tarjeta. */
+details.raw > summary { cursor: pointer; color: var(--tx3); user-select: none; font-size: .72rem; padding: .1rem 0; letter-spacing: .01em; }
+details.raw > summary:hover { color: var(--tx2); }
 
 /* prompt con barra accent + action bar */
 /* BLOQUE DE PROMPT — tarjeta sobria con eyebrow "PROMPT" + badge de complejidad + texto legible */
@@ -333,10 +338,16 @@ help-screen code { white-space: nowrap; }
 
 /* botones de acción: icono + palabra + color diferenciador (outlined chips) */
 .btn.open { background: var(--accent); color: #fff; }
-/* restricción "el color es estado": las acciones de navegación NO roban color de verdict (verde/ámbar) ni el acento;
-   se diferencian por icono+texto. El azul queda para la primaria; verde/ámbar para los pills de ESTADO. */
-.btn.resume, .btn.dash, .btn.aiact { background: var(--bg2); color: var(--tx); border: 1px solid var(--bd); box-shadow: none; }
-.btn.resume:not(:disabled):hover, .btn.dash:not(:disabled):hover, .btn.aiact:not(:disabled):hover { filter: none; border-color: var(--accent); color: var(--accent); }
+/* IMPORTANCIA por color de borde + icono (petición de Jorge). Se respeta el principio "color = estado": verde/
+   ámbar/rojo NO se usan como decoración de acciones (quedan para los pills de verdict) — la escala de acción usa
+   AZUL (evidencia) y VIOLETA (gobierno/AI Act); la acción PRIMARIA de cada estado va RELLENA; navegación, neutra.
+   Reanudar (run incompleto) y Archivar (promover a fuente de verdad) nunca coexisten → ambas son la primaria. */
+.btn.resume, .btn.arch { background: var(--accent-btn); color: #fff; border: 1px solid transparent; }
+.btn.resume:not(:disabled):hover, .btn.arch:not(:disabled):hover { filter: brightness(1.06); }
+.btn.dash { background: var(--accentbg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--bd)); box-shadow: none; }
+.btn.dash:not(:disabled):hover { background: var(--accent); color: #fff; border-color: var(--accent); filter: none; }
+.btn.aiact { background: var(--govbg); color: var(--gov); border: 1px solid color-mix(in srgb, var(--gov) 42%, var(--bd)); box-shadow: none; }
+.btn.aiact:not(:disabled):hover { background: var(--gov); color: #fff; border-color: var(--gov); filter: none; }
 
 /* badge de modelo/proveedor: más sutil (suave, pequeño) */
 .badge.prov-byok, .badge.prov-copilot { font-size: .68rem; font-weight: 600; opacity: .9; }
@@ -386,7 +397,8 @@ help-screen code { white-space: nowrap; }
 
 /* segmented control de presets (sustituye .presets/.chip*): el ACTIVO se eleva sobre el riel --bg2 */
 .seg-group { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; margin: 0 0 .8rem; width: fit-content; max-width: 100%; background: var(--bg2); border: 1px solid var(--bd); border-radius: var(--r-sm); }
-.seg { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; gap: .42rem; cursor: pointer; white-space: nowrap; font: 600 .76rem/1 var(--font); color: var(--tx2); background: transparent; border: 1px solid transparent; border-radius: calc(var(--r-sm) - 2px); padding: .42rem .72rem; transition: background .12s, color .12s, border-color .12s, box-shadow .12s; }
+/* color --tx (no --tx2): el segmento inactivo sobre --bg2 despeja AA (el --tx2 daba ~2.2 en dark). */
+.seg { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; gap: .42rem; cursor: pointer; white-space: nowrap; font: 600 .76rem/1 var(--font); color: var(--tx); background: transparent; border: 1px solid transparent; border-radius: calc(var(--r-sm) - 2px); padding: .42rem .72rem; transition: background .12s, color .12s, border-color .12s, box-shadow .12s; }
 .seg:hover { color: var(--tx); }
 .seg:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .seg-led { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--tx3); transition: background .12s, box-shadow .12s; }
@@ -437,3 +449,9 @@ help-screen code { white-space: nowrap; }
   .ldr-ring { animation-duration: 2.6s; }
   .ldr-dots::after { content: '···'; animation: none; }
 }
+
+/* auto-aprobar como opción SECUNDARIA y tenue en la línea de meta (no un toggle junto al CTA) */
+.lm-auto { display: inline-flex; align-items: center; gap: .35rem; font-size: .74rem; color: var(--tx3); cursor: pointer; user-select: none; }
+.lm-auto:hover { color: var(--tx2); }
+.lm-auto input { width: .85rem; height: .85rem; accent-color: var(--warn); }
+.lm-auto.on { color: var(--warn); }

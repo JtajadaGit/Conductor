@@ -23,7 +23,7 @@ export function scanData(rootDir, relFiles, { onlyMigrations = false } = {}) {
     const code = txt.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
     const statements = code.split(';');
     // DDL peligroso (mismas reglas que `conductor migrate`, por sentencia → fail-closed)
-    for (const r of RULES) { if (r.rule === 'migration.no-rollback') continue; if (statements.some((st) => r.re.test(st))) findings.push({ rule: `data.${r.rule.replace(/^migration\./, '')}`, severity: r.sev, message: r.msg, file: rel }); }
+    for (const r of RULES) { if (r.rule === 'migration.no-rollback') continue; if (statements.some((st) => (r.test ? r.test(st) : r.re.test(st)))) findings.push({ rule: `data.${r.rule.replace(/^migration\./, '')}`, severity: r.sev, message: r.msg, file: rel }); }
     // PII en nombres de columna (solo en sentencias DDL de definición de tabla/columna)
     for (const st of statements) if (COL_CONTEXT.test(st) && PII_COL.test(st)) { const m = st.match(PII_COL); findings.push({ rule: 'data.pii-column', severity: 'warning', message: `columna con nombre de PII/secreto ("${m[0]}") — cifra/tokeniza, no la guardes en claro`, file: rel }); }
   }

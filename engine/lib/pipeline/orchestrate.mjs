@@ -3,7 +3,7 @@
 // El servidor impone la secuencia: no devuelve el siguiente paso hasta que el artefacto del actual existe,
 // y valida con el gate en verify. Así un modelo flojo NO puede saltar fases ni freestylear. Sin sub-agentes.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative, isAbsolute } from 'node:path';
 import { checkCoherence, readSpec } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { buildTrace } from '../gates/trace.mjs';
@@ -78,9 +78,18 @@ const CXORDER = ['micro', 'simple', 'medium', 'complex'];
 export function phaseCondMet(when, ctx = {}) {
   if (!when || typeof when !== 'string') return true;
   const w = when.trim();
+  // CONFINAMIENTO (como evalPrecondition): `when` sale de openspec/conductor.json (no confiable). Sin confinar,
+  // exists:/missing: es un ORÁCULO de existencia de rutas ARBITRARIAS del disco. Una ruta absoluta o con `..`
+  // fuera del changeDir se trata como "no existe" (jamás filtra si el fichero real existe).
+  const withinExists = (rel) => {
+    if (!rel || isAbsolute(rel)) return false;
+    const base = resolve(ctx.changeDir || '.');
+    const r = relative(base, resolve(base, rel));
+    return (r === '' || (!r.startsWith('..') && !isAbsolute(r))) && existsSync(join(base, rel));
+  };
   try {
-    if (w.startsWith('exists:')) return existsSync(join(ctx.changeDir || '.', w.slice(7).trim()));
-    if (w.startsWith('missing:')) return !existsSync(join(ctx.changeDir || '.', w.slice(8).trim()));
+    if (w.startsWith('exists:')) return withinExists(w.slice(7).trim());
+    if (w.startsWith('missing:')) return !withinExists(w.slice(8).trim());
     if (w.startsWith('request~')) return String(ctx.request || '').toLowerCase().includes(w.slice(8).trim().toLowerCase());
     const m = w.match(/^complexity\s*(>=|==|<=)\s*(micro|simple|medium|complex)$/);
     if (m) {
@@ -179,12 +188,19 @@ function resolvePolicyFor(changeDir) {
 function reviewerVerdict(dir) {
   try {
     const t = readFileSync(join(dir, 'verify-report.md'), 'utf8');
-    const m = t.match(/##\s*Verdict[^\n]*\n*([^\n]{0,80})/i) || t.match(/\bVerdict:\s*([A-Za-z]+)/i);
-    const seg = m ? (m[1] || m[0]) : '';
-    // FAIL gana SIEMPRE: un veredicto "FAIL — no cumple los criterios de PASS" menciona ambas palabras;
-    // antes eso se leía como PASS (un FAIL se colaba a GREEN). Prioridad a FAIL cierra esa evasión.
-    if (/\bFAIL\b/i.test(seg)) return 'FAIL';
-    if (/\bPASS\b/i.test(seg)) return 'PASS';
+    // Encabezado "## Verdict …" acotado a SU PROPIA LÍNEA (no cruza a "## Per scenario", donde un ❌/"fail" o la
+    // leyenda "PASS/RISK/FAIL" daban un FAIL FALSO → BLOCKED espurio en cada verify). Si la línea del encabezado NO
+    // trae token, se mira la SIGUIENTE (verdict en la línea de abajo). Decisión por POSICIÓN del 1er token (no
+    // prioridad-FAIL global): "FAIL — no cumple PASS" sigue = FAIL (FAIL aparece primero); "PASS — sin fallos" = PASS.
+    const hdr = t.match(/##\s*Verdict\b[^\n]*/i) || t.match(/\bVerdict:[^\n]*/i);
+    let seg = hdr ? hdr[0] : '';
+    if (seg && !/\b(FAIL|PASS|RISK)\b/i.test(seg)) {
+      const after = t.slice(hdr.index + seg.length).match(/^\s*\n[^\n]*/);
+      if (after) seg = after[0];
+    }
+    const iFail = seg.search(/\bFAIL\b/i), iPass = seg.search(/\bPASS\b/i);
+    if (iFail >= 0 && (iPass < 0 || iFail <= iPass)) return 'FAIL';
+    if (iPass >= 0) return 'PASS';
     return null;
   } catch { return null; }
 }
@@ -192,7 +208,19 @@ function reviewerVerdict(dir) {
 export function next({ changeDir, srcDir, override = null, overrideBy = null, strict = null }) {
   if (!existsSync(statePath(changeDir))) return { error: 'no hay run activo; llama a conductor_start primero.' };
   const s = loadState(changeDir);
-  if (s.status === 'done') return { done: true, verdict: s.verdict || 'GREEN' };
+  if (s.status === 'done') {
+    const v = s.verdict || 'GREEN';
+    // DEFENSA anti-forja (T1/C1, consistente con la del branch verify): el coder corre con --allow-all-tools y
+    // PUEDE plantar un state.json con {status:'done',verdict:'GREEN'} para SALTARSE el gate. No se confía en un
+    // GREEN persistido: para NO-micro se RE-CONFIRMA con el gate determinista + que hubo implementación (apply/fix).
+    // Si no lo confirma → NOT-GREEN. Un veredicto terminal NO-GREEN no puede forjarse "a mejor", así que se honra.
+    if (v === 'GREEN' && s.complexity !== 'micro') {
+      const hadApply = Array.isArray(s.phases) && s.phases.some((p) => p === 'apply' || p === 'fix');
+      let gatePass = false; try { gatePass = runGate(changeDir, srcDir, strict || {}).verdict === 'PASS'; } catch {}
+      if (!hadApply || !gatePass) return { done: true, verdict: 'NOT-GREEN', reason: 'GREEN persistido no confirmado por el gate determinista (estado posiblemente forjado)' };
+    }
+    return { done: true, verdict: v };
+  }
   const phase = s.phases[s.idx];
 
   // 1) ¿se escribió el artefacto del paso actual? (gate de avance: no se puede saltar)

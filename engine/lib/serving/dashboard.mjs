@@ -32,13 +32,16 @@ export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
 <title>conductor · informe · ${esc(change)}</title>
 <style>${THEME}
  body{max-width:1000px;margin:0 auto;padding:1.6rem 1.4rem 4rem}
+ /* tablas anchas (timeline = 8 cols) en móvil: scroll DENTRO de la tabla, no de la página (evita el scroll
+    horizontal de todo el informe a 390px). display:block + overflow-x:auto es el patrón responsive estándar. */
+ @media(max-width:640px){table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap}}
  .head{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-bottom:.3rem}
  .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem;box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 42%,transparent)}
  .sub{color:var(--tx2);font-size:.84rem;margin:.1rem 0 1.1rem}
 </style>
 <button class="thm-tog" id="thm" aria-label="Cambiar tema" title="Claro/Oscuro">◐</button>
 <script>(function(){var r=document.documentElement,k='conductorTheme';document.getElementById('thm').addEventListener('click',function(){var n=r.dataset.theme==='dark'?'light':'dark';r.dataset.theme=n;try{localStorage.setItem(k,n);}catch(e){}});})()</script>
-<div class=head><span class=logo>C</span><h1>Informe del run</h1><span class="pill ${verdict}">${esc(verdict)}</span></div>
+<div class=head><span class=logo>C</span><h1>Informe del run</h1><span class="pill ${esc(verdict)}">${esc(verdict)}</span></div>
 <p class=sub><code>${esc(change)}</code> · evidencia determinista del pipeline (gate sin LLM + linaje + timeline).</p>
 <div class="cards">
  <div class="card ${c.breaking + c.error ? 'no' : 'ok'}"><small>Bloqueantes</small><span>${c.breaking + c.error}</span></div>
@@ -52,7 +55,7 @@ export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
 <h2 class=sect>Gate determinista <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— coherencia spec↔código↔artefactos, sin LLM</span></h2>
 <table><tr><th>severidad</th><th>regla</th><th>mensaje</th><th>ubicación</th></tr>${findRows}</table>
 ${trace ? `<h2 class=sect>Linaje spec → task → code → test <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué requisito cubre cada artefacto (rojo = hueco)</span></h2><table><tr><th>requisito</th><th>nombre</th><th>task</th><th>code</th><th>test</th><th>scn</th></tr>${traceRows}</table>` : ''}
-${cost ? `<h2 class=sect>Coste por fase <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— tokens por fase y modelo (Copilot = AI Credits · qwen/BYOK = LiteLLM, 0 AIC)</span></h2><table><tr><th>fase</th><th>calls</th><th>modelo(s)</th><th>tokens in</th><th>tokens out</th></tr>${cost.phases.map((p) => `<tr><td>${esc(p.phase)}</td><td>${p.calls}</td><td><code>${esc(p.models.join(','))}</code></td><td>${fmt(p.in)}</td><td>${fmt(p.out)}</td></tr>`).join('')}</table>` : ''}
+${cost ? `<h2 class=sect>Coste por fase <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— tokens por fase y modelo (Copilot = AI Credits · qwen/BYOK = LiteLLM, 0 AIC)</span></h2><table><tr><th>fase</th><th>calls</th><th>modelos</th><th>tokens in</th><th>tokens out</th></tr>${cost.phases.map((p) => `<tr><td>${esc(p.phase)}</td><td>${p.calls}</td><td><code>${esc(p.models.join(','))}</code></td><td>${fmt(p.in)}</td><td>${fmt(p.out)}</td></tr>`).join('')}</table>` : ''}
 ${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— fase × modelo × duración × tokens</span></h2><table><tr><th>fase</th><th>rol</th><th>modelo</th><th>archivos</th><th>intentos</th><th>duración</th><th>tokens</th><th>ok</th></tr>${tlRows}</table>` : ''}
 <footer>Generado por conductor — determinista, sin LLM. Evidencia para provenance de green-gate.</footer>
 </html>`;

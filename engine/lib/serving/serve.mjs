@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSy
 import { homedir, tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { execSync, execFileSync, spawn } from 'node:child_process';
+import { execSync, execFileSync, execFile, spawn } from 'node:child_process';
 import { PRICE } from '../core/cost.mjs';
 import { activeRun, rollbackTo, readDriveConfig, scrubSecrets, SECRET_FILE, killTree } from '../pipeline/drive.mjs';
 import { KNOWN_PHASES } from '../pipeline/orchestrate.mjs';
@@ -32,7 +32,7 @@ import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard } from './dashboard.mjs';
-import { decryptSecret, encryptSecret } from '../provenance/secret.mjs';
+import { decryptSecret, encryptSecret, isPortableBlob } from '../provenance/secret.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -60,7 +60,11 @@ function fileDiff(srcDir, rel, changeDir) {
     const d = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', base, '--', rel], { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true });
     if (d.trim()) return d.slice(0, 30000);
   } catch {}
-  const c = safeRead(srcDir, rel, 30000);
+  // sin diff git: mostramos el CONTENIDO como "nuevo". Un ARTEFACTO SDD (proposal/spec/report) vive en el
+  // changeDir, no en la raíz del proyecto — sin este 2º intento el visor decía "no encontrado" para un
+  // fichero que SÍ existe (bug real en proyectos sin git). Se prueba srcDir y luego changeDir.
+  let c = safeRead(srcDir, rel, 30000);
+  if (c == null && changeDir) c = safeRead(changeDir, rel, 30000);
   return c != null ? `+++ ${rel} (nuevo)\n` + c.split('\n').map((l) => '+ ' + l).join('\n') : null;
 }
 
@@ -209,40 +213,49 @@ async function litellmUsage(env = process.env) {
 // uso de Copilot (premium requests / AI Credits) vía la API oficial de billing, usando el `gh` CLI ya
 // autenticado del usuario (GET /users/{u}/settings/billing/premium_request/usage — verificada en docs
 // GitHub 2026). Best-effort: sin gh / sin permisos → sin tarjeta. Cache 5 min. Opt-out: CONDUCTOR_USAGE=0.
-let _ghUsage = { at: 0, data: null };
+let _ghUsage = { at: 0, data: null, fetching: false };
+// NO-BLOQUEANTE: devuelve la caché al instante y refresca en BACKGROUND con execFile async. Antes usaba
+// execSync('gh api', timeout 8s) EN LA RUTA DE LA PETICIÓN → cada 5 min un poll congelaba TODO el event loop
+// (Node es mono-hilo). Ahora el request nunca espera a `gh`; la tarjeta AIC se actualiza cuando el spawn acaba.
 function ghPremiumUsage(env = process.env) {
   if (env.CONDUCTOR_USAGE === '0') return null;
-  if (Date.now() - _ghUsage.at < 300000) return _ghUsage.data;
-  _ghUsage.at = Date.now();
-  try {
-    // fuente REAL de la cuota del seat (lo que Copilot muestra en /usage): copilot_internal/user
-    // → quota_snapshots.premium_interactions {percent_remaining, remaining, entitlement} + quota_reset_date.
-    // Verificado en un seat Business real (2026-06). gh es OPCIONAL: sin gh/permiso → sin tarjeta.
-    const raw = execSync('gh api /copilot_internal/user', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000, windowsHide: true });
-    const j = JSON.parse(raw);
-    const q = j?.quota_snapshots?.premium_interactions;
-    if (!q || q.unlimited) { _ghUsage.data = null; return null; }
-    _ghUsage.data = {
-      plan: j.copilot_plan || null,
-      used: Math.max(0, Math.round((q.entitlement || 0) - (q.remaining ?? q.quota_remaining ?? 0))),
-      entitlement: q.entitlement || 0,
-      percentUsed: Math.max(0, Math.round(100 - (q.percent_remaining ?? 100))),
-      reset: (j.quota_reset_date || '').slice(5),
-      overage: q.overage_permitted === true,
-    };
-  } catch { /* fallo puntual de gh: conservar el último dato bueno y reintentar en 60s */ _ghUsage.at = Date.now() - 240000; }
-  return _ghUsage.data;
+  if (Date.now() - _ghUsage.at >= 300000 && !_ghUsage.fetching) {
+    _ghUsage.fetching = true; _ghUsage.at = Date.now();
+    execFile('gh', ['api', '/copilot_internal/user'], { encoding: 'utf8', timeout: 8000, windowsHide: true }, (err, stdout) => {
+      _ghUsage.fetching = false;
+      if (err) { _ghUsage.at = Date.now() - 240000; return; } // fallo puntual: conserva el último dato bueno, reintenta en 60s
+      try {
+        // fuente REAL de la cuota del seat (lo que Copilot muestra en /usage): copilot_internal/user
+        // → quota_snapshots.premium_interactions {percent_remaining, remaining, entitlement}. gh es OPCIONAL.
+        const j = JSON.parse(stdout);
+        const q = j?.quota_snapshots?.premium_interactions;
+        if (!q || q.unlimited) { _ghUsage.data = null; return; }
+        _ghUsage.data = {
+          plan: j.copilot_plan || null,
+          used: Math.max(0, Math.round((q.entitlement || 0) - (q.remaining ?? q.quota_remaining ?? 0))),
+          entitlement: q.entitlement || 0,
+          percentUsed: Math.max(0, Math.round(100 - (q.percent_remaining ?? 100))),
+          reset: (j.quota_reset_date || '').slice(5),
+          overage: q.overage_permitted === true,
+        };
+      } catch { _ghUsage.at = Date.now() - 240000; }
+    });
+  }
+  return _ghUsage.data; // último dato bueno (o null la primera vez, hasta que el background lo rellene)
 }
 
 // contexto del proyecto (una vez): nombre de carpeta + rama git
 const _ctxByDir = new Map(); // POR PROYECTO (un cache global mostraba el mismo nombre en todos los runs)
 function projectCtx(srcDir) {
-  const key = String(srcDir || '');
-  if (_ctxByDir.has(key)) return _ctxByDir.get(key);
+  const key = String(srcDir || ''), now = Date.now();
+  const cached = _ctxByDir.get(key);
+  // el NOMBRE es inmutable, pero la RAMA cambia con `git checkout` → antes se cacheaba para siempre y el subhead
+  // mostraba la rama vieja toda la sesión (multi-hora). TTL corto: refresca sin spawnear git en CADA poll de 5s.
+  if (cached && now - cached.at < 15000) return cached.ctx;
   let branch = null;
   try { branch = execSync('git branch --show-current', { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000, windowsHide: true }).trim() || null; } catch {}
   const ctx = { project: srcDir ? srcDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null, branch };
-  _ctxByDir.set(key, ctx);
+  _ctxByDir.set(key, { ctx, at: now });
   return ctx;
 }
 
@@ -251,8 +264,8 @@ function modelOptions(srcDir, tl) {
   const out = new Set();
   try { const m = readDriveConfig(srcDir).models || {}; for (const v of Object.values(m)) if (v) out.add(v); } catch {}
   for (const p of tl?.phases ?? []) if (p.model) out.add((p.provider === 'byok' ? 'byok:' : p.provider === 'copilot' ? 'copilot:' : '') + p.model);
-  // sugerencias estables (catálogo Business conocido + BYOK LiteLLM corporativo) — el input sigue siendo libre
-  for (const m of ['copilot:claude-sonnet-4.6', 'copilot:claude-haiku-4.5', 'copilot:claude-opus-4.8', 'byok:qwen36-msc1', 'byok:qwen36-msc2', 'byok:deepseek-v4-flash']) out.add(m);
+  // SOLO realidad: config del proyecto + modelos que este run usó de verdad. La semilla hardcodeada de
+  // "sugerencias" mentía (ofrecía modelos que quizá no existen en el catálogo de la org) — fuera.
   return [...out].slice(0, 16);
 }
 
@@ -545,6 +558,7 @@ export function saveRegistry(list) {
 // con creds de env o ~/.conductor/byok.json); copilot = modelos OBSERVADOS en la telemetría OTel de
 // los runs (los que de verdad funcionaron en el seat) + los de conductor.json. Cache 10 min. ──
 let _models = { at: 0, data: null };
+let _modelsInflight = null; // dedup anti-STAMPEDE: una ráfaga de /api/models concurrente comparte UN solo fetch a LiteLLM (antes cada llamada disparaba su propio fetch de 5s → 50 lecturas tardaban ~9s)
 // catálogo REAL de modelos Copilot vía el SDK (client.listModels), cacheado y rellenado en BACKGROUND.
 // NUNCA una lista inventada: si el SDK/runtime no responde, el picker muestra SOLO lo OBSERVADO en runs.
 let _copilotCat = { at: 0, models: [], fetching: false };
@@ -555,7 +569,7 @@ let _copilotCat = { at: 0, models: [], fetching: false };
 // (auth-gated, no fiable). Para AÑADIR un modelo al picker, añádelo a PRICE con su precio/tier real: así
 // catálogo + coste + tier quedan COHERENTES desde un único sitio (y se arregla el coste $0 de modelos no
 // tabulados). El fetch en vivo del entitlement real del seat queda como deuda DOCUMENTADA, no fabricada.
-const KNOWN_COPILOT = Object.keys(PRICE).filter((k) => PRICE[k]?.tier !== 'byok').map((k) => k.replace(/-(\d+)$/, '.$1'));
+// (la tabla PRICE ya NO siembra el picker: era la "lista falsa". PRICE queda solo para coste/tier.)
 function byokCredsLocal() {
   const env = process.env;
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
@@ -571,12 +585,16 @@ function byokCredsLocal() {
 // SIEMPRE, aunque la app arranque sin credenciales — se siembra al hacer `byok save` o un fetch en vivo.
 const MODELS_CACHE = () => join(CONDUCTOR_HOME(), 'models-cache.json');
 export function readModelsCache() { return readJson(MODELS_CACHE()); }
+// normaliza la baseUrl BYOK IGUAL que el fetch (trailing slash + sufijo /v1) para que el hash de cache sea
+// estable venga la URL del env o del form, con o sin '/' final → sin esto una misma qwen descartaba su cache.
+const normByokUrl = (u) => { const b = String(u || '').replace(/\/+$/, ''); return b ? (b.endsWith('/v1') ? b : b + '/v1') : ''; };
+const byokUrlHash = (u) => createHash('sha256').update(normByokUrl(u)).digest('hex').slice(0, 6);
 export function writeModelsCache(byokIds, baseUrl) {
   if (!byokIds?.length) return; // nunca sobrescribir la cache con una lista vacía (defensa en profundidad)
   try {
     const cur = readJson(MODELS_CACHE()) || {};
     cur.version = 1;
-    cur.byok = { baseUrlHash: createHash('sha256').update(String(baseUrl || '')).digest('hex').slice(0, 6), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models' };
+    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models' };
     mkdirSync(CONDUCTOR_HOME(), { recursive: true });
     writeFileSync(MODELS_CACHE(), JSON.stringify(cur, null, 2));
   } catch {}
@@ -589,7 +607,15 @@ export function isCopilotFamily(id) {
 }
 async function availableModels(registry) {
   if (Date.now() - _models.at < 600000 && _models.data) return _models.data;
+  // anti cache-stampede: si ya hay un cómputo en vuelo (con su fetch a LiteLLM), las llamadas concurrentes
+  // se cuelgan de ESA promesa en vez de disparar N fetches. Se limpia en el finally del wrapper de abajo.
+  if (_modelsInflight) return _modelsInflight;
+  _modelsInflight = _computeAvailableModels(registry).finally(() => { _modelsInflight = null; });
+  return _modelsInflight;
+}
+async function _computeAvailableModels(registry) {
   const byok = new Set(), copilot = new Set();
+  const liveByok = new Set(); // ids CONFIRMADOS en vivo por el /v1/models del proveedor BYOK → autoritativos (no reclasificar a Copilot)
   // OBSERVADOS (timelines + config de cada proyecto): SOLO red de seguridad. NO se mezclan con el catálogo AUTORITATIVO
   // — contaminaban la lista con modelos de test / typos / retirados de runs viejos. Se usan únicamente si NO hay catálogo.
   const obsByok = new Set(), obsCop = new Set();
@@ -607,29 +633,40 @@ async function availableModels(registry) {
   let byokSource = 'observados', byokCachedAt = null, live = false, byokReason = null;
   const creds = byokCredsLocal();
   if (!creds) {
-    // byok-decrypt-crossplatform: distinguir "no hay key" de "key cifrada DPAPI, ilegible fuera de Windows"
-    try { const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8')); if (j.apiKeyEnc && process.platform !== 'win32') byokReason = 'byok.json usa cifrado DPAPI (solo descifrable en Windows). Exporta COPILOT_PROVIDER_API_KEY o re-guarda con `conductor byok save` en este SO.'; } catch {}
+    // byok.json presente pero SIN creds usables = la clave cifrada no se pudo descifrar. Se distingue el motivo
+    // para que la pérdida sea VISIBLE y recuperable (antes: "sin BYOK" mudo): (a) blob c2 nuevo que no descifra →
+    // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
+    try {
+      const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
+      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'byok.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Re-guarda la clave con `conductor byok save`.';
+      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'byok.json usa el cifrado DPAPI antiguo (solo Windows). Re-guarda con `conductor byok save` en este SO para migrarlo al cifrado común (portable).';
+    } catch {}
   }
   if (creds) {
     try {
       const base = String(creds.baseUrl).replace(/\/+$/, '');
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
-      if (r.ok) { const j = await r.json(); const ids = []; for (const m of j.data ?? []) if (m.id) { byok.add(m.id); ids.push(m.id); } if (ids.length) { byokSource = 'LiteLLM /v1/models (en vivo)'; live = true; writeModelsCache(ids, creds.baseUrl); } }
+      if (r.ok) { const j = await r.json(); const ids = []; for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); } if (ids.length) { byokSource = 'LiteLLM /v1/models (en vivo)'; live = true; writeModelsCache(ids, creds.baseUrl); } }
     } catch {}
   }
   if (!live) {
     const cache = readModelsCache();
-    if (cache?.byok?.models?.length) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; }
+    // SOLO usar la cache si es del MISMO proveedor (baseUrlHash). Tras cambiar la URL BYOK cuyo fetch en vivo
+    // falla (401/URL mala), la lista VIEJA de otro proveedor no debe colarse: ni servirse ni pasar el gate
+    // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve). Sin creds no hay
+    // proveedor actual que validar (curHash=null) → se permite como fallback de display (lanzar byok sin creds ya da BLOCKED).
+    const curHash = creds ? byokUrlHash(creds.baseUrl) : null;
+    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; }
   }
   if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
   _models.at = Date.now();
   // catálogo REAL de Copilot (SDK client.listModels) fusionado con lo observado. Refresco en BACKGROUND
   // (no bloquea el panel) + cache 10 min; si aún no hay catálogo del SDK, NO inventamos — solo lo observado.
   for (const m of _copilotCat.models) copilot.add(m);
-  // si el fetch en vivo del SDK no aportó catálogo (caso actual: API auth-gated), siembra los modelos Copilot
-  // conocidos (tabla PRICE mantenida) para que el picker no quede en solo lo observado. Etiquetado en copilotSource.
-  if (!_copilotCat.models.length) for (const m of KNOWN_COPILOT) copilot.add(m);
-  if (!copilot.size) for (const m of obsCop) copilot.add(m); // ni catálogo del CLI (HELP_VISIBLE_MODELS) ni tabla conocida → último recurso: observados
+  // HONESTIDAD (bug "lista de modelos falsa"): SIN catálogo real del CLI, NO se rellena con la tabla
+  // mantenida — solo se ofrecen los modelos OBSERVADOS (que corrieron de verdad aquí) y la UI declara
+  // que el catálogo real aún no está (copilotPending). Ofrecer modelos inventados rompía la confianza.
+  if (!copilot.size) for (const m of obsCop) copilot.add(m);
   if (!_copilotCat.fetching && Date.now() - _copilotCat.at > 600000) {
     _copilotCat.fetching = true;
     let sdkBundle = null; try { sdkBundle = [join(resolve(process.argv[1]), '..', 'copilot-sdk.mjs')].find(existsSync) || null; } catch {}
@@ -638,12 +675,15 @@ async function availableModels(registry) {
   // anti-fuga de familia Copilot en el grupo BYOK: un run mal configurado o una cache vieja pudo
   // marcar provider:'byok' sobre un modelo Copilot (claude/gpt/gemini/o-series). El grupo BYOK es SOLO
   // proveedor propio (qwen/deepseek/…); descartamos los nombres de familia Copilot para no confundir.
-  for (const id of [...byok]) if (isCopilotFamily(id)) { byok.delete(id); copilot.add(id); }
+  // reclasifica al grupo Copilot los ids de familia Copilot que llegaron por OBSERVADOS/cache (contaminación de
+  // un run mal marcado), PERO NUNCA los CONFIRMADOS en vivo por el proveedor BYOK: un modelo que TU LiteLLM sirve
+  // es BYOK aunque se llame "claude-*" (moverlo a Copilot cambiaría proveedor/facturación → gastaría AI Credits).
+  for (const id of [...byok]) if (isCopilotFamily(id) && !liveByok.has(id)) { byok.delete(id); copilot.add(id); }
   const byokIds = [...byok].sort(), copilotIds = [...copilot].sort();
   // tier por modelo (economy|balanced|premium) → el panel arma el preset "Optimizar coste" sin adivinar
   const tiers = {};
   for (const id of [...byokIds, ...copilotIds]) tiers[id] = classifyTier(id);
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, byokSource, copilotSource: _copilotCat.models.length ? 'SDK Copilot (listModels)' : 'catálogo conocido (tabla mantenida) + observados', byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 
@@ -751,16 +791,24 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }
   for (const p of loadRegistry()) registry.set(p.id, p);
-  const ensureProject = (r) => {
+  // REGISTRO = INTENCIÓN, no historial de arranques: solo se PERSISTE un proyecto inicializado (openspec)
+  // o un alta explícita (persist:true desde /api/register o /api/init). Servir una carpeta cualquiera la
+  // ENFOCA en memoria (existe mientras la app viva) pero ya no la inscribe para siempre en ~/.conductor —
+  // era la causa de "aparecen proyectos en los que nunca trabajé".
+  const ensureProject = (r, { persist = false } = {}) => {
     const abs = resolve(r);
     const id = projId(abs);
-    if (!registry.has(id)) {
-      registry.set(id, { id, root: abs, name: abs.split(/[\\/]/).pop() });
-      saveRegistry([...registry.values()]);
-    }
-    return registry.get(id);
+    if (!registry.has(id)) registry.set(id, { id, root: abs, name: abs.split(/[\\/]/).pop(), ...(isSdd(abs) || persist ? {} : { transient: true }) });
+    const p = registry.get(id);
+    if ((persist || isSdd(abs)) && p.transient !== undefined) delete p.transient;
+    if (persist || isSdd(abs)) try { saveRegistry([...registry.values()].filter((x) => !x.transient)); } catch {}
+    return p;
   };
   const DEFAULT = ensureProject(root);
+  // ARRANQUE PER-REPO (Opción A · arranque-per-repo): FOCO activo SERVER-SIDE. El launcher /sdd-run lo mueve
+  // (POST /api/focus) al repo desde el que se lanzó; /api/changes lo reporta como projectId → el panel lo SIGUE
+  // en su poll (una pestaña ya abierta se re-enfoca sin depender de que el navegador navegue). Arranca en DEFAULT.
+  let focusId = DEFAULT.id;
   // UI ÚNICA = Vite (assets/ui), por DEFECTO cuando existe el build. Sin build (o forzando
   // CONDUCTOR_UI_STATIC=0 para depurar) se sirve el aviso mínimo "compila la UI" — la inline legacy no existe.
   const UI_DIR = uiStaticDir(engine);
@@ -777,9 +825,15 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // shared). Señal AUTORITATIVA = activeRun (pid VIVO en el lock, que el driver BORRA al terminar) → un run recién acabado
   // NO falso-bloquea (el flag 'exited' del Map va por detrás del exit del proceso). (a) reserva en vuelo (child===null,
   // otro launch a medio camino, aún sin lock) cierra el TOCTOU; (b) cualquier otro cambio con un driver vivo. null si no hay.
+  // ¿otro cambio del MISMO repo con un run VIVO? (comparten src/ → 1 run/repo). La VERDAD de "vivo" es el
+  // timeline: un cambio con verdict TERMINAL (GREEN/BLOCKED/…) ya NO toca src/, aunque su hijo aún esté saliendo
+  // o su reserva sin limpiar. notTerminal() combina ambas capas: cubre reservas (child:null, sin timeline aún) Y
+  // runs vivos (child!==null, timeline='running'), y EXCLUYE los terminados → sin falso "busyProject" tras un GREEN
+  // (bug real del e2e), y sin el hueco TOCTOU de solo-reservas (un run lanzado cuyo hijo aún no escribió el lock).
+  const notTerminal = (root, name) => { try { const v = readJson(join(root, 'openspec', 'changes', name, '.conductor', 'timeline.json'))?.verdict; return !v || v === 'running'; } catch { return true; } };
   const projectActiveRunOther = (proj, exceptName) => {
     const pref = proj.id + '/';
-    for (const [k, r] of runs) if (r && !r.exited && r.child === null && k.startsWith(pref) && k.slice(pref.length) !== exceptName) return k.slice(pref.length);
+    for (const [k, r] of runs) if (r && !r.exited && k.startsWith(pref)) { const nm = k.slice(pref.length); if (nm !== exceptName && notTerminal(proj.root, nm)) return nm; }
     try { for (const name of readdirSync(join(proj.root, 'openspec', 'changes'))) if (name !== exceptName && activeRun(join(proj.root, 'openspec', 'changes', name))) return name; } catch {}
     return null;
   };
@@ -798,6 +852,10 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // a {} en silencio y un POST corrupto a `continue` APROBABA la pausa con payload vacío.
   const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r(null); } }); req.on('end', () => { if (over) return; try { const j = JSON.parse(b || '{}'); r(j && typeof j === 'object' && !Array.isArray(j) ? j : null); } catch { r(null); } }); });
   const launch = (proj, name, request, complexity, domain, models, auto, preset, pipeline, runTests) => {
+    // ANTI-race del guardrail working-tree: marca el timeline como 'running' SÍNCRONO antes de spawnear. Sin esto,
+    // durante el arranque de un RESUME el timeline aún muestra el verdict TERMINAL del run anterior → notTerminal()/
+    // activeRun lo darían por "no activo" y dejarían arrancar un 2º driver sobre el MISMO src/. El driver lo reescribe.
+    try { const tp = join(proj.root, 'openspec', 'changes', name, '.conductor', 'timeline.json'); const tl = readJson(tp); if (tl && tl.verdict && tl.verdict !== 'running') writeFileSync(tp, JSON.stringify({ ...tl, verdict: 'running' }, null, 2)); } catch {}
     const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
@@ -891,7 +949,11 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
-        try { const r = initConfig(join(proj.root, 'openspec')); return json(200, { ok: true, created: r.created, copilotignore: r.copilotignore }); }
+        try {
+          const r = initConfig(join(proj.root, 'openspec'));
+          ensureProject(proj.root, { persist: true }); // recién inicializado → deja de ser transitorio y se persiste
+          return json(200, { ok: true, created: r.created, copilotignore: r.copilotignore });
+        }
         catch (e) { return json(500, { ok: false, error: String(e.message) }); }
       }
       // board de archive + búsqueda ligera (sin SQLite). Sin projectId → AGREGA sobre todos los
@@ -915,17 +977,19 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const home = CONDUCTOR_HOME();
           mkdirSync(home, { recursive: true });
           const apiKeyEnc = encryptSecret(key);
-          // H12: en Windows (DPAPI disponible) NUNCA caer a texto plano si el cifrado falla — una key sin
-          // cifrar en ~/.conductor/byok.json es exactamente lo que el cifrado evita ({mode:0600} no aplica en
-          // NTFS). Hard-fail con diagnóstico + round-trip (descifra == key) antes de declarar éxito.
-          if (process.platform === 'win32' && (!apiKeyEnc || decryptSecret(apiKeyEnc) !== key)) {
-            return json(500, { ok: false, error: 'no se pudo cifrar la clave con DPAPI; no se guarda en texto plano. Reintenta; si persiste, exporta COPILOT_PROVIDER_API_KEY en tu shell.' });
+          // El cifrado AES-GCM (node:crypto) está disponible en los 3 SO → NUNCA caer a texto plano si falla.
+          // Hard-fail con diagnóstico + round-trip (descifra == key) en CUALQUIER plataforma antes de declarar
+          // éxito. Solo se guardaría en claro si el .enckey no se pudiera persistir (disco/permisos) → se rechaza.
+          if (!apiKeyEnc || decryptSecret(apiKeyEnc) !== key) {
+            return json(500, { ok: false, error: 'no se pudo cifrar la clave de forma segura; no se guarda en texto plano. Revisa permisos de ~/.conductor; o exporta COPILOT_PROVIDER_API_KEY en tu shell.' });
           }
           const data = apiKeyEnc ? { type: type || 'openai', baseUrl: bUrl, apiKeyEnc } : { type: type || 'openai', baseUrl: bUrl, apiKey: key };
           const bf = join(home, 'byok.json');
           writeFileSync(bf, JSON.stringify(data, null, 2), { mode: 0o600 });
           if (process.platform !== 'win32') try { chmodSync(bf, 0o600); } catch {} // la key no queda legible por otros usuarios
           _models.at = 0;
+          _scrubExtra = null; // INVALIDA la lista de redacción: sin esto, una key configurada/rotada tras arrancar
+          // (o cuando scrubExtra ya memoizó []) salía SIN redactar por /api/raw|diff|artifact|state|events (fuga real).
           try {
             const base = String(bUrl).replace(/\/+$/, '');
             const r2 = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(5000) });
@@ -939,11 +1003,11 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // pending=true ⇔ ese run espera una DECISIÓN humana ahora mismo → el panel/sidebar lo señalan (un run
         // pausado era invisible fuera de su propia pantalla, justo en la herramienta cuyo corazón es la pausa).
         const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
-        const def = projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
+        const def = projects.find((p) => p.id === focusId) || projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
         // dos repos con el mismo basename ya no colisionan; coherencia #9).
-        return json(200, { project: def.name, projectId: def.id || DEFAULT.id, version, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
+        return json(200, { project: def.name, projectId: def.id || focusId, version, changes: def.changes, projects, ghUsage: ghPremiumUsage(), usage: await litellmUsage() });
       }
       // REGISTRO CONSCIENTE (`conductor serve <proj>` con la app única ya viva): el CLI registra el proyecto para que
       // la web lo ENFOQUE (en vez de un ✅ mudo que lo ignora, incoherencia #5). Mismo gate de seguridad que launch
@@ -951,10 +1015,26 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       if (req.method === 'POST' && u.pathname === '/api/register') {
         const b = await readBody(req);
         if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
-        if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'ruta no válida' });
+        if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'La ruta no existe.' });
         const rp = resolve(b.project);
-        if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'debe ser una ruta con openspec/ o .git' });
-        const p = ensureProject(rp);
+        if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'La carpeta debe contener openspec/ o .git.' });
+        // validate:true = SOLO comprobar (validación en vivo del form, no persiste nada)
+        if (b.validate === true) return json(200, { ok: true, valid: true, name: rp.split(/[\\/]/).pop(), openspec: isSdd(rp) });
+        const p = ensureProject(rp, { persist: true }); // alta EXPLÍCITA → siempre persiste (registro = intención)
+        return json(200, { ok: true, id: p.id, name: p.name, openspec: isSdd(rp) });
+      }
+      // ARRANQUE PER-REPO (Opción A): el launcher /sdd-run fija el FOCO en el repo desde el que se lanzó, sin
+      // depender de que el navegador navegue a un ?project= (una pestaña ya abierta se reenfoca sin navegar).
+      // Mueve `focusId` → /api/changes lo reporta como projectId y el panel lo sigue en su poll (≤5s). Mismo
+      // gate de seguridad que register/launch (anti-ruta-arbitraria). Persiste (arranque = adopción consciente).
+      if (req.method === 'POST' && u.pathname === '/api/focus') {
+        const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
+        if (!b.project || !existsSync(b.project)) return json(400, { ok: false, error: 'La ruta no existe.' });
+        const rp = resolve(b.project);
+        if (!(rp === resolve(DEFAULT.root) || existsSync(join(rp, 'openspec')) || existsSync(join(rp, '.git')))) return json(400, { ok: false, error: 'La carpeta debe contener openspec/ o .git.' });
+        const p = ensureProject(rp, { persist: true });
+        focusId = p.id;
         return json(200, { ok: true, id: p.id, name: p.name, openspec: isSdd(rp) });
       }
       if (req.method === 'POST' && u.pathname === '/api/launch') {
@@ -1162,7 +1242,10 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           // 1) traza nativa del CLI (events.jsonl); 2) si no la hay (p.ej. qwen vía LiteLLM), se RECONSTRUYE
           // desde los spans OTel (.conductor/otel/) → el visor funciona también con qwen. Ambas confinadas.
           const r2 = parseEvents(join(changeDir, '.conductor', 'events.jsonl'), opts) || parseOtelSession(join(changeDir, '.conductor', 'otel'), opts);
-          if (!r2) return json(404, { ok: false, error: 'sin traza de sesión (ni events.jsonl ni spans OTel) en este run' });
+          // "sin traza" es un run VÁLIDO pero VACÍO, no un 404 (recurso inexistente): devolver 404 hacía que el
+          // navegador logueara "Failed to load resource" en consola en un caso normal. 200 + shape vacío + flag
+          // noTrace → el visor pinta su estado vacío por la vía de datos, sin ruido de consola. REST correcto.
+          if (!r2) return json(200, { total: 0, offset: opts.offset, limit: opts.limit, noTrace: true, summary: { total: 0, byCategory: {}, models: [], agents: [], tools: {}, durationMs: 0, start: null }, events: [] });
           // scrub: la traza del CLI puede contener secretos que el agente ecoó → redactar al servir (auditoría)
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }); return res.end(scrubSecrets(JSON.stringify(r2), process.env, scrubExtra()));
         }

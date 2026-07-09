@@ -6,8 +6,6 @@
   "skills": [
     "./plugin/skills/sdd-init",
     "./plugin/skills/sdd-instructions",
-    "./plugin/skills/sdd-status",
-    "./plugin/skills/sdd-archive",
     "./plugin/skills/sdd-explain",
     "./plugin/skills/sdd-run"
   ],

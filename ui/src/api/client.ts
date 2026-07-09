@@ -32,6 +32,9 @@ export class ConductorApi {
     return this.getJson<EstimateResponse>('estimate?request=' + encodeURIComponent(request.slice(0, 4000)) + (pipeline && pipeline.length ? '&pipeline=' + encodeURIComponent(pipeline.join(',')) : ''));
   }
   launch(body: LaunchBody): Promise<ApiResult> { return this.post('launch', body); }
+  // alta EXPLÍCITA de proyecto (registro = intención): valida en servidor que la ruta tenga openspec/ o .git.
+  // validate=true → SOLO comprueba (validación en vivo del form), no persiste nada.
+  register(project: string, validate = false): Promise<ApiResult & { id?: string; name?: string; openspec?: boolean }> { return this.post('register', validate ? { project, validate: true } : { project }); }
   // inicializa SDD en un proyecto desde la web (crea openspec/): hace alcanzable el flujo sin volver a la terminal.
   init(projectId?: string): Promise<ApiResult> { return this.post('init', projectId ? { projectId } : {}); }
   resumeNamed(name: string, projectId?: string): Promise<ApiResult> { return this.post('resume', { name, projectId }); }

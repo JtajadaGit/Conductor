@@ -38,7 +38,10 @@ const project = resolve(flag('--project', process.cwd()));
 const complexity = flag('--complexity', 'medium');
 const changeName = slug(flag('--name') || '') || featureName(request);
 const domain = slug(flag('--domain') || '') || meaningful(request)[0] || 'core';
-const auto = argv.includes('--auto'); // run desatendido: sin pausas de revisión (el driver corre de principio a fin)
+// «el experto manda» (doctrina UX v2 + P1 del plan): el launcher YA NO acepta --auto — era el vector de
+// piloto automático desde el chat. El run desatendido queda como decisión consciente DEL PROYECTO
+// (autoApprove:true en openspec/conductor.json), nunca un flag suelto en un prompt.
+const auto = false;
 
 const OPEN_ONLY = !request; // sin petición → /sdd-run solo ABRE la web (modo Storybook): escribes y lanzas en el panel
 if (!existsSync(ENGINE)) { process.stderr.write(`run.mjs: no encuentro el motor en ${ENGINE}\n`); process.exit(2); }
@@ -137,8 +140,17 @@ const main = async () => {
       for (let i = 0; i < 14 && !app?.ok; i++) { await new Promise((r) => setTimeout(r, 500)); app = await ping(); }
     }
     if (!app?.ok) { process.stderr.write('No pude abrir la app (¿puerto 4750 ocupado por otra cosa?).\n'); process.exit(1); }
+    // ARRANQUE PER-REPO (arranque-per-repo): fijamos el FOCO en el SERVIDOR al repo desde el que se lanzó
+    // (POST /api/focus). El panel sigue ese foco en su poll (≤5s) → una pestaña YA abierta en OTRO repo se
+    // re-enfoca a ESTE sin depender de que el navegador navegue (el `start ""` reenfoca la pestaña sin navegar,
+    // así que un ?project= de cliente se ignoraba — la incoherencia "lancé en A, la web me deja en B"). El
+    // degradado es RUIDOSO (diagnosticabilidad): si /api/focus falla, se avisa y se abre la app igualmente.
+    try {
+      const rr = await fetch(`${APP}/api/focus`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project }), signal: AbortSignal.timeout(3000) });
+      if (!rr.ok) process.stdout.write(`ℹ️ no pude fijar el foco en este repo (HTTP ${rr.status}); abro la app tal cual.\n`);
+    } catch (e) { process.stdout.write(`ℹ️ no pude fijar el foco en este repo (${e.message}); abro la app tal cual.\n`); }
     openUrl(APP);
-    process.stdout.write(`🌐 conductor abierto: ${APP}\nEscribe tu feature y pulsa "Lanzar run" ahí — sin pasar por el chat.\n✅ LAUNCHED — task complete for this shell.\n`);
+    process.stdout.write(`🌐 conductor abierto en este repo: ${APP}\nEscribe tu feature y pulsa "Lanzar run" ahí — sin pasar por el chat.\n✅ LAUNCHED — task complete for this shell.\n`);
     process.exit(0);
   }
   llog(`comprobando si la app ya está viva en ${APP} …`);

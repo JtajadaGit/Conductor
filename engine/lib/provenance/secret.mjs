@@ -1,52 +1,97 @@
-// conductor/lib/secret.mjs — cifrado de secretos AT-REST, 0 dependencias.
+// conductor/lib/secret.mjs — cifrado de secretos AT-REST, 0 dependencias, VÍA COMÚN a Windows/Linux/Mac.
 //
-// Windows: DPAPI vía .NET [System.Security.Cryptography.ProtectedData] (Add-Type System.Security).
-// IMPORTANTE: NO se usan los cmdlets ConvertTo/From-SecureString — VERIFICADO que FALLAN al lanzarse
-// desde Node con `powershell` (WinPS 5.1) porque el módulo Microsoft.PowerShell.Security no autocarga
-// (conflicto de TypeData). ProtectedData vía Add-Type funciona en powershell 5.1 Y pwsh 7.
+// Antes: DPAPI vía PowerShell — SOLO Windows (en Linux/Mac la key quedaba en TEXTO PLANO) y frágil (los
+// cmdlets ProtectedData vía Add-Type son delicados desde Node). Ahora: AES-256-GCM con node:crypto — la MISMA
+// mecánica en los 3 SO, sin spawns. La clave maestra (32 bytes aleatorios) vive en ~/.conductor/.enckey con
+// permisos 0600 (solo el usuario). Cada secreto se cifra con IV propio + tag GCM (autenticado: un blob alterado
+// NO descifra en silencio, lanza).
 //
-// El cifrado es por-USUARIO+MÁQUINA: el blob es inútil copiado a otra cuenta/equipo. Una entropía fija
-// ('CONDUCTOR_BYOK_ENT') actúa como 2º factor (otro proceso del mismo usuario sin el salt no descifra).
-// El secreto NUNCA viaja por argv (visible en la lista de procesos): al cifrar entra por STDIN; al
-// descifrar el blob entra por env var y el plano sale por STDOUT y se asigna directo al env del hijo.
-//
-// Fuera de Windows (Linux/Mac/CI) NO existe DPAPI → canEncrypt()=false; el llamante mantiene texto
-// plano (fichero 0600) o exige env. Por eso encrypt/decrypt devuelven null en no-win32.
+// MODELO DE SEGURIDAD (honesto): protege la key de byok.json si ESE fichero se comparte/commitea/respalda SIN
+// el .enckey (caso común de fuga). Un atacante con acceso a TODO ~/.conductor tiene ambos → puede descifrar
+// (misma superficie efectiva que un 0600 en claro, pero unificado, sin texto plano y con integridad GCM). En
+// Windows es algo menos fuerte que el DPAPI anterior (que ataba al usuario del SO), a cambio de ser común y
+// robusto en los 3 SO. Retrocompat: descifra los blobs DPAPI legacy (prefijo distinto) ya guardados en Windows.
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-const ENT = 'conductor-v1-byok'; // salt de la app (2º factor); cambiarlo invalida los blobs existentes
-const isWin = process.platform === 'win32';
+const V2 = 'c2:'; // marca del formato AES-GCM (los blobs sin este prefijo son DPAPI legacy, base64 plano)
+const homeDir = () => process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+const keyPath = () => join(homeDir(), '.enckey');
 
-// ejecuta un script PowerShell de forma no interactiva; powershell (5.1, siempre presente) con fallback a pwsh.
-// stderr se captura (no se hereda) para no ensuciar la consola; el script ya tragará sus propios errores.
-function ps(script, { input, env } = {}) {
-  let lastErr;
+// clave maestra: lee ~/.conductor/.enckey (32B base64) o la crea UNA vez con 0600. null si no se puede persistir.
+// INVARIANTE CRÍTICO: la clave se escribe EXACTAMENTE una vez y JAMÁS se sobrescribe. Si el fichero existe pero
+// no se puede leer/decodificar (lock de AV, corrupción, ≠32 bytes), se devuelve null (error duro) en vez de
+// regenerar — regenerar destruiría para siempre la capacidad de descifrar el byok.json ya guardado (pérdida
+// silenciosa: decrypt→null→"sin credenciales"/BLOCKED). El caller distingue "sin clave" de "clave ilegible".
+function masterKey() {
+  const p = keyPath();
+  if (existsSync(p)) {
+    try { const b = Buffer.from(String(readFileSync(p, 'utf8')).trim(), 'base64'); if (b.length === 32) return b; } catch { return null; }
+    return null; // existe pero NO son 32 bytes válidos → no tocar (no sobrescribir un keyfile presente)
+  }
+  try {
+    const k = randomBytes(32);
+    mkdirSync(homeDir(), { recursive: true });
+    writeFileSync(p, k.toString('base64'), { mode: 0o600, flag: 'wx' }); // 'wx' = crear EXCLUSIVO: si una carrera lo creó, NO lo pisa
+    try { chmodSync(p, 0o600); } catch {} // en Windows es best-effort; el dir del perfil ya es del usuario
+    return k;
+  } catch {
+    // EEXIST (otro proceso creó el keyfile entre el existsSync y el write) → re-leer, nunca regenerar
+    try { const b = Buffer.from(String(readFileSync(p, 'utf8')).trim(), 'base64'); if (b.length === 32) return b; } catch {}
+    return null;
+  }
+}
+
+// AES-256-GCM disponible en todo Node → cifrar siempre es posible (a diferencia del DPAPI solo-Windows).
+export function canEncrypt() { return true; }
+
+// cifra un secreto → blob "c2:"+base64(iv|tag|ciphertext). null si vacío o si no se puede persistir la clave.
+export function encryptSecret(plain) {
+  if (!plain) return null;
+  try {
+    const key = masterKey(); if (!key) return null;
+    const iv = randomBytes(12);
+    const c = createCipheriv('aes-256-gcm', key, iv);
+    const ct = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
+    const tag = c.getAuthTag();
+    return V2 + Buffer.concat([iv, tag, ct]).toString('base64');
+  } catch { return null; }
+}
+
+// descifra: formato nuevo (c2:) con la clave maestra; cualquier otro → DPAPI legacy (Windows). null si falla.
+export function decryptSecret(enc) {
+  if (!enc) return null;
+  if (String(enc).startsWith(V2)) {
+    try {
+      const key = masterKey(); if (!key) return null;
+      const raw = Buffer.from(String(enc).slice(V2.length), 'base64');
+      const iv = raw.subarray(0, 12), tag = raw.subarray(12, 28), ct = raw.subarray(28);
+      const d = createDecipheriv('aes-256-gcm', key, iv); d.setAuthTag(tag);
+      return Buffer.concat([d.update(ct), d.final()]).toString('utf8');
+    } catch { return null; }
+  }
+  return decryptDpapiLegacy(enc); // blob antiguo (base64 DPAPI) — retrocompat en Windows
+}
+
+// true si el blob es del formato nuevo (común, descifrable en cualquier SO). Los callers lo usan para avisar
+// SOLO ante blobs DPAPI legacy en un SO no-Windows (ilegibles ahí → hay que re-guardar).
+export function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
+
+// --- retrocompat: descifrado DPAPI de blobs guardados con la versión anterior (Windows). Ya no se CIFRA así. ---
+function decryptDpapiLegacy(enc) {
+  if (process.platform !== 'win32' || !enc) return null;
+  const script = "try { Add-Type -AssemblyName System.Security; $e=[Text.Encoding]::UTF8.GetBytes($env:CONDUCTOR_BYOK_ENT); $b=[Convert]::FromBase64String($env:CONDUCTOR_BYOK_ENC); [Console]::Out.Write([Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($b,$e,'CurrentUser'))) } catch { }";
   for (const sh of ['powershell', 'pwsh']) {
     try {
-      return execFileSync(sh, ['-NoProfile', '-NonInteractive', '-Command', script], {
-        input, env: { ...process.env, ...env }, windowsHide: true, timeout: 20000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      const out = execFileSync(sh, ['-NoProfile', '-NonInteractive', '-Command', script], {
+        env: { ...process.env, CONDUCTOR_BYOK_ENT: 'conductor-v1-byok', CONDUCTOR_BYOK_ENC: enc },
+        windowsHide: true, timeout: 20000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
       });
-    } catch (e) { lastErr = e; }
+      if (out) return out;
+    } catch {}
   }
-  throw lastErr || new Error('powershell/pwsh no disponible');
-}
-
-export function canEncrypt() { return isWin; }
-
-// cifra un secreto → base64 del blob DPAPI (o null si no se puede: no-win32 / vacío). try/catch DENTRO de
-// PowerShell → ante cualquier fallo no escribe nada a stderr y stdout queda vacío (encryptSecret → null).
-export function encryptSecret(plain) {
-  if (!isWin || !plain) return null;
-  const script = "try { Add-Type -AssemblyName System.Security; $s=[Console]::In.ReadToEnd(); $e=[Text.Encoding]::UTF8.GetBytes($env:CONDUCTOR_BYOK_ENT); $b=[Text.Encoding]::UTF8.GetBytes($s); [Console]::Out.Write([Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect($b,$e,'CurrentUser'))) } catch { }";
-  try { return ps(script, { input: plain, env: { CONDUCTOR_BYOK_ENT: ENT } }).trim() || null; }
-  catch { return null; }
-}
-
-// descifra el base64 producido por encryptSecret → plano (o null si falla / no-win32). El blob corrupto o de
-// otro usuario lanza CryptographicException dentro del try de PowerShell → stdout vacío → null, sin ruido.
-export function decryptSecret(enc) {
-  if (!isWin || !enc) return null;
-  const script = "try { Add-Type -AssemblyName System.Security; $e=[Text.Encoding]::UTF8.GetBytes($env:CONDUCTOR_BYOK_ENT); $b=[Convert]::FromBase64String($env:CONDUCTOR_BYOK_ENC); [Console]::Out.Write([Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($b,$e,'CurrentUser'))) } catch { }";
-  try { return ps(script, { env: { CONDUCTOR_BYOK_ENT: ENT, CONDUCTOR_BYOK_ENC: enc } }) || null; }
-  catch { return null; }
+  return null;
 }

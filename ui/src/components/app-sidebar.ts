@@ -3,14 +3,18 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import type { ProjectSummary, ChangeSummary } from '../api/types';
-import { verdictClass } from '../lib/format';
+import { verdictClass, sanitizeProjects } from '../lib/format';
 
-/** Sidebar: logo, link al resumen y runs recientes por proyecto (refresco 5s). Resalta el run activo. */
+/** Sidebar EN FOCO: solo los cambios del proyecto activo + una sección «Tu atención» (pausas esperando
+ *  decisión, de CUALQUIER proyecto — lo único que justifica cruzar el foco). El inventario multi-proyecto
+ *  vive detrás del conmutador del panel, no aquí. Refresco 5s; resalta el run activo. */
 @customElement('app-sidebar')
 export class AppSidebar extends CElement {
   @property() activeChange = '';
   @property() activeRoute = '';
+  @property() activeProj = ''; // proyecto de la ruta actual (run/session) — manda sobre el foco recordado
   @state() private projects: ProjectSummary[] = [];
+  @state() private served = ''; // projectId servido por defecto (último fallback de foco)
   @state() private appMsg = '';
   private api = new ConductorApi('/api/');
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -25,7 +29,21 @@ export class AppSidebar extends CElement {
     if (this.timer) clearInterval(this.timer);
   }
   private async load(): Promise<void> {
-    try { const d = await this.api.changes(); this.projects = d.projects ?? []; } catch { /* conserva último bueno */ }
+    try { const d = await this.api.changes(); this.projects = sanitizeProjects(d.projects); this.served = d.projectId ?? ''; } catch { /* conserva último bueno */ }
+  }
+
+  // FOCO: la ruta (si estás dentro de un run) > el proyecto elegido en el panel (localStorage) > el servido.
+  private focusedProject(): ProjectSummary | null {
+    let stored: string | null = null; try { stored = localStorage.getItem('conductor.activeProject'); } catch { /* sin storage */ }
+    for (const id of [this.activeProj, stored, this.served]) {
+      const p = id ? this.projects.find((x) => x.id === id) : undefined;
+      if (p) return p;
+    }
+    return this.projects[0] ?? null;
+  }
+  // pausas esperando decisión humana, en CUALQUIER proyecto — la única señal que cruza el foco
+  private attention(): Array<{ p: ProjectSummary; c: ChangeSummary }> {
+    return this.projects.flatMap((p) => (p.changes ?? []).filter((c) => c.pending).map((c) => ({ p, c })));
   }
   // APAGAR la app desde el sidebar (no hay comando `conductor` en PATH del usuario). 409 si hay run vivo.
   private async shutdown(): Promise<void> {
@@ -46,45 +64,40 @@ export class AppSidebar extends CElement {
     return v === 'GREEN' ? 'completado' : v === 'CURSO' ? 'en curso' : v === 'G' ? 'estado desconocido' : 'no completado';
   }
 
-  // solo proyectos relevantes: con sdd-init (openspec) o con runs. Oculta ruido del registro
-  // (p. ej. el propio repo de la herramienta), igual que el desplegable del panel.
-  private shown(): ProjectSummary[] {
-    return this.projects.filter((p) => p.openspec || (p.changes?.length ?? 0) > 0);
-  }
-
   override render(): TemplateResult {
-    const shown = this.shown();
-    const multi = shown.length > 1;
-    const allChanges = shown.flatMap((p) => p.changes ?? []);
-    const nGreen = allChanges.filter((c) => verdictClass(c.verdict) === 'GREEN').length;
-    const nActive = allChanges.filter((c) => verdictClass(c.verdict) === 'CURSO').length;
+    const focus = this.focusedProject();
+    const changes = focus?.changes ?? [];
+    const att = this.attention();
+    const nGreen = changes.filter((c) => verdictClass(c.verdict) === 'GREEN').length;
+    const nActive = changes.filter((c) => verdictClass(c.verdict) === 'CURSO').length;
     return html`
       <div class="sb-logo" role="img" aria-label="conductor"><span class="logo" aria-hidden="true">C</span> conductor</div>
       <nav class="sb-nav" aria-label="Navegación principal">
         <a class="sb-link primary ${this.activeRoute === 'panel' ? 'active' : ''}" href="/" aria-current=${this.activeRoute === 'panel' ? 'page' : nothing}>📋 Panel</a>
       </nav>
-      <nav class="sb-runs" aria-label="Runs recientes">
-      ${shown.map((p) => {
-        const cnt = p.changes?.length ?? 0;
-        return html`
-          <h2 class="sb-h">
-            ${multi ? p.name : 'Runs recientes'}
-            ${cnt > 0 ? html`<span class="sb-cnt">${cnt}</span>` : nothing}
-          </h2>
-          ${(p.changes ?? []).slice(0, 12).map((c) => html`
-            <a class="sb-run" href="/run/${p.id}/${c.name}" title=${c.request} aria-current=${this.activeChange === c.name ? 'page' : nothing}>
-              <span class="dot ${this.dotClass(c)}" role="img" aria-label=${this.dotLabel(c)}></span>
-              <span class="nm">${c.name}</span>
-            </a>`)}
-          ${cnt === 0 ? html`<div class="sb-empty">Sin runs todavía</div>` : nothing}
-        `;
-      })}
+      ${att.length ? html`
+      <nav class="sb-runs sb-attn" aria-label="Runs que esperan tu decisión">
+        <h2 class="sb-h">Tu atención <span class="sb-cnt">${att.length}</span></h2>
+        ${att.map(({ p, c }) => html`
+          <a class="sb-run" href="/run/${p.id}/${c.name}" title="${c.request} · ${p.name}" aria-current=${this.activeChange === c.name ? 'page' : nothing}>
+            <span class="dot CURSO" role="img" aria-label="esperando tu decisión"></span>
+            <span class="nm">⏸ ${c.name}</span>
+          </a>`)}
+      </nav>` : nothing}
+      <nav class="sb-runs" aria-label="Runs del proyecto en foco">
+        <h2 class="sb-h">${focus?.name ?? 'Runs'}${changes.length ? html`<span class="sb-cnt">${changes.length}</span>` : nothing}</h2>
+        ${changes.slice(0, 12).map((c) => html`
+          <a class="sb-run" href="/run/${focus?.id}/${c.name}" title=${c.request} aria-current=${this.activeChange === c.name ? 'page' : nothing}>
+            <span class="dot ${this.dotClass(c)}" role="img" aria-label=${this.dotLabel(c)}></span>
+            <span class="nm">${c.name}</span>
+          </a>`)}
+        ${changes.length === 0 ? html`<div class="sb-empty">Sin runs todavía</div>` : nothing}
       </nav>
       <div class="sb-bottom">
-        ${allChanges.length > 0 ? html`
-        <div class="sb-foot" role="status" aria-label="resumen de runs">
-          <span>${allChanges.length} run${allChanges.length !== 1 ? 's' : ''}</span>
-          ${nGreen > 0 ? html`<span class="g" title="green">${nGreen} ✓</span>` : nothing}
+        ${changes.length > 0 ? html`
+        <div class="sb-foot" role="status" aria-label="resumen de runs del proyecto">
+          <span>${changes.length} run${changes.length !== 1 ? 's' : ''}</span>
+          ${nGreen > 0 ? html`<span class="g" title="GREEN">${nGreen} ✓</span>` : nothing}
           ${nActive > 0 ? html`<span class="w" title="en curso">${nActive} ◉</span>` : nothing}
         </div>` : nothing}
         <nav class="sb-foot-nav" aria-label="Más">

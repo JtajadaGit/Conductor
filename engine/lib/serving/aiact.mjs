@@ -28,10 +28,13 @@ export function aiactData(changeDir) {
     } catch {}
     return null;
   })();
+  // el timeline lo escribe el coder (--allow-all-tools): `phases` puede venir NO-array (string/objeto). `?? []`
+  // solo cubre null → sin esto `.filter`/`.find`/`for..of` lanzaban y el informe AI Act quedaba INACCESIBLE (404).
+  const phases = Array.isArray(tl.phases) ? tl.phases : [];
   const aiFiles = [];
-  for (const ph of tl.phases ?? []) {
+  for (const ph of phases) {
     if (ph.phase !== 'apply' && ph.phase !== 'fix') continue;
-    for (const f of ph.files ?? []) aiFiles.push({ p: typeof f === 'string' ? f : f.p, k: typeof f === 'string' ? 'create' : f.k, phase: ph.phase });
+    for (const f of (Array.isArray(ph.files) ? ph.files : [])) aiFiles.push({ p: typeof f === 'string' ? f : f.p, k: typeof f === 'string' ? 'create' : f.k, phase: ph.phase });
   }
   return {
     change: basename(changeDir),
@@ -39,7 +42,7 @@ export function aiactData(changeDir) {
     verdict: tl.verdict || null,
     generatedAt: new Date().toISOString(),
     spec: specPath ? { path: specPath.replace(/\\/g, '/').split('/').slice(-3).join('/'), sha256: sha(specPath) } : null,
-    models: (tl.phases ?? []).filter((p) => p.model).map((p) => ({ phase: p.phase, model: p.model, provider: p.provider || null, tokens: p.tokens || null })),
+    models: phases.filter((p) => p.model).map((p) => ({ phase: p.phase, model: p.model, provider: p.provider || null, tokens: p.tokens || null })),
     approvals: tl.approvals ?? [],
     aiGeneratedFiles: aiFiles,
     verification: {
@@ -47,7 +50,7 @@ export function aiactData(changeDir) {
         : tl.verdict === 'ABORTED' ? 'NO COMPLETADO - una fase aborto; sin veredicto del gate'
         : tl.verdict === 'STOPPED' ? 'DETENIDO por el usuario antes de completar la verificacion'
         : 'RUN INTERRUMPIDO - sin veredicto del gate todavia (reanudable)',
-      lenses: (tl.phases ?? []).find((p) => p.lenses)?.lenses ?? null,
+      lenses: phases.find((p) => p.lenses)?.lenses ?? null,
     },
     provenance: prov ? { algo: prov.algo || prov.signature?.algo || null, sealedAt: prov.sealed_at || prov.at || null, verifiable: true } : null,
     marking: { metadata: !!prov, inContent: '@conductor REQ-<id> comment in every AI-written file', logging: existsSync(join(changeDir, '..', '..', 'provenance.ledger.jsonl')) ? 'hash-chained ledger' : null },
@@ -89,7 +92,7 @@ ${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens<
 <h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— cada pausa aprobada por una persona (control humano exigido)</span></h2><ul>${apps}</ul>
 <h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— inventario exacto, marcados con @conductor REQ-&lt;id&gt;</span></h2><ul>${files}</ul>
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>
-<div class=box>${E(d.verification.gate)}${d.verification.lenses ? `<br><small style="color:var(--tx2)">Review multi-lente: ${d.verification.lenses.map((l) => `<code>${E(l)}</code>`).join(' ')}</small>` : ''}<br><small style="color:var(--tx3)">Los tests/build del proyecto se ejecutan en el CI del repositorio.</small></div>
+<div class=box>${E(d.verification.gate)}${Array.isArray(d.verification.lenses) && d.verification.lenses.length ? `<br><small style="color:var(--tx2)">Review multi-lente: ${d.verification.lenses.map((l) => `<code>${E(l)}</code>`).join(' ')}</small>` : ''}<br><small style="color:var(--tx3)">Los tests/build del proyecto se ejecutan en el CI del repositorio.</small></div>
 <h2 class=sect>5 · Procedencia firmada y registro <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— integridad criptográfica verificable</span></h2>
 <div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'Ed25519')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
 <footer>Evidencia técnica generada por conductor como subproducto del pipeline. El mapeo a las obligaciones del EU AI Act se basa en el <b>draft</b> Code of Practice (en finalización) y <b>no constituye asesoramiento legal</b>.</footer>

@@ -4,7 +4,7 @@ import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { router } from '../router';
 import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate, PlanCheck } from '../api/types';
-import { fmt, kebab, verdictClass } from '../lib/format';
+import { fmt, kebab, verdictClass, sanitizeProjects } from '../lib/format';
 import '../components/status-pill';
 import '../components/mention-input';
 
@@ -48,7 +48,6 @@ export class PanelScreen extends CElement {
   @state() private mReviewer = '';
   @state() private preset = ''; // preset de MODELO/coste activo: '' | 'cost' | 'quality' | 'clear' (resalta el botón elegido)
   @state() private busy = false;
-  @state() private showAll = false; // foco: solo el proyecto activo (default) vs agregado global ("ver todos")
   @state() private error = '';
   @state() private byokUrl = '';
   @state() private byokKey = '';
@@ -93,27 +92,20 @@ export class PanelScreen extends CElement {
   private async refreshChanges(): Promise<void> {
     try {
       const d = await this.api.changes();
-      this.projects = d.projects ?? [];
+      this.projects = sanitizeProjects(d.projects); // saneo en el BORDE: projects array, cada uno objeto con changes array → todo .map/.filter downstream a salvo de datos corruptos
       this.gh = d.ghUsage ?? null;
       this.usage = d.usage ?? null;
       this.version = d.version ?? '';
       // PROYECTO ACTIVO por ID ESTABLE (no por nombre — dos repos con el mismo basename ya no colisionan, #9).
       const served = d.projectId || this.projects.find((p) => p.name === d.project)?.id || this.projects[0]?.id || '';
       this.defProjId = served;
-      // SOLO en la 1ª carga fijamos el activo: URL ?project= (de `conductor serve B`) > último visto > el servido.
-      // Después respetamos la elección del usuario (no se resetea en cada poll de 5s).
-      if (!this.projIdInit) {
-        const valid = (id: string | null): boolean => !!id && this.projects.some((p) => p.id === id);
-        let fromUrl: string | null = null; try { fromUrl = new URLSearchParams(location.search).get('project'); } catch { /* sin location */ }
-        let fromStore: string | null = null; try { fromStore = localStorage.getItem('conductor.activeProject'); } catch { /* sin storage */ }
-        this.projId = [fromUrl, fromStore, served].find((id) => valid(id)) || served;
-        this.projIdInit = true;
-        this.persistActive();
-      }
+      // ARRANQUE PER-REPO (Opción A): sin selector en la web, el FOCO lo manda el SERVIDOR (focusId, que el
+      // launcher /sdd-run fija vía /api/focus al repo desde el que lanzaste). El panel SIGUE ese foco en CADA
+      // poll → una pestaña ya abierta en OTRO repo se re-enfoca a ESTE en ≤5s, sin depender de que el navegador
+      // navegue a un ?project=. Si el servidor devuelve vacío puntualmente, se conserva el último foco bueno.
+      if (served) this.projId = served;
     } catch { /* conserva el último dato bueno */ }
   }
-  private projIdInit = false; // el activo se fija una vez (no se pisa en cada refresh)
-  private persistActive(): void { try { if (this.projId) localStorage.setItem('conductor.activeProject', this.projId); } catch { /* sin storage */ } }
 
   private nameTouched = false; // el usuario editó el nombre a mano → dejamos de auto-rellenarlo desde la descripción
   private onReq(v: string): void {
@@ -226,18 +218,27 @@ export class PanelScreen extends CElement {
   // estado "sin inicializar": un único CTA en vez de un formulario que lanzaría sobre un proyecto sin gobierno.
   private initPanel(active: ProjectSummary): TemplateResult {
     return html`
-      <div class="launch-init" style="padding:1rem 1.1rem;border:1px solid var(--bd);border-left:3px solid var(--accent);border-radius:var(--r);background:var(--accentbg);color:var(--tx)">
-        <h2 style="margin:0 0 .3rem;font-size:1rem;font-weight:600">Este proyecto no está inicializado</h2>
-        <p class="muted" style="margin:0 0 .25rem;font-size:.86rem"><strong style="font-weight:600">${active.name}</strong> aún no tiene SDD configurado. Inicialízalo para poder lanzar features con gobierno (spec · apply · verify).</p>
-        <p class="muted" style="margin:0 0 .7rem;font-size:.78rem">Crea <code>openspec/</code> con la config del pipeline, el esquema y <code>.copilotignore</code> (ahorro de tokens). No toca tu código.</p>
-        <button class="btn" ?disabled=${this.initBusy} @click=${() => void this.doInit()}>${this.initBusy ? 'Inicializando…' : 'Inicializar este proyecto'}</button>
-        ${this.initMsg ? html`<p role="alert" style="margin:.55rem 0 0;font-size:.82rem;color:var(--bad)">${this.initMsg}</p>` : nothing}
+      <div class="launch-init" style="display:flex;flex-wrap:wrap;align-items:center;gap:.8rem;padding:1rem 1.1rem;border:1px solid var(--bd);border-left:3px solid var(--accent);border-radius:var(--r);background:var(--accentbg);color:var(--tx)">
+        <span style="font-size:.9rem"><b>${active.name}</b> aún no tiene gobierno SDD.</span>
+        <button class="btn" ?disabled=${this.initBusy} @click=${() => void this.doInit()}>${this.initBusy ? 'Inicializando…' : 'Inicializar'}</button>
+        <span class="muted" style="font-size:.76rem">crea <code>openspec/</code> · no toca tu código</span>
+        ${this.initMsg ? html`<p role="alert" style="margin:0;font-size:.82rem;color:var(--bad);flex-basis:100%">${this.initMsg}</p>` : nothing}
       </div>`;
   }
 
   private async resume(p: ProjectSummary, c: ChangeSummary): Promise<void> {
     const r = await this.api.resumeNamed(c.name, p.id);
     if (r.ok && r.url) router.go(r.url);
+  }
+  // «re-run with changes» (patrón de cockpits de referencia): rellena el form con la petición de un run
+  // pasado para lanzar una variante — el historial deja de ser solo lectura.
+  private reuse(c: ChangeSummary): void {
+    this.nameTouched = false;
+    // el plan se RE-PROPONE para la nueva petición: sin esto, reutilizar tras editar fases arrastraba la
+    // selección de OTRO request (el plan mostrado no correspondía a la petición reutilizada).
+    this.pipelineTouched = false; this.phaseSel = []; this.proposedPlan = [];
+    this.onReq(c.request);
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* sin window */ }
   }
 
   private metrics(projects: ProjectSummary[]): { total: number; green: number; curso: number; tin: number; tout: number } {
@@ -253,28 +254,21 @@ export class PanelScreen extends CElement {
   // FOCO en el proyecto ACTIVO por defecto; "ver todos" agrega el global (coherencia #8: lo global es opt-in).
   private activeProject(): ProjectSummary | null { return this.projects.find((p) => p.id === this.projId) ?? null; }
   private scopeProjects(): ProjectSummary[] {
-    if (this.showAll) return this.projects;
+    // Opción A: siempre el proyecto EN FOCO (no hay «ver todos» — el selector se eliminó; el foco lo manda el servidor).
     const a = this.activeProject();
     return a ? [a] : this.projects;
   }
 
-  // proyectos REALES en el selector: solo los que tienen sdd-init hecho (openspec/). Sin sdd-init no hay
-  // pipeline que lanzar, así que no aparecen — evita confusión (p.ej. el repo de dev sin inicializar).
-  // cambiar el proyecto ACTIVO (foco + destino de launch/init). Disponible AUNQUE el activo sea no-SDD: así no se
-  // queda uno atrapado en el CTA "Inicializar" cuando hay otro proyecto ya inicializado al que saltar (coherencia #9).
-  private switchProject(id: string): void {
-    if (!id || id === this.projId) return;
-    this.projId = id; this.persistActive();
-    void this.refreshChanges(); // refresca el estado del proyecto recién enfocado
-  }
-  // selector a NIVEL DE PANEL (no dentro del form, que no se renderiza si el activo es no-SDD): lista TODOS los
-  // proyectos registrados marcando los no inicializados → se puede enfocar/saltar a cualquiera. Visible con >1.
-  private projectSwitcher(): TemplateResult | typeof nothing {
-    if (this.projects.length <= 1) return nothing;
-    return html`<label class="fl" style="display:inline-flex;flex-flow:row wrap;align-items:center;gap:.45rem;margin:0 0 1rem;font-size:.82rem">Proyecto
-      <select aria-label="Proyecto activo" @change=${(e: Event) => this.switchProject((e.target as HTMLSelectElement).value)} style="min-width:12rem">
-        ${this.projects.map((p) => html`<option value=${p.id} ?selected=${p.id === this.projId}>${p.name}${p.openspec === false ? ' · sin inicializar' : ''}</option>`)}
-      </select></label>`;
+  // ARRANQUE PER-REPO (Opción A · arranque-per-repo): la app ES el repo desde el que lanzaste. Se QUITÓ el
+  // selector de proyecto (dropdown + «ver todos» + «Añadir proyecto»): dejaba cambiar de proyecto y lanzar una
+  // feature en OTRO repo desde esta misma ventana — la incoherencia "lancé en A, construyo en B". Para trabajar
+  // en otro repo se lanza /sdd-run DESDE él: el launcher abre la app ENFOCADA en ese repo (`?project=<id>`). El
+  // foco lo fija el ARRANQUE, no un menú. La banda «Tu atención» (pausas de CUALQUIER repo) se conserva aparte:
+  // solo AVISA (enlace de solo-lectura), nunca lanza — por eso no reabre el agujero.
+
+  // pausas esperando decisión humana en CUALQUIER proyecto — lo único que justifica cruzar el foco
+  private attention(): Array<{ p: ProjectSummary; c: ChangeSummary }> {
+    return this.projects.flatMap((p) => (p.changes ?? []).filter((c) => c.pending).map((c) => ({ p, c })));
   }
 
   private modelOptions(): string[] {
@@ -471,11 +465,13 @@ export class PanelScreen extends CElement {
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
           <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
-          <label class="fl" title="Sin pausas de revisión: el pipeline corre de principio a fin sin pedirte aprobar cada fase (el experto suele quererlo OFF)">Auto-aprobar<label class="switch"><input type="checkbox" aria-label="Auto-aprobar: ejecutar sin pausas de revisión" .checked=${this.auto} @change=${(e: Event) => { this.auto = (e.target as HTMLInputElement).checked; }}><span></span></label></label>
           <button class="btn" ?disabled=${this.busy} style="align-self:end">${this.busy ? '…' : 'Lanzar run'}</button>
         </div>
         <div class="launch-meta">
           ${this.launchModelSummary()}
+          <!-- auto-aprobar FUERA del foco primario (doctrina "el experto manda"): opción secundaria y tenue,
+               no un toggle junto al CTA. Por defecto OFF = con pausas de revisión. -->
+          <label class="lm-auto ${this.auto ? 'on' : ''}" title="Sin pausas de revisión: el pipeline corre de principio a fin. Por defecto OFF — el experto revisa."><input type="checkbox" aria-label="Auto-aprobar: ejecutar sin pausas de revisión" .checked=${this.auto} @change=${(e: Event) => { this.auto = (e.target as HTMLInputElement).checked; }}>ejecutar sin pausas</label>
           ${this.est ? html`<details class="lm-estd"><summary class="lm-est">≈ ${fmt(this.est.total)} tokens · ${this.est.rows.length} fases <span class="muted">· preflight, sin API</span></summary>
             <table class="est-tab">${this.est.rows.map((r) => html`<tr><td>${r.phase}</td><td>↓ ${fmt(r.estIn)}</td><td>↑ ${fmt(r.estOut)}</td></tr>`)}</table>
             ${this.est.saved > 0 ? html`<p class="est-saved">Ahorro estimado de ${fmt(this.est.saved)} tokens de entrada <span class="muted">(el planner no relee el repositorio)</span></p>` : nothing}
@@ -511,23 +507,28 @@ export class PanelScreen extends CElement {
     // "Inicializar" en vez del formulario — no se ofrece lanzar sobre un proyecto sin gobierno.
     const active = this.projects.find((p) => p.id === this.projId) ?? null;
     const launchSurface = (active && active.openspec === false) ? this.initPanel(active) : launchForm;
+    const att = this.attention();
     return html`
-      <div class="apphdr"><h1>Panel</h1></div>
-      <p class="subhead">
-        ${active ? html`Proyecto activo: <strong style="font-weight:600;color:var(--tx)">${active.name}</strong> <span style="opacity:.7">· ${active.root}</span>` : html`${this.projects.length} proyecto${this.projects.length === 1 ? '' : 's'}`}
-        ${this.projects.length > 1 ? html` · <button type="button" @click=${() => { this.showAll = !this.showAll; }} style="background:none;border:none;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline">${this.showAll ? 'ver solo este' : `ver todos (${this.projects.length})`}</button>` : nothing}
-        · ${m.total} run${m.total === 1 ? '' : 's'}${this.showAll ? ' · todos' : ''}${this.version ? html` · <span title="versión del motor en uso">motor v${this.version}</span>` : nothing}
-      </p>
-      ${this.projectSwitcher()}
-      <div class="cards">
-        <div class="card"><small>Runs</small><span>${m.total}</span></div>
-        <div class="card ok"><small>Green</small><span>${m.green}</span></div>
-        ${m.curso > 0 ? html`<div class="card warn"><small>En curso</small><span>${m.curso}</span></div>` : nothing}
-        <div class="card"><small>Tokens entrada ↓</small><span>${fmt(m.tin)}</span></div>
-        <div class="card"><small>Tokens salida ↑</small><span>${fmt(m.tout)}</span></div>
-        ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
-        ${this.usage ? html`<div class="card"><small>Uso total qwen</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
-      </div>
+      <!-- la home ES tu proyecto: el título lleva su nombre (el texto que no orienta se ha podado; la ruta
+           vive en el tooltip del selector y la versión del motor en el pliegue de Métricas) -->
+      <div class="apphdr"><h1>${active ? active.name : 'conductor'}</h1></div>
+      ${att.length ? html`<div class="attn" role="alert" aria-label="runs que esperan tu decisión">
+        ${att.map(({ p, c }) => html`<a class="attn-item" href="/run/${p.id}/${c.name}">⏸ <b>${c.name}</b> espera tu decisión${this.projects.length > 1 ? html` <span class="muted">· 📁 ${p.name}</span>` : nothing}<span class="attn-go">Abrir →</span></a>`)}
+      </div>` : nothing}
+      <!-- coste "1 cifra en su momento" (decisión de producto): el desglose vive plegado; la cifra oportuna
+           va en el estimate del form (al decidir) y en el run (al terminar). AI Credits queda como única señal ambiente. -->
+      <details class="launch-fold metrics">
+        <summary>📊 Métricas${this.gh ? html` <span class="muted" style="font-weight:500">· AI Credits ${this.gh.used}/${this.gh.entitlement}</span>` : nothing}${this.version ? html` <span class="muted" style="font-weight:500;font-size:.74rem" title="versión del motor en uso">· v${this.version}</span>` : nothing}</summary>
+        <div class="cards" style="margin-top:.9rem">
+          <div class="card"><small>Runs</small><span>${m.total}</span></div>
+          <div class="card ok"><small>Green</small><span>${m.green}</span></div>
+          ${m.curso > 0 ? html`<div class="card warn"><small>En curso</small><span>${m.curso}</span></div>` : nothing}
+          <div class="card"><small>Tokens entrada ↓</small><span>${fmt(m.tin)}</span></div>
+          <div class="card"><small>Tokens salida ↑</small><span>${fmt(m.tout)}</span></div>
+          ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
+          ${this.usage ? html`<div class="card"><small>Uso total qwen</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
+        </div>
+      </details>
 
       ${activeItems.length > 0 ? html`
         <h2 class="sect">En curso</h2>
@@ -538,21 +539,17 @@ export class PanelScreen extends CElement {
         </details>
       ` : launchSurface}
 
-      ${!this.q.trim() && doneItems.length > 0 ? html`
+      <!-- UN SOLO input de búsqueda en posición estable: al teclear, this.q cambia y el re-render antes
+           DESMONTABA el input de "Historial" y MONTABA el de "Búsqueda" (nodos DOM distintos) → se perdía el
+           foco tras la 1ª tecla. Ahora el input persiste; solo cambian el título y el contenido de abajo. -->
+      ${(doneItems.length > 0 || this.q.trim()) ? html`
         <div class="sectrow">
-          <h2 class="sect">Historial</h2>
+          <h2 class="sect">${this.q.trim() ? 'Búsqueda' : 'Historial'}</h2>
           <input class="search" type="search" placeholder="Buscar" .value=${this.q} @input=${(e: Event) => this.onSearch(e)} aria-label="buscar runs y cambios archivados">
         </div>
-        ${doneItems.map(({ p, c }) => this.runRow(p, c))}
-      ` : nothing}
-
-      ${this.q.trim() ? html`
-        <div class="sectrow" style="margin-top:.8rem">
-          <h2 class="sect">Búsqueda</h2>
-          <input class="search" type="search" placeholder="Buscar" .value=${this.q} @input=${(e: Event) => this.onSearch(e)} aria-label="buscar runs y cambios archivados">
-        </div>
-        <p class="muted" style="font-size:.78rem;margin:.2rem 0 .6rem">${this.hits.length} resultado${this.hits.length === 1 ? '' : 's'} para "${this.q}"</p>
-        ${this.hits.map((h) => this.hitRow(h))}
+        ${this.q.trim()
+          ? html`<p class="muted" style="font-size:.78rem;margin:.2rem 0 .6rem">${this.hits.length} resultado${this.hits.length === 1 ? '' : 's'} para "${this.q}"</p>${this.hits.map((h) => this.hitRow(h))}`
+          : doneItems.map(({ p, c }) => this.runRow(p, c))}
       ` : nothing}
 
       ${m.total === 0 ? html`<p class="muted" style="margin-top:.5rem">Aún no hay runs. Lanza el primero arriba.</p>` : nothing}
@@ -611,9 +608,12 @@ export class PanelScreen extends CElement {
     const groups = (['Claude', 'GPT', 'Gemini', 'Otros'] as const)
       .map((g) => [g, cop.filter((o) => fam(o) === g).sort((a, b) => b.localeCompare(a))] as const)
       .filter(([, xs]) => xs.length);
-    return html`<label class="fl" style="flex:1">${label}<select .value=${value} @change=${(e: Event) => set((e.target as HTMLSelectElement).value)}>
+    // HONESTIDAD del catálogo: si el CLI aún no reportó su lista real, se declara (· vistos en tus runs)
+    // y jamás se rellena con modelos inventados; sin nada observado, el estado vacío lo dice claro.
+    const pend = m?.copilotPending;
+    return html`<label class="fl" style="flex:1">${label}<select .value=${value} title=${m ? `Copilot: ${m.copilotSource} · qwen: ${m.byokSource}` : ''} @change=${(e: Event) => set((e.target as HTMLSelectElement).value)}>
       <option value="">Recomendado (conductor elige)</option>
-      ${groups.map(([g, xs]) => html`<optgroup label="Copilot · ${g}">${xs.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>`)}
+      ${groups.length ? groups.map(([g, xs]) => html`<optgroup label="Copilot · ${g}${pend ? ' · vistos en tus runs' : ''}">${xs.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>`) : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
       ${creds && byok.length ? html`<optgroup label="qwen · LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : nothing}
     </select></label>`;
   }
@@ -628,8 +628,9 @@ export class PanelScreen extends CElement {
             <span class="proj">📁 ${p.name}</span>
           </a>
           <div class="run-foot">
-            <span class="meta">${c.phases} fases · ↓ ${fmt(c.tokens?.in)} entrada · ↑ ${fmt(c.tokens?.out)} salida</span>
+            <span class="meta">${c.phases} fases${(c.tokens?.in ?? 0) + (c.tokens?.out ?? 0) > 0 ? html` · ↓ ${fmt(c.tokens?.in)} entrada · ↑ ${fmt(c.tokens?.out)} salida` : nothing}</span>
             ${c.resumable ? html`<button class="btn sm resume" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">⏯ Reanudar</button>` : nothing}
+            ${!c.resumable && verdictClass(c.verdict) !== 'CURSO' && c.request ? html`<button class="btn sm sec" @click=${() => this.reuse(c)} title="rellena el formulario con esta petición para lanzar una variante">↺ Reutilizar</button>` : nothing}
             ${c.hasDashboard ? html`<a class="btn sm dash" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}">📊 Informe</a>` : nothing}
             ${c.phases > 0 ? html`<a class="btn sm aiact" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}">🛡 AI Act</a>` : nothing}
           </div>

@@ -24,7 +24,7 @@ export class RawOutput extends CElement {
 
   override render(): TemplateResult {
     return html`<details class="raw" @toggle=${(e: Event) => { if ((e.target as HTMLDetailsElement).open) void this.load(); }}>
-      <summary>Salida sin procesar del modelo</summary>
+      <summary>salida del modelo</summary>
       <pre class="rawpre">${(this.text || '…').trim() || '…'}</pre>
     </details>`;
   }

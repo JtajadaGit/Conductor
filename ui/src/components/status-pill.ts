@@ -8,9 +8,10 @@ export class StatusPill extends CElement {
   @property() verdict: string | null = null;
 
   override render(): TemplateResult {
-    // etiqueta humana visible; el token técnico (GREEN/BLOCKED…) viaja en title/aria para el tech-lead
+    // vocabulario inglés-técnico (decisión de producto): la pill muestra el TOKEN en crudo (GREEN/BLOCKED/…);
+    // la explicación humana viaja en el tooltip/aria — una palabra por concepto, sin traducciones.
     const v = verdictLabel(this.verdict);
-    return html`<span class="pill ${verdictClass(this.verdict)}" title="${v.token}${v.hint ? ' — ' + v.hint : ''}" aria-label="${v.label} (${v.token})">${v.label}</span>`;
+    return html`<span class="pill ${verdictClass(this.verdict)}" title="${v.hint || v.label}" aria-label="${v.token}${v.hint ? ' — ' + v.hint : ''}">${v.token}</span>`;
   }
 }
 

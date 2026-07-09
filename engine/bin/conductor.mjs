@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, chmodS
 import { execSync, spawn } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { createHash, createPrivateKey } from 'node:crypto';
 const createHashSync = (s) => createHash('sha256').update(s).digest('hex');
 import { checkCoherence } from '../lib/gates/coherence.mjs';
 import { checkArtifacts } from '../lib/gates/artifacts.mjs';
@@ -44,7 +44,7 @@ import * as L from '../lib/provenance/ledger.mjs';
 import { lintMigrations } from '../lib/contract/migration.mjs';
 import { scoreCandidate } from '../lib/gates/eval.mjs';
 import { drive, readDriveConfig } from '../lib/pipeline/drive.mjs';
-import { initConfig } from '../lib/analysis/scaffold.mjs';
+import { initConfig, CONFIG_SCHEMA } from '../lib/analysis/scaffold.mjs';
 import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, loadRegistry } from '../lib/serving/serve.mjs';
@@ -244,6 +244,13 @@ switch (cmd) {
     const root = resolve(pos[0] || '.');
     let srv2; // APP ÚNICA (v3): puerto fijo → URL estable; si está ocupado (otra app), uno efímero
     const appOpts = { root, engine: resolve(process.argv[1]), version: VERSION, onShutdown: () => setTimeout(() => process.exit(0), 150) };
+    const portOverride = process.env.CONDUCTOR_PORT;
+    if (portOverride !== undefined && portOverride !== '') {
+      // instancia AISLADA (tests e2e / CI / varios proyectos en paralelo): puerto PROPIO, SIN ceder a la app
+      // única de :4750 ni registrar en su home. 0 = efímero. Evita que un e2e hable en SILENCIO con un servidor
+      // vivo ajeno (no-hermético) y contamine su registro real — bug real detectado al chocar con un serve vivo.
+      srv2 = await createAppServer({ ...appOpts, port: Number(portOverride) || 0 });
+    } else
     try { srv2 = await createAppServer({ ...appOpts, port: 4750 }); }
     catch (e) {
       const isAddr = /EADDRINUSE/i.test(e?.code || e?.message || '');
@@ -332,7 +339,8 @@ switch (cmd) {
   case 'seal': {
     const dir = pos[0]; if (!dir) bad('seal <changeDir> [--priv key.pem | --key hmac]');
     const src = flag('--src'), usage = flag('--usage'), key = flag('--key'), at = flag('--at') || new Date().toISOString();
-    const privF = flag('--priv'); const privateKeyPem = privF && existsSync(privF) ? readFileSync(privF, 'utf8') : undefined;
+    const privF = flag('--priv'); if (privF && !existsSync(privF)) bad('seal --priv: clave privada no encontrada: ' + privF); // NO degradar en silencio a sin-firmar
+    const privateKeyPem = privF ? readFileSync(privF, 'utf8') : undefined;
     const o = flag('-o', join(dir, 'provenance.json'));
     const gates = [{ name: 'coherence', findings: checkCoherence(dir) }, { name: 'artifacts', findings: checkArtifacts(dir) }];
     const trace = src && existsSync(src) ? buildTrace(dir, src) : null;
@@ -347,7 +355,8 @@ switch (cmd) {
   }
   case 'verify': {
     if (!pos[0] || !existsSync(pos[0])) bad('verify <provenance.json> [--pub key.pem | --key hmac]');
-    const pubF = flag('--pub'); const publicKeyPem = pubF && existsSync(pubF) ? readFileSync(pubF, 'utf8') : undefined;
+    const pubF = flag('--pub'); if (pubF && !existsSync(pubF)) bad('verify --pub: clave pública no encontrada: ' + pubF); // NO saltar la verificación en silencio
+    const publicKeyPem = pubF ? readFileSync(pubF, 'utf8') : undefined;
     const r = verifySeal(JSON.parse(readFileSync(pos[0], 'utf8')), { key: flag('--key'), publicKeyPem });
     const okk = r.shaOk && r.sigOk;
     console.log(`\nconductor verify (${r.algo})\n  sha256:    ${r.shaOk ? 'OK' : 'TAMPERED'}\n  signature: ${r.sigOk ? 'OK' : 'INVÁLIDA'}${r.reason ? ' (' + r.reason + ')' : ''}\n  verdict sellado: ${r.verdict}\n  → ${okk ? 'INTEGRIDAD + AUTENTICIDAD VERIFICADAS' : 'SELLO INVÁLIDO'}\n`);
@@ -441,21 +450,12 @@ switch (cmd) {
   }
   case 'mcp': { await import('../lib/sysops/mcp.mjs').then((m) => m.serve()); break; }
   case 'doctor': {
-    // valida un config de ejemplo contra el schema EMBEBIDO (bundle autocontenido, sin rutas)
-    const schema = {
-      type: 'object', required: ['schema', 'x-conductor'],
-      properties: {
-        schema: { const: 'spec-driven' },
-        'x-conductor': { type: 'object', required: ['pipeline'], properties: {
-          pipeline: { type: 'object', required: ['phases'], properties: {
-            phases: { type: 'array', minItems: 1, items: { type: 'object', required: ['name', 'agent'], properties: {
-              name: { type: 'string', enum: ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'verify'] },
-              agent: { type: 'string', enum: ['sdd-planner', 'sdd-coder', 'sdd-reviewer'] } } } } } } } },
-      }, additionalProperties: true,
-    };
-    const good = { schema: 'spec-driven', 'x-conductor': { pipeline: { phases: [{ name: 'verify', agent: 'sdd-reviewer' }] } } };
-    const bad1 = { 'x-conductor': { pipeline: { phases: [{ agent: 'x' }] } } };
-    const r1 = validate(schema, good), r2 = validate(schema, bad1);
+    // valida un openspec/conductor.json de ejemplo contra el CONFIG_SCHEMA REAL (importado de scaffold) →
+    // prueba el validador Y el schema vigente. Antes usaba un schema FÓSIL (formato `spec-driven`/x-conductor
+    // + agentes sdd-planner/coder/reviewer ELIMINADOS) que ya no representa la config del producto.
+    const good = { models: { planner: 'byok:qwen36-msc1', coder: 'copilot:claude-haiku-4.5' }, pipeline: ['propose', 'spec', 'apply', 'verify'], autoApprove: false };
+    const bad1 = { autoApprove: 'sí', pipeline: ['fase-inexistente'], propiedadDesconocida: 1 }; // tipo malo + fase inválida + additionalProperties:false
+    const r1 = validate(CONFIG_SCHEMA, good), r2 = validate(CONFIG_SCHEMA, bad1);
     console.log(`\nconductor doctor`);
     console.log(`  node: ${process.version}`);
     console.log(`  jsonschema validator: config válida → ${r1.valid ? 'OK' : 'FAIL'} · config inválida detectada → ${!r2.valid ? 'OK' : 'FAIL'}`);
@@ -524,17 +524,36 @@ switch (cmd) {
   case 'ledger': {
     const sub = pos[0]; const ledgerPath = flag('--ledger', 'openspec/provenance.ledger.jsonl');
     if (sub === 'append') {
-      const sealFile = pos[1]; if (!sealFile || !existsSync(sealFile)) bad('ledger append <seal.json> --ledger <path>');
-      const e = L.append(ledgerPath, JSON.parse(readFileSync(sealFile, 'utf8')));
-      console.log(`\nconductor ledger · append\n  seq ${e.seq} · ${e.verdict} · ${e.change}\n  hash ${e.hash.slice(0, 16)}… (prev ${e.prev.slice(0, 8)}…)\n  → ${ledgerPath}\n`);
+      const sealFile = pos[1]; if (!sealFile || !existsSync(sealFile)) bad('ledger append <seal.json> [--priv <ed25519-priv.pem>] --ledger <path>');
+      const privFile = flag('--priv', null); // firma Ed25519 OPCIONAL: sin ella la cadena es solo hash-encadenada
+      let privateKeyPem = null;
+      if (privFile) {
+        try { privateKeyPem = readFileSync(privFile, 'utf8'); } catch { bad('no se pudo leer la clave privada: ' + privFile); }
+        // FAIL-CLOSED (como seal --priv): una clave presente pero INVÁLIDA / de tipo equivocado no debe degradar en
+        // SILENCIO a una entrada SIN firma (L.append traga el error de edSign). Se exige una Ed25519 utilizable
+        // ANTES de anexar nada (una RSA pasaría createPrivateKey pero fallaría al firmar → entrada sin firma persistida).
+        try { if (createPrivateKey(privateKeyPem).asymmetricKeyType !== 'ed25519') throw new Error('tipo'); }
+        catch { bad('ledger append --priv: la clave no es una Ed25519 utilizable: ' + privFile); }
+      }
+      const e = L.append(ledgerPath, JSON.parse(readFileSync(sealFile, 'utf8')), { privateKeyPem });
+      console.log(`\nconductor ledger · append\n  seq ${e.seq} · ${e.verdict} · ${e.change}\n  hash ${e.hash.slice(0, 16)}…${e.sig ? ' · FIRMADA (Ed25519)' : ' · sin firma'} (prev ${e.prev.slice(0, 8)}…)\n  → ${ledgerPath}\n`);
       process.exit(0);
     }
     if (sub === 'verify') {
-      const r = L.verifyChain(ledgerPath);
+      // hash-chain íntegra ≠ AUTÉNTICA. Antes se imprimía "CADENA ÍNTEGRA" a secas aun sin firmas → un atacante
+      // con escritura podía editar una entrada, quitar las firmas y recomputar hashes, y verify daba exit 0. Ahora
+      // el CLI acepta --pub (verifica las firmas Ed25519) y el mensaje refleja el estado REAL (firmada/verificada/sin firma).
+      const pubFile = flag('--pub', null);
+      let publicKeyPem = null; if (pubFile) { try { publicKeyPem = readFileSync(pubFile, 'utf8'); } catch { bad('no se pudo leer la clave pública: ' + pubFile); } }
+      const r = L.verifyChain(ledgerPath, { publicKeyPem });
       console.log(`\nconductor ledger · verify (${ledgerPath})`);
-      if (r.ok) console.log(`  → CADENA ÍNTEGRA (${r.entries} entradas, head ${r.head.slice(0, 16)}…)\n`);
-      else console.log(`  → CADENA ROTA en entrada ${r.brokenAt}: ${r.reason}\n`);
-      process.exit(r.ok ? 0 : 1);
+      if (!r.ok) { console.log(`  → CADENA ROTA en entrada ${r.brokenAt}: ${r.reason}\n`); process.exit(1); }
+      if (r.signed && publicKeyPem) console.log(`  → CADENA ÍNTEGRA Y FIRMAS VERIFICADAS (${r.entries} entradas, head ${r.head.slice(0, 16)}…)\n`);
+      else if (r.signed) console.log(`  → hash-chain íntegra; la cadena está FIRMADA pero NO se verificó autenticidad (aporta --pub <clave>). ${r.entries} entradas.\n`);
+      else console.log(`  → hash-chain íntegra pero SIN FIRMAS (${r.entries} entradas): detecta ediciones casuales, NO a un atacante con acceso de escritura. Firma con --priv en 'append'.\n`);
+      // --require-signed: audit ESTRICTO → falla si la cadena no está firmada Y verificada con --pub
+      if (has('--require-signed') && !(r.signed && publicKeyPem)) { console.log(`  ✗ --require-signed: exige cadena firmada y verificada con --pub → FALLA (signed=${r.signed}, pub=${!!publicKeyPem})\n`); process.exit(1); }
+      process.exit(0);
     }
     bad('ledger <append|verify> ...');
   }
@@ -549,10 +568,15 @@ switch (cmd) {
     // verificación criptográfica del propio bundle (cadena de suministro, T6): el instalador/CI corre
     // `conductor selfcheck --pub conductor.pub` (con el .sig junto al bundle) y aborta si está manipulado.
     const pubF = flag('--pub'); let sigOk = null;
-    if (pubF && existsSync(pubF)) {
-      const sigF = flag('--sig', process.argv[1] + '.sig');
-      try { sigOk = existsSync(sigF) ? verifyFile(process.argv[1], readFileSync(sigF, 'utf8').trim(), readFileSync(pubF, 'utf8')) : false; }
-      catch { sigOk = false; }
+    if (pubF) {
+      // clave pedida pero AUSENTE → sigOk=false (NO null): antes se saltaba la verificación y el gate de cadena
+      // de suministro pasaba (exit 0) con un --pub mal escrito / CWD equivocado — fail-open real.
+      if (!existsSync(pubF)) sigOk = false;
+      else {
+        const sigF = flag('--sig', process.argv[1] + '.sig');
+        try { sigOk = existsSync(sigF) ? verifyFile(process.argv[1], readFileSync(sigF, 'utf8').trim(), readFileSync(pubF, 'utf8')) : false; }
+        catch { sigOk = false; }
+      }
     }
     const allOk = vOk && sOk && (sigOk === null || sigOk);
     if (has('--json')) { console.log(JSON.stringify({ version: VERSION, sha256: selfSha, versionOk: vOk, shaOk: sOk, signatureOk: sigOk })); process.exit(allOk ? 0 : 1); }
@@ -591,6 +615,49 @@ switch (cmd) {
     console.log('');
     process.exit(r.verdict === 'PASS' ? 0 : 1);
   }
+  // F3 (doctrina UX v2 #5) — EL GESTO de app: `conductor` a secas arranca el servidor si está apagado y
+  // abre la ventana. Con ruta opcional (`conductor app <root>`) enfoca ese proyecto. CONDUCTOR_NO_OPEN=1
+  // evita abrir navegador (headless/tests).
+  case undefined: case 'app': {
+    const url = 'http://127.0.0.1:4750/';
+    const ping2 = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
+    let alive = await ping2();
+    if (!alive) {
+      const rootArg = pos[0] ? resolve(pos[0]) : process.cwd();
+      spawn(process.execPath, [resolve(process.argv[1]), 'serve', rootArg], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
+      for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); alive = await ping2(); }
+      if (!alive) { console.error('conductor: la app no arrancó (¿:4750 ocupado por otra cosa?)'); process.exit(1); }
+    }
+    if (process.env.CONDUCTOR_NO_OPEN !== '1') {
+      try {
+        const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+        execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true });
+      } catch { /* sin navegador disponible: la URL impresa basta */ }
+    }
+    console.log(`🌐 conductor: ${url}`);
+    break;
+  }
+  // instala el comando `conductor` en el PATH del usuario SIN tocar variables de entorno: en Windows un
+  // shim .cmd en WindowsApps (ya está en PATH); en POSIX un script en ~/.local/bin (avisa si no está en PATH).
+  case 'setup': {
+    const engineAbs = resolve(process.argv[1]);
+    if (process.platform === 'win32') {
+      const dir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+      const shim = join(dir, 'conductor.cmd');
+      writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${engineAbs}" %*\r\n`);
+      console.log(`✅ comando instalado: ${shim}\n   Abre una terminal nueva y escribe: conductor`);
+    } else {
+      const dir = join(homedir(), '.local', 'bin');
+      mkdirSync(dir, { recursive: true });
+      const shim = join(dir, 'conductor');
+      writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${engineAbs}" "$@"\n`);
+      try { chmodSync(shim, 0o755); } catch {}
+      const onPath = String(process.env.PATH || '').split(':').includes(dir);
+      const aviso = onPath ? '' : '\n   ⚠ añade ' + dir + ' a tu PATH (en la mayoría de distros basta reabrir la sesión)';
+      console.log('✅ comando instalado: ' + shim + aviso + '\n   Escribe: conductor');
+    }
+    break;
+  }
   case 'version': case '--version': console.log(`conductor ${VERSION}`); break;
   default: printHelp();
 }
@@ -621,6 +688,8 @@ function printHelp() {
   dashboard <changeDir> --src <d> [--usage j] [-o html]
   eval <changeDir> --src <dir> [--json]        # puntúa la calidad de un cambio del pipeline
   selfcheck [--expect-version v] [--expect-sha h] [--pub key.pem [--sig f]]   # drift + firma del motor
+  (sin comando) | app [root]                   # EL GESTO: abre la app (la arranca si está apagada)
+  setup                                        # instala el comando 'conductor' en tu PATH (shim, 3 OS)
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo

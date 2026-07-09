@@ -10,13 +10,18 @@
   color-scheme: light;
   /* Paleta CORPORATIVA: azul señal sobre slate frío. Neutrales con tinte azul (no cálidos), verde teal
      para OK, ámbar tostado para warn. Contraste AA cuidado. El acento se usa con disciplina. */
-  --tx:#0f1822;--tx2:#46556a;--tx3:#647184;
+  /* --tx3 oscurecido de #647184 a #566073 → los labels/contadores pequeños (9-11px) despejan AA 4.5 */
+  --tx:#0f1822;--tx2:#46556a;--tx3:#566073;
   --bg:#f6f8fb;--bg2:#eaf0f6;--card:#ffffff;
   --bd:#e1e8f0;--bd2:#eef2f7;
-  /* verdicts = el lenguaje de estado */
-  --ok:#0e7c66;--okbg:#daf0e9;--bad:#c2362f;--badbg:#fbe3e1;--warn:#8a5a0c;--warnbg:#f6ecd4;
-  /* azul corporativo — único acento (blanco encima ≈4.6:1, AA) */
-  --accent:#2563eb;--accent2:#5b93ff;--accentbg:#e7efff;--blue:#2563eb;
+  /* verdicts = el lenguaje de estado. Colores de TEXTO oscurecidos un punto para despejar AA 4.5 sobre su
+     tinte de fondo (antes 4.3-4.45, justo por debajo). Los *bg quedan igual — la identidad no cambia. */
+  --ok:#0b6b57;--okbg:#daf0e9;--bad:#af2a24;--badbg:#fbe3e1;--warn:#795009;--warnbg:#f6ecd4;
+  /* azul corporativo — acento para links/foco. --accent-btn = fondo de BOTÓN primario (blanco encima ≥4.5) */
+  --accent:#2563eb;--accent2:#5b93ff;--accentbg:#e7efff;--blue:#2563eb;--accent-btn:#2563eb;
+  /* violeta de GOBIERNO (AI Act): identidad propia para la acción regulatoria, distinta del azul de evidencia.
+     No es color de verdict → no colisiona con los pills de estado. #6d28d9 ≈ 6:1 sobre blanco (AA). */
+  --gov:#6d28d9;--govbg:#efe7fd;
   /* elevación de profundidad fría */
   --sh:0 1px 2px rgba(15,30,55,.06),0 2px 8px rgba(15,30,55,.05);
   --shlg:0 6px 22px rgba(15,30,55,.10),0 20px 48px rgba(15,30,55,.10);
@@ -33,7 +38,10 @@
   --bg:#0b0f14;--bg2:#161d27;--card:#121922;
   --bd:#222d3a;--bd2:#19212b;
   --ok:#2eb792;--okbg:#0f2c26;--bad:#f0625a;--badbg:#2f1b1b;--warn:#dca044;--warnbg:#2c2413;
-  --accent:#4c86ff;--accent2:#7aa8ff;--accentbg:#15233d;--blue:#4c86ff;
+  /* --accent = azul claro para links/foco sobre fondo oscuro (necesita ser CLARO). --accent-btn = azul más
+     saturado para el FONDO del botón primario: con texto BLANCO despeja ≥4.5 (el #4c86ff daba 3.4). */
+  --accent:#6ea3ff;--accent2:#7aa8ff;--accentbg:#15233d;--blue:#6ea3ff;--accent-btn:#2f6fe0;
+  --gov:#b79cff;--govbg:#241a3a; /* violeta claro para dark (≥4.5 sobre el fondo oscuro) */
   --sh:0 1px 2px rgba(0,0,0,.4),0 2px 10px rgba(0,0,0,.3);
   --shlg:0 10px 30px rgba(0,0,0,.55),0 30px 70px rgba(0,0,0,.6);
 }
@@ -74,10 +82,12 @@ code{background:var(--bg2);border:1px solid var(--bd2);border-radius:6px;padding
 .card.ok b,.card.ok span{color:var(--ok)} .card.no b,.card.no span{color:var(--bad)} .card.warn b{color:var(--warn)}
 
 /* BOTONES — acción primaria con el acento, secundarias silenciosas */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:40px;background:var(--accent);color:#fff;border:1px solid transparent;border-radius:var(--r-sm);padding:.46rem .9rem;font:600 .82rem var(--font);cursor:pointer;text-decoration:none;box-shadow:var(--sh);transition:filter .14s,transform .14s,background .14s}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:40px;background:var(--accent-btn);color:#fff;border:1px solid transparent;border-radius:var(--r-sm);padding:.46rem .9rem;font:600 .82rem var(--font);cursor:pointer;text-decoration:none;box-shadow:var(--sh);transition:filter .14s,transform .14s,background .14s}
 .btn:not(:disabled):hover{filter:brightness(1.06);transform:translateY(-1px)}
 .btn:active{transform:translateY(0)}
-.btn:disabled,.btn[disabled]{opacity:.55;cursor:not-allowed;transform:none;filter:none;box-shadow:none}
+/* deshabilitado: NADA de opacity (colapsaba el contraste texto/fondo hasta 1.01 en dark, ilegible). Colores
+   explícitos que mantienen legibilidad AA en ambos temas. */
+.btn:disabled,.btn[disabled]{cursor:not-allowed;transform:none;filter:none;box-shadow:none;background:var(--bg2);color:var(--tx3);border-color:var(--bd)}
 .btn.sec{background:var(--bg2);color:var(--tx);border-color:var(--bd);box-shadow:none}
 .btn.sec:not(:disabled):hover{background:var(--card);border-color:var(--accent);filter:none}
 .btn.sm{padding:.45rem .72rem;font-size:.76rem;min-height:36px}

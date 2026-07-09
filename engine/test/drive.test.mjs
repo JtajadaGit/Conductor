@@ -232,6 +232,22 @@ await test('scrubSecrets: redacta env key, sk-/Bearer y secretos extra (fuga a /
   assert(out.includes('Bearer «REDACTED»'), 'redacta el header Bearer');
 });
 
+await test('scrubSecrets: redacta claves cloud de alta confianza (AWS/GitHub/Google/Slack/GitLab/PEM)', () => {
+  const secrets = {
+    aws: 'AKIAIOSFODNN7EXAMPLE',
+    gh: 'ghp_1234567890abcdefghijklmnopqrstuvwx',
+    google: 'AIzaSyD-1234567890abcdefghijklmnopqrstuv',
+    slack: 'xoxb-1234567890-abcdefghijkl',
+    gitlab: 'glpat-1234567890abcdefghij',
+    pem: '-----BEGIN RSA PRIVATE KEY-----',
+  };
+  const out = scrubSecrets(Object.values(secrets).join('\n'), {});
+  for (const [k, v] of Object.entries(secrets)) assert(!out.includes(v), `redacta ${k}: ${v}`);
+  // NO sobre-redacta texto normal (sin prefijo de secreto)
+  const clean = scrubSecrets('el usuario Akira revisó el PR y aprobó el cambio', {});
+  assert(clean.includes('Akira') && clean.includes('aprobó'), 'no toca texto legítimo');
+});
+
 await test('drive(Path X): FIX DIRIGIDO — el humano elige qué hallazgos del gate van al fix', async () => {
   fresh();
   const changeDir = join(TMP, 'openspec', 'changes', 'dirfix');

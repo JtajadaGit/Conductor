@@ -30,7 +30,9 @@ writeFileSync(join(PROJ, 'openspec', 'conductor.json'), '{}'); // proyecto INICI
 
 // ── app única REAL en puerto efímero (env de CI puede tener 4750 libre u ocupado — da igual) ──
 const PROOF = join(HERE, '.tmp-e2e-proof.txt'); rmSync(PROOF, { force: true });
-const env = { ...process.env, CONDUCTOR_HOME: join(HERE, '.tmp-e2e-home'), CONDUCTOR_PROOF_FILE: PROOF, CONDUCTOR_AGENT_CMD: `node ${FAKE}`, CONDUCTOR_SERVE_OPEN: '0', CONDUCTOR_USAGE: '0', CONDUCTOR_KEEP_SESSIONS: '1' };
+// CONDUCTOR_PORT=0 → puerto EFÍMERO AISLADO: el e2e nunca cede a un servidor vivo en :4750 (antes, con :4750
+// ocupado, el serve cedía a esa app y el e2e probaba contra el servidor equivocado + contaminaba su registro real).
+const env = { ...process.env, CONDUCTOR_HOME: join(HERE, '.tmp-e2e-home'), CONDUCTOR_PORT: '0', CONDUCTOR_PROOF_FILE: PROOF, CONDUCTOR_AGENT_CMD: `node ${FAKE}`, CONDUCTOR_SERVE_OPEN: '0', CONDUCTOR_USAGE: '0', CONDUCTOR_KEEP_SESSIONS: '1' };
 const app = spawn(process.execPath, [ENGINE, 'serve', PROJ], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 let appOut = '';
 app.stdout.on('data', (d) => { appOut += d; });
