@@ -4,6 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
 
 process.env.CONDUCTOR_HOME = join(dirname(fileURLToPath(import.meta.url)), '.tmp-home');
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-serve');
@@ -268,6 +269,62 @@ await test('serve(v4-P2): APP GLOBAL — segundo proyecto vía launch {project},
   eq(st.verdict, 'GREEN', 'state por ruta con proyecto');
   await srv.close();
   for (const r of [R1, R2]) rmSync(r, { recursive: true, force: true });
+});
+
+await test('serve(arranque-per-repo): POST /api/focus mueve el FOCO server-side → /api/changes lo reporta como projectId (Opción A: el panel lo sigue)', async () => {
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const A = join(dirname(fileURLToPath(import.meta.url)), '.tmp-focus-a');
+  const B = join(dirname(fileURLToPath(import.meta.url)), '.tmp-focus-b');
+  for (const r of [A, B]) { rmSync(r, { recursive: true, force: true }); mkdirSync(join(r, 'openspec', 'changes'), { recursive: true }); writeFileSync(join(r, 'openspec', 'conductor.json'), '{}'); }
+  const srv = await createAppServer({ root: A, engine: 'E.mjs', spawnRun: () => ({ on: () => {}, send: () => {}, kill: () => {} }) });
+  const idOf = async (re) => (await (await fetch(srv.url + 'api/ping')).json()).projects.find((p) => re.test(p.root))?.id;
+  const changesPid = async () => (await (await fetch(srv.url + 'api/changes')).json()).projectId;
+  const idA = await idOf(/[\\/]\.tmp-focus-a$/);
+  // el foco arranca en el proyecto SERVIDO (A)
+  eq(await changesPid(), idA, 'foco inicial = proyecto servido (A)');
+  // otro `conductor`/`/sdd-run` DESDE B fija el foco en B — server-side. B se AUTO-REGISTRA al enfocar (antes NO
+  // estaba en el registro → el id de B se toma de la RESPUESTA del focus, no de un ping previo).
+  const f = await (await fetch(srv.url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: B }) })).json();
+  eq(f.ok, true, '/api/focus responde ok');
+  assert(typeof f.id === 'string' && /tmp-focus-b~[a-f0-9]{6}$/.test(f.id), '/api/focus registra+devuelve el id de B: ' + f.id);
+  eq(await changesPid(), f.id, 'FOCO MOVIDO server-side a B → el panel lo sigue en su poll (fix del blocker B1)');
+  // y vuelve a A al lanzar desde A
+  await (await fetch(srv.url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: A }) })).json();
+  eq(await changesPid(), idA, 'el foco vuelve a A');
+  // mismo gate anti-ruta-arbitraria que register/launch: ruta inexistente → 400 (no enfoca cualquier cosa del FS)
+  const bad = await fetch(srv.url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: join(A, 'no-existe-xyz') }) });
+  eq(bad.status, 400, '/api/focus rechaza ruta inexistente (400)');
+  await srv.close();
+  for (const r of [A, B]) rmSync(r, { recursive: true, force: true });
+});
+
+await test('serve(conductor-setup): `conductor setup` instala un shim ejecutable que invoca node + el motor (comando `conductor` en terminal)', () => {
+  const binDir = join(dirname(fileURLToPath(import.meta.url)), '.tmp-setup-bin');
+  rmSync(binDir, { recursive: true, force: true });
+  const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'conductor.mjs');
+  // CONDUCTOR_BIN_DIR redirige el shim a un dir temporal (no toca el WindowsApps/~/.local/bin real)
+  execFileSync(process.execPath, [bin, 'setup'], { env: { ...process.env, CONDUCTOR_BIN_DIR: binDir }, stdio: 'pipe', windowsHide: true });
+  const shim = join(binDir, process.platform === 'win32' ? 'conductor.cmd' : 'conductor');
+  assert(existsSync(shim), 'setup escribió el shim en CONDUCTOR_BIN_DIR');
+  const body = readFileSync(shim, 'utf8');
+  assert(/conductor\.mjs/.test(body), 'el shim invoca el motor conductor.mjs: ' + body.slice(0, 140));
+  assert(body.includes(process.execPath.split(/[\\/]/).pop()), 'el shim invoca node');
+  rmSync(binDir, { recursive: true, force: true });
+});
+
+await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-GCM — nunca en claro, ni en argv, ni en el output (el LLM no la ve)', () => {
+  const home = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-login');
+  rmSync(home, { recursive: true, force: true });
+  const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'conductor.mjs');
+  const KEY = 'sk-UNIT-TEST-KEY-abc123';
+  // stdin en pipe = url + key en 2 líneas; la URL fake (127.0.0.1:1) hace fallar el fetch de modelos rápido
+  const out = execFileSync(process.execPath, [bin, 'byok', 'login'], { input: `http://127.0.0.1:1/v1\n${KEY}\n`, env: { ...process.env, CONDUCTOR_HOME: home }, stdio: 'pipe', windowsHide: true, encoding: 'utf8' });
+  const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
+  assert(typeof j.apiKeyEnc === 'string' && j.apiKeyEnc.startsWith('c2:'), 'la key se guarda cifrada AES-GCM (blob c2:), no en claro');
+  assert(!j.apiKey, 'no queda el campo apiKey en claro');
+  assert(!JSON.stringify(j).includes(KEY), 'la key NO aparece en claro en byok.json');
+  assert(!String(out).includes(KEY), 'la key NO aparece en el output del comando (el LLM no la ve)');
+  rmSync(home, { recursive: true, force: true });
 });
 
 await test('serve(v3.12): RESUME por ruta scoped /api/run/<pid>/<change>/resume usa la firma correcta de launch(proj,name,…)', async () => {

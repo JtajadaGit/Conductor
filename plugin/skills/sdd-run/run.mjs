@@ -130,7 +130,23 @@ const openUrl = (url) => {
 };
 
 const MY_VER = (() => { try { return JSON.parse(readFileSync(resolve(HERE, '..', '..', '..', 'plugin.json'), 'utf8')).version; } catch { return null; } })();
+
+// AUTO-SETUP del comando `conductor` en el PATH (una vez, idempotente): así "encender" deja de depender de
+// /sdd-run dentro de Copilot — tras el 1.er lanzamiento puedes escribir `conductor` en tu terminal. Windows: shim
+// .cmd en WindowsApps (ya en PATH, sin admin). POSIX: ~/.local/bin. Silencioso si ya existe; nunca bloquea el arranque.
+const ensureCommand = () => {
+  try {
+    const shim = process.platform === 'win32'
+      ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps', 'conductor.cmd')
+      : join(homedir(), '.local', 'bin', 'conductor');
+    if (existsSync(shim)) return;
+    spawn(process.execPath, [ENGINE, 'setup'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    llog('instalé el comando `conductor` en tu terminal (una vez) — reabre la terminal y escribe: conductor');
+  } catch { /* best-effort: si falla, /sdd-run sigue funcionando igual */ }
+};
+
 const main = async () => {
+  ensureCommand();
   if (OPEN_ONLY) {
     // modo STORYBOOK: sin feature, solo abrimos la web. El usuario escribe y pulsa "Lanzar run" en el panel.
     let app = await ping();

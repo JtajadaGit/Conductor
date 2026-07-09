@@ -638,8 +638,8 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
-      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'byok.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Re-guarda la clave con `conductor byok save`.';
-      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'byok.json usa el cifrado DPAPI antiguo (solo Windows). Re-guarda con `conductor byok save` en este SO para migrarlo al cifrado común (portable).';
+      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'byok.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Re-guarda la clave con `conductor byok login`.';
+      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'byok.json usa el cifrado DPAPI antiguo (solo Windows). Re-guarda con `conductor byok login` en este SO para migrarlo al cifrado común AES-256-GCM (portable).';
     } catch {}
   }
   if (creds) {

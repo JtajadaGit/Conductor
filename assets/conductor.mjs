@@ -6230,8 +6230,8 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
-      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'byok.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Re-guarda la clave con `conductor byok save`.';
-      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'byok.json usa el cifrado DPAPI antiguo (solo Windows). Re-guarda con `conductor byok save` en este SO para migrarlo al cifrado común (portable).';
+      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'byok.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Re-guarda la clave con `conductor byok login`.';
+      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'byok.json usa el cifrado DPAPI antiguo (solo Windows). Re-guarda con `conductor byok login` en este SO para migrarlo al cifrado común AES-256-GCM (portable).';
     } catch {}
   }
   if (creds) {
@@ -6962,6 +6962,8 @@ __M['mcp'] = (function(){
 
 
 
+
+
 const { checkCoherence } = __M['coherence'];
 const { checkArtifacts } = __M['artifacts'];
 const { checkContract } = __M['contract'];
@@ -7047,6 +7049,16 @@ const TOOLS = {
 };
 
 function serve() {
+  // AUTO-SETUP del comando `conductor` en el PATH al ARRANCAR el MCP (Copilot lo lanza al CARGAR el plugin) →
+  // así basta INSTALAR el plugin para tener `conductor` en la terminal (sin /sdd-run ni setup manual). Idempotente
+  // (no hace nada si el shim ya existe), best-effort, y en proceso HIJO con stdio 'ignore' para NO tocar el
+  // stdout JSON-RPC del MCP (aquí stdout es sagrado: SOLO JSON-RPC; el hijo escribe su "✅" a la nada).
+  try {
+    const shim = process.platform === 'win32'
+      ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps', 'conductor.cmd')
+      : join(homedir(), '.local', 'bin', 'conductor');
+    if (!existsSync(shim)) spawn(process.execPath, [resolve(process.argv[1]), 'setup'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  } catch { /* nunca bloquea el MCP */ }
   const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const failrpc = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
@@ -7091,6 +7103,7 @@ return { serve };
 //   conductor mcp                       (arranca el MCP server por stdio)
 //   conductor doctor                    (autotest del entorno + validador de config)
 //   conductor version | help
+
 
 
 
@@ -7335,11 +7348,13 @@ switch (cmd) {
         if (j?.ok) {
           // app única ya viva → REGISTRAR el proyecto pedido y ENFOCARLO en la web (no un ✅ mudo que ignora B, #5).
           const nm = root.split(/[\\/]/).pop();
-          const reg = await fetch('http://127.0.0.1:4750/api/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: root }) }).then((r) => r.json()).catch(() => null);
+          // ARRANQUE PER-REPO (Opción A): foco SERVER-SIDE (/api/focus), no `?project=` de cliente — así una
+          // pestaña YA abierta en otro repo se re-enfoca a ÉSTE en su poll (sin depender de que el navegador navegue).
+          const reg = await fetch('http://127.0.0.1:4750/api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: root }) }).then((r) => r.json()).catch(() => null);
           if (reg?.ok) {
-            const focusUrl = `http://127.0.0.1:4750/?project=${encodeURIComponent(reg.id)}`;
-            console.log(`✅ App conductor única ya en marcha. Registrado y enfocado «${nm}» → ${focusUrl}${reg.openspec ? '' : ' (sin init: la web te ofrecerá Inicializar)'}`);
-            if (process.env.CONDUCTOR_SERVE_OPEN !== '0') { try { const opener = process.platform === 'win32' ? `start "" "${focusUrl}"` : process.platform === 'darwin' ? `open "${focusUrl}"` : `xdg-open "${focusUrl}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch {} }
+            const appUrl = 'http://127.0.0.1:4750/';
+            console.log(`✅ App conductor única ya en marcha. Enfocado «${nm}» (server-side, el panel lo sigue) → ${appUrl}${reg.openspec ? '' : ' (sin init: la web te ofrecerá Inicializar)'}`);
+            if (process.env.CONDUCTOR_SERVE_OPEN !== '0') { try { const opener = process.platform === 'win32' ? `start "" "${appUrl}"` : process.platform === 'darwin' ? `open "${appUrl}"` : `xdg-open "${appUrl}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch {} }
             process.exit(0);
           }
           console.log(`✅ Ya hay una app conductor EN MARCHA en http://127.0.0.1:4750 (v${j.version || '?'}) — úsala (no levanto otra). Reinícala con \`conductor restart\` si quieres.`); process.exit(0);
@@ -7362,40 +7377,72 @@ switch (cmd) {
     catch (e) { console.error(`aiact: ${e.message}`); process.exit(1); }
   }
   case 'byok': {
-    // credenciales BYOK persistentes (~/.conductor/byok.json) — la mezcla funciona aunque la app
-    // arranque sin las env. `byok save` las toma del ENTORNO ACTUAL (ejecútalo desde tu shell BYOK).
+    // credenciales BYOK persistentes (~/.conductor/byok.json) — la mezcla byok:/copilot: funciona aunque la app
+    // arranque sin las env. La KEY se cifra AES-256-GCM (MISMA mecánica en Windows/Mac/Linux, lib/secret.mjs;
+    // clave maestra en ~/.conductor/.enckey 0600). Tres vías: `byok login` (INTERACTIVO, key OCULTA, el LLM NUNCA
+    // la ve — recomendado) · `byok save` (desde el ENTORNO, para CI/scripts) · `byok status`.
     const sub = pos[0];
     const home = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     const file = join(home, 'byok.json');
-    if (sub === 'save') {
-      const baseUrl = flag('--base-url') || process.env.COPILOT_PROVIDER_BASE_URL;
-      const apiKey = flag('--api-key') || process.env.COPILOT_PROVIDER_API_KEY;
-      const type = flag('--type') || process.env.COPILOT_PROVIDER_TYPE || 'openai';
-      const model = flag('--model') || process.env.COPILOT_MODEL || '';
-      if (!baseUrl || !apiKey) bad('byok save: exporta COPILOT_PROVIDER_BASE_URL y COPILOT_PROVIDER_API_KEY en tu shell y ejecuta `conductor byok save` (modo recomendado).');
-      if (flag('--api-key')) console.error('⚠ --api-key queda en el historial del shell y en la lista de procesos; prefiere exportar COPILOT_PROVIDER_API_KEY.');
+    // vía COMÚN (login/save): cifra + persiste (0600) + siembra la cache de NOMBRES de modelo (jamás la key).
+    const storeByok = async (baseUrl, apiKey, type, model) => {
       mkdirSync(home, { recursive: true });
-      // la KEY se cifra con DPAPI (Windows): el fichero es inútil copiado a otra cuenta/equipo. Fuera de
-      // win32 no hay DPAPI → se guarda en claro con aviso. baseUrl/model NO son secretos (quedan legibles).
       const enc = encryptSecret(apiKey);
       writeFileSync(file, JSON.stringify(enc ? { type, baseUrl, apiKeyEnc: enc, model } : { type, baseUrl, apiKey, model }, null, 2), { mode: 0o600 });
-      if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // la key no queda legible por otros usuarios de la máquina
-      console.log(`✓ credenciales BYOK guardadas en ${file} ${enc ? '(KEY cifrada con DPAPI — inútil en otra cuenta/equipo)' : '(⚠ KEY en claro: DPAPI solo existe en Windows)'}. NUNCA en el repo. La mezcla byok:/copilot: ya funciona arranque quien arranque la app.`);
-      // sembrar la cache de NOMBRES de modelo (no la key) → el picker mostrará qwen SIEMPRE, con o sin env
+      if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // no legible por otros usuarios de la máquina
+      console.log(enc
+        ? `✓ credenciales BYOK guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`
+        : `⚠ credenciales guardadas en ${file} pero SIN cifrar: no pude persistir la clave maestra (revisa permisos de ~/.conductor). La KEY quedó en claro — corrígelo y re-guarda.`);
       try {
         const base = String(baseUrl).replace(/\/+$/, '');
         const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
         if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); writeModelsCache(ids, baseUrl); console.log(`  catálogo cacheado: ${ids.length} modelo(s) — el picker los mostrará en todo arranque`); }
-      } catch { /* sin red ahora → la cache se sembrará en el primer fetch en vivo del panel */ }
+        else console.log(`  (no pude listar modelos ahora: HTTP ${r.status}; la cache se sembrará en el primer uso del panel)`);
+      } catch { console.log('  (sin red ahora → la cache de modelos se sembrará en el primer uso del panel)'); }
+    };
+    if (sub === 'login' || sub === undefined) {
+      // FLUJO SIN QUE EL LLM VEA LA KEY: la tecleas TÚ (STDIN) — jamás en argv, env, historial del shell, logs ni
+      // el contexto de ningún modelo. En TTY: prompts interactivos con la key OCULTA (sin eco). En pipe (scripts/
+      // tests): se leen las líneas de golpe (readline pregunta-a-pregunta + pipe = carrera que pierde la 2ª línea).
+      const envUrl = flag('--base-url') || process.env.COPILOT_PROVIDER_BASE_URL;
+      const type = flag('--type') || process.env.COPILOT_PROVIDER_TYPE || 'openai';
+      const model = flag('--model') || process.env.COPILOT_MODEL || '';
+      let baseUrl, apiKey;
+      if (process.stdin.isTTY) {
+        const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+        let muted = false;
+        rl._writeToOutput = (s) => { if (!muted) rl.output.write(s); else if (/\r|\n/.test(s)) rl.output.write('\n'); }; // oculta el eco de la key
+        const ask = (q, hidden) => new Promise((res) => { if (hidden) { rl.output.write(q); muted = true; rl.question('', (a) => { muted = false; res(String(a).trim()); }); } else rl.question(q, (a) => res(String(a).trim())); });
+        baseUrl = String(envUrl || await ask('URL de tu proxy LiteLLM (…/v1): ', false)).trim();
+        apiKey = baseUrl ? (await ask('API Key (no se mostrará; el LLM no la ve): ', true)).trim() : '';
+        rl.close();
+      } else {
+        const raw = await new Promise((res) => { let b = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (d) => b += d); process.stdin.on('end', () => res(b)); });
+        const parts = raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        baseUrl = String(envUrl || parts.shift() || '').trim();
+        apiKey = String(parts.shift() || '').trim();
+      }
+      if (!baseUrl) bad('byok login: la URL de LiteLLM es obligatoria.');
+      if (!apiKey) bad('byok login: la API Key es obligatoria.');
+      await storeByok(baseUrl, apiKey, type, model);
+      process.exit(0);
+    }
+    if (sub === 'save') {
+      const baseUrl = flag('--base-url') || process.env.COPILOT_PROVIDER_BASE_URL;
+      const apiKey = flag('--api-key') || process.env.COPILOT_PROVIDER_API_KEY;
+      if (!baseUrl || !apiKey) bad('byok save: exporta COPILOT_PROVIDER_BASE_URL y COPILOT_PROVIDER_API_KEY y ejecuta `conductor byok save` (para CI/scripts). Para uso normal usa `conductor byok login` (interactivo, la key oculta).');
+      if (flag('--api-key')) console.error('⚠ --api-key queda en el historial del shell y en la lista de procesos; usa `conductor byok login` (interactivo) o exporta COPILOT_PROVIDER_API_KEY.');
+      await storeByok(baseUrl, apiKey, flag('--type') || process.env.COPILOT_PROVIDER_TYPE || 'openai', flag('--model') || process.env.COPILOT_MODEL || '');
       process.exit(0);
     }
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
-      let fileOk = false, enc = false; try { const j = JSON.parse(readFileSync(file, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; } catch {}
-      console.log(`byok por env: ${envOk ? 'SÍ' : 'no'} · byok.json: ${fileOk ? 'SÍ (' + file + (enc ? ', KEY cifrada DPAPI' : ', KEY en claro') + ')' : 'no'} → byok disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor byok save` desde tu shell con las variables exportadas'}`);
+      let fileOk = false, enc = false, portable = false; try { const j = JSON.parse(readFileSync(file, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); } catch {}
+      const encTxt = enc ? (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `byok login` si cambiaste de SO') : 'EN CLARO ⚠';
+      console.log(`byok por env: ${envOk ? 'SÍ' : 'no'} · byok.json: ${fileOk ? 'SÍ (' + file + ', KEY ' + encTxt + ')' : 'no'} → byok disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor byok login`'}`);
       process.exit(0);
     }
-    bad('byok save  (toma las credenciales del entorno: exporta COPILOT_PROVIDER_BASE_URL y COPILOT_PROVIDER_API_KEY) | byok status');
+    bad('byok login  (INTERACTIVO, la key oculta — recomendado) | byok save  (desde el entorno, CI/scripts) | byok status');
   }
   case 'init-config': {
     const dir = pos[0] || join(process.cwd(), 'openspec');
@@ -7694,14 +7741,18 @@ switch (cmd) {
   // evita abrir navegador (headless/tests).
   case undefined: case 'app': {
     const url = 'http://127.0.0.1:4750/';
+    const rootArg = pos[0] ? resolve(pos[0]) : process.cwd();
     const ping2 = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
     let alive = await ping2();
     if (!alive) {
-      const rootArg = pos[0] ? resolve(pos[0]) : process.cwd();
       spawn(process.execPath, [resolve(process.argv[1]), 'serve', rootArg], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
       for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); alive = await ping2(); }
       if (!alive) { console.error('conductor: la app no arrancó (¿:4750 ocupado por otra cosa?)'); process.exit(1); }
     }
+    // ARRANQUE PER-REPO (Opción A): fija el FOCO en el repo desde el que lanzaste `conductor` (server-side) → el
+    // panel lo sigue en su poll aunque la pestaña ya estuviera abierta en OTRO repo. En arranque fresco el
+    // `serve rootArg` ya enfoca ahí; este POST cubre el caso "app YA viva en otro repo".
+    try { await fetch(url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: rootArg }), signal: AbortSignal.timeout(3000) }); } catch {}
     if (process.env.CONDUCTOR_NO_OPEN !== '1') {
       try {
         const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
@@ -7715,13 +7766,15 @@ switch (cmd) {
   // shim .cmd en WindowsApps (ya está en PATH); en POSIX un script en ~/.local/bin (avisa si no está en PATH).
   case 'setup': {
     const engineAbs = resolve(process.argv[1]);
+    // CONDUCTOR_BIN_DIR permite fijar el directorio del shim (tests + usuarios avanzados con su propio bin en PATH).
     if (process.platform === 'win32') {
-      const dir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+      const dir = process.env.CONDUCTOR_BIN_DIR || join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+      mkdirSync(dir, { recursive: true });
       const shim = join(dir, 'conductor.cmd');
       writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${engineAbs}" %*\r\n`);
       console.log(`✅ comando instalado: ${shim}\n   Abre una terminal nueva y escribe: conductor`);
     } else {
-      const dir = join(homedir(), '.local', 'bin');
+      const dir = process.env.CONDUCTOR_BIN_DIR || join(homedir(), '.local', 'bin');
       mkdirSync(dir, { recursive: true });
       const shim = join(dir, 'conductor');
       writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${engineAbs}" "$@"\n`);
@@ -7821,4 +7874,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 2e3ecb91741bf7e903f4143d634738b665317654ab201c57a4bd8aed882f6ff9
+// build-inputs-sha256: f530d754c2b728297a4850df2f0e5217fd82538603da7235b3791b2a3dc73160

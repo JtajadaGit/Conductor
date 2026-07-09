@@ -359,10 +359,10 @@ export class PanelScreen extends CElement {
           <div class="inst-body">
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
-              <div class="ro-row"><dt>Credencial</dt><dd>Cifrada en tu equipo (DPAPI)</dd></div>
+              <div class="ro-row"><dt>Credencial</dt><dd>Cifrada en tu equipo (AES-256-GCM · Win/Mac/Linux)</dd></div>
               <div class="ro-row"><dt>Privacidad</dt><dd>Nunca sale de tu máquina · no se registra</dd></div>
             </dl>
-            <p class="inst-note">La clave se guarda <strong>cifrada con DPAPI</strong> (solo tu usuario de Windows puede descifrarla) en <code>~/.conductor/byok.json</code>. <strong>Nunca sale de tu equipo</strong>, no aparece en logs ni en comandos, y no se cachea — solo se guardan los nombres de los modelos. Se mantiene entre sesiones; cámbiala solo si caduca.</p>
+            <p class="inst-note">La clave se guarda <strong>cifrada con AES-256-GCM</strong> (misma mecánica en Windows, Mac y Linux; la clave maestra vive en tu equipo con permisos 0600) en <code>~/.conductor/byok.json</code>. <strong>Nunca sale de tu equipo</strong>, no aparece en logs ni en comandos, y no se cachea — solo se guardan los nombres de los modelos. Se mantiene entre sesiones; cámbiala solo si caduca.</p>
             <form class="frow" style="align-items:end" @submit=${(e: Event) => void this.byokSave(e)}>
               <label class="fl" style="flex:2;min-width:12rem">Nueva API Key<input type="password" .value=${this.byokKey} @input=${(e: Event) => { this.byokKey = (e.target as HTMLInputElement).value; }} placeholder="sk-… (solo si caducó)" autocomplete="off"></label>
               <button class="btn sm sec" ?disabled=${this.byokSaving || !this.byokKey.trim()} style="align-self:end">${this.byokSaving ? '…' : 'Actualizar clave'}</button>
@@ -381,7 +381,7 @@ export class PanelScreen extends CElement {
           <span class="inst-chev" aria-hidden="true"></span>
         </summary>
         <div class="inst-body">
-          <p class="inst-note">Conecta tu proxy LiteLLM <strong>una sola vez</strong> para usar qwen (más barato) en las fases que elijas. La clave se guarda <strong>cifrada con DPAPI</strong> en tu equipo (solo tu usuario la descifra), <strong>nunca sale de tu máquina</strong>, no se registra ni se cachea (solo los nombres de modelos). No la vuelves a meter.</p>
+          <p class="inst-note">Conecta tu proxy LiteLLM <strong>una sola vez</strong> para usar qwen (más barato) en las fases que elijas. La clave se guarda <strong>cifrada con AES-256-GCM</strong> en tu equipo (Windows, Mac y Linux), <strong>nunca sale de tu máquina</strong>, no se registra ni se cachea (solo los nombres de modelos). No la vuelves a meter.</p>
           <form class="frow" style="align-items:end" @submit=${(e: Event) => void this.byokSave(e)}>
             <label class="fl" style="flex:2;min-width:12rem">URL LiteLLM<input type="url" .value=${this.byokUrl} @input=${(e: Event) => { this.byokUrl = (e.target as HTMLInputElement).value; }} placeholder="https://…/v1" required></label>
             <label class="fl" style="flex:2;min-width:10rem">API Key<input type="password" .value=${this.byokKey} @input=${(e: Event) => { this.byokKey = (e.target as HTMLInputElement).value; }} placeholder="sk-…" autocomplete="off" required></label>

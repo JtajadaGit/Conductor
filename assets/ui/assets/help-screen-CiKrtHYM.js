@@ -1,4 +1,4 @@
-import{_ as e,d as t,m as n,t as r}from"./index-CLyU4nS-.js";var i=class extends t{render(){return e`
+import{_ as e,d as t,m as n,t as r}from"./index-BdEtYID6.js";var i=class extends t{render(){return e`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluido qwen vía LiteLLM a coste 0 de AI Credits.</p>
 
