@@ -38,7 +38,7 @@ export function serveStatic({ uiDir, pathname, method, res }) {
     res.end(readFileSync(file));
     return true;
   }
-  if (pathname === '/' || pathname === '/demo' || pathname === '/help' || pathname === '/flow' || pathname.startsWith('/run/') || pathname.startsWith('/session/')) {
+  if (pathname === '/' || pathname === '/demo' || pathname === '/help' || pathname === '/flow' || pathname === '/ahorro' || pathname.startsWith('/run/') || pathname.startsWith('/session/')) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
     res.end(readFileSync(indexPath));
     return true;

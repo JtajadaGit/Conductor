@@ -26,12 +26,24 @@ const keyPath = () => join(homeDir(), '.enckey');
 // no se puede leer/decodificar (lock de AV, corrupción, ≠32 bytes), se devuelve null (error duro) en vez de
 // regenerar — regenerar destruiría para siempre la capacidad de descifrar el byok.json ya guardado (pérdida
 // silenciosa: decrypt→null→"sin credenciales"/BLOCKED). El caller distingue "sin clave" de "clave ilegible".
+// sleep SÍNCRONO sin busy-wait (Atomics.wait sobre un SharedArrayBuffer efímero) para reintentar la lectura.
+const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { const u = Date.now() + ms; while (Date.now() < u) { /* fallback */ } } };
+// lee el keyfile con REINTENTOS. Bajo CONCURRENCIA (N procesos a la vez), uno puede ver el .enckey recién creado
+// por otro (`open 'wx'`) pero AÚN a medio escribir (0/parcial bytes) entre el open y el write → sin reintento,
+// masterKey devolvía null y el byok login fallaba (1 de N). Reintenta ~300ms hasta ver 32 bytes o desaparecer;
+// preserva el never-overwrite (nunca regenera un keyfile presente; un corrupto genuino agota y devuelve null).
+function readMaster(p) {
+  for (let i = 0; i < 30; i++) {
+    let b = null; try { b = Buffer.from(String(readFileSync(p, 'utf8')).trim(), 'base64'); } catch {}
+    if (b && b.length === 32) return b;
+    if (!existsSync(p)) return null;
+    sleepSync(10);
+  }
+  return null; // tras ~300ms sigue sin 32 bytes → genuinamente corrupto/ilegible
+}
 function masterKey() {
   const p = keyPath();
-  if (existsSync(p)) {
-    try { const b = Buffer.from(String(readFileSync(p, 'utf8')).trim(), 'base64'); if (b.length === 32) return b; } catch { return null; }
-    return null; // existe pero NO son 32 bytes válidos → no tocar (no sobrescribir un keyfile presente)
-  }
+  if (existsSync(p)) return readMaster(p);
   try {
     const k = randomBytes(32);
     mkdirSync(homeDir(), { recursive: true });
@@ -39,9 +51,7 @@ function masterKey() {
     try { chmodSync(p, 0o600); } catch {} // en Windows es best-effort; el dir del perfil ya es del usuario
     return k;
   } catch {
-    // EEXIST (otro proceso creó el keyfile entre el existsSync y el write) → re-leer, nunca regenerar
-    try { const b = Buffer.from(String(readFileSync(p, 'utf8')).trim(), 'base64'); if (b.length === 32) return b; } catch {}
-    return null;
+    return readMaster(p); // EEXIST (otro proceso lo creó) → re-leer con reintentos por si aún escribe; nunca regenerar
   }
 }
 

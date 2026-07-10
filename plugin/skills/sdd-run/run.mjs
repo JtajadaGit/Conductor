@@ -36,7 +36,7 @@ const featureName = (req) => { const w = meaningful(req); return w.length ? w.sl
 const request = flagMulti('--request');
 const project = resolve(flag('--project', process.cwd()));
 const complexity = flag('--complexity', 'medium');
-const changeName = slug(flag('--name') || '') || featureName(request);
+const changeName = slug(flag('--name') || '') || featureName(request) || 'cambio'; // fallback: una petición solo de stop-words/puntuación daba changeName vacío → 400 confuso del server
 const domain = slug(flag('--domain') || '') || meaningful(request)[0] || 'core';
 // «el experto manda» (doctrina UX v2 + P1 del plan): el launcher YA NO acepta --auto — era el vector de
 // piloto automático desde el chat. El run desatendido queda como decisión consciente DEL PROYECTO
@@ -131,22 +131,11 @@ const openUrl = (url) => {
 
 const MY_VER = (() => { try { return JSON.parse(readFileSync(resolve(HERE, '..', '..', '..', 'plugin.json'), 'utf8')).version; } catch { return null; } })();
 
-// AUTO-SETUP del comando `conductor` en el PATH (una vez, idempotente): así "encender" deja de depender de
-// /sdd-run dentro de Copilot — tras el 1.er lanzamiento puedes escribir `conductor` en tu terminal. Windows: shim
-// .cmd en WindowsApps (ya en PATH, sin admin). POSIX: ~/.local/bin. Silencioso si ya existe; nunca bloquea el arranque.
-const ensureCommand = () => {
-  try {
-    const shim = process.platform === 'win32'
-      ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps', 'conductor.cmd')
-      : join(homedir(), '.local', 'bin', 'conductor');
-    if (existsSync(shim)) return;
-    spawn(process.execPath, [ENGINE, 'setup'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    llog('instalé el comando `conductor` en tu terminal (una vez) — reabre la terminal y escribe: conductor');
-  } catch { /* best-effort: si falla, /sdd-run sigue funcionando igual */ }
-};
+// ENTRADA ÚNICA `/sdd-run` (dentro de Copilot, multiplataforma): ya NO auto-instalamos ningún comando de
+// terminal — nada se escribe en tu PATH a tus espaldas (fallaba fuera de Windows y era opaco). El atajo
+// `conductor` en terminal es OPCIONAL y explícito: se instala corriendo `conductor setup` a conciencia.
 
 const main = async () => {
-  ensureCommand();
   if (OPEN_ONLY) {
     // modo STORYBOOK: sin feature, solo abrimos la web. El usuario escribe y pulsa "Lanzar run" en el panel.
     let app = await ping();

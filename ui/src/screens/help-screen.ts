@@ -44,7 +44,7 @@ export class HelpScreen extends CElement {
       </ul>
 
       <h2 class="sect">Ahorro de tokens, visible</h2>
-      <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla qwen (LiteLLM, 0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. La tarjeta «Ahorro qwen» del run enseña cuántas fases salieron gratis.</p>
+      <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla qwen (LiteLLM, 0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. La tarjeta «Ahorro qwen» del run enseña cuántas fases salieron gratis. <a class="lnk" href="/ahorro">Todas las técnicas de ahorro →</a></p>
 
       <h2 class="sect">Transparencia (AI Act)</h2>
       <p class="muted">Cada run produce evidencia: informe del run, sello de procedencia firmado (Ed25519) encadenado al ledger del proyecto, y el informe de transparencia AI Act (modelos usados, aprobaciones humanas, verificación, firma).</p>

@@ -3,8 +3,6 @@
 import { createInterface } from 'node:readline';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { spawn } from 'node:child_process';
-import { homedir } from 'node:os';
 import { checkCoherence } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { checkContract } from '../contract/contract.mjs';
@@ -91,16 +89,9 @@ const TOOLS = {
 };
 
 export function serve() {
-  // AUTO-SETUP del comando `conductor` en el PATH al ARRANCAR el MCP (Copilot lo lanza al CARGAR el plugin) →
-  // así basta INSTALAR el plugin para tener `conductor` en la terminal (sin /sdd-run ni setup manual). Idempotente
-  // (no hace nada si el shim ya existe), best-effort, y en proceso HIJO con stdio 'ignore' para NO tocar el
-  // stdout JSON-RPC del MCP (aquí stdout es sagrado: SOLO JSON-RPC; el hijo escribe su "✅" a la nada).
-  try {
-    const shim = process.platform === 'win32'
-      ? join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps', 'conductor.cmd')
-      : join(homedir(), '.local', 'bin', 'conductor');
-    if (!existsSync(shim)) spawn(process.execPath, [resolve(process.argv[1]), 'setup'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-  } catch { /* nunca bloquea el MCP */ }
+  // ENTRADA ÚNICA `/sdd-run`: el MCP ya NO auto-instala ningún comando `conductor` en el PATH al cargar el plugin
+  // (era opaco y fallaba fuera de Windows — en Mac ~/.local/bin no está en PATH; en Linux hasta re-login). El
+  // atajo de terminal es OPCIONAL y explícito (`conductor setup`). Nada se escribe en tu PATH a tus espaldas.
   const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const failrpc = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });

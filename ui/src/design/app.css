@@ -2,7 +2,7 @@
 body { margin: 0; }
 /* Los custom elements son display:inline por defecto: en light DOM eso encoge la caja y rompe el layout.
    Forzar block en pantallas/contenedores; inline-flex en los que son "chips". (Causa de muchos glitches.) */
-conductor-app, panel-screen, run-screen, help-screen, app-sidebar, model-breakdown, raw-output { display: block; }
+conductor-app, panel-screen, run-screen, help-screen, ahorro-screen, app-sidebar, model-breakdown, raw-output { display: block; }
 status-pill { display: inline-flex; vertical-align: middle; }
 conductor-app { min-height: 100vh; }
 .layout { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }

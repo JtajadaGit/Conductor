@@ -103,6 +103,7 @@ export class AppSidebar extends CElement {
         <nav class="sb-foot-nav" aria-label="Más">
           <a class="sb-flink ${this.activeRoute === 'flow' ? 'active' : ''}" href="/flow" aria-current=${this.activeRoute === 'flow' ? 'page' : nothing}>🔻 Flujo</a>
           <a class="sb-flink ${this.activeRoute === 'help' ? 'active' : ''}" href="/help" aria-current=${this.activeRoute === 'help' ? 'page' : nothing}>❓ Ayuda</a>
+          <a class="sb-flink wide ${this.activeRoute === 'ahorro' ? 'active' : ''}" href="/ahorro" aria-current=${this.activeRoute === 'ahorro' ? 'page' : nothing}>💶 Ahorro de tokens</a>
         </nav>
         ${this.appMsg ? html`<div class="sb-appmsg" role="status" aria-live="polite">${this.appMsg}</div>` : nothing}
         <button class="sb-shutdown" @click=${() => void this.shutdown()} aria-label="Apagar la app de conductor (se reabre con /sdd-run)">⏻ Apagar conductor</button>

@@ -287,8 +287,9 @@ app-sidebar { display: flex; flex-direction: column; min-height: 100%; }
 /* FOOTER del sidebar: tres zonas SEPARADAS (stats · navegación secundaria · apagar), no apelotonadas */
 .sb-bottom { margin-top: auto; padding: .75rem .15rem .2rem; border-top: 1px solid var(--bd); display: flex; flex-direction: column; gap: .7rem; }
 .sb-foot { padding-bottom: .65rem; border-bottom: 1px solid var(--bd2); }
-/* Flujo / Ayuda = dos enlaces DISTINTOS (borde sutil propio), no un único botón partido */
-.sb-foot-nav { display: flex; gap: .45rem; }
+/* Flujo / Ayuda / Ahorro = enlaces DISTINTOS (borde sutil propio), no un único botón partido */
+.sb-foot-nav { display: flex; gap: .45rem; flex-wrap: wrap; }
+.sb-flink.wide { flex: 1 1 100%; } /* Ahorro de tokens: etiqueta larga → fila propia, legible en 248px */
 .sb-flink { flex: 1; text-align: center; font-size: .78rem; color: var(--tx2); text-decoration: none; padding: .4rem .4rem; border: 1px solid var(--bd2); border-radius: var(--r-sm); background: var(--bg2); transition: background .11s, color .11s, border-color .11s; }
 .sb-flink:hover { background: var(--card); color: var(--tx); border-color: var(--bd); }
 .sb-flink.active { background: var(--accentbg); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--bd)); font-weight: 600; }
@@ -319,6 +320,17 @@ help-screen code { white-space: nowrap; }
 .flow-gate p { margin: .3rem 0 0; font-size: .8rem; }
 .flow-seal { border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--bd)); background: color-mix(in srgb, var(--ok) 7%, var(--card)); border-radius: 12px; padding: .6rem .9rem; font-size: .84rem; }
 .g-ok { color: var(--ok); font-weight: 800; } .g-no { color: var(--bad); font-weight: 800; }
+
+/* /ahorro — técnicas de ahorro de tokens (misma voz visual que /flow: tarjetas numeradas sobre --card) */
+.ahorro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: .75rem; margin: .8rem 0; max-width: 1080px; }
+.ahorro-card { border: 1px solid var(--bd); border-radius: var(--r); padding: .75rem .95rem; background: var(--card); box-shadow: var(--sh); }
+.ah-top { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.ah-n { width: 1.5rem; height: 1.5rem; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font: 700 .8rem/1 var(--mono); flex: none; }
+.ah-t { font-weight: 700; font-size: .92rem; }
+.ah-new { font: 700 .62rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); background: var(--accentbg); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--bd)); border-radius: 999px; padding: .18rem .5rem; }
+.ah-does { margin: .45rem 0 0; font-size: .84rem; color: var(--tx2); line-height: 1.55; }
+.ah-stat { margin: .45rem 0 0; font: 600 .72rem/1.4 var(--mono); color: var(--ok); }
+.ahorro-note { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--bd)); background: var(--accentbg); border-radius: 12px; padding: .7rem .9rem; margin: 1rem 0; max-width: 1080px; font-size: .84rem; line-height: 1.55; }
 
 /* búsqueda + archivo (board de conocimiento) */
 .sectrow { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }

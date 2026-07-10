@@ -50,7 +50,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret } from '../lib/provenance/secret.mjs';
 import { homedir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
 import { toOtlp } from '../lib/sysops/otlp.mjs';
@@ -258,7 +258,10 @@ switch (cmd) {
       if (isAddr) {
         // anti "varios encendidos": si :4750 lo ocupa OTRA conductor VIVA, NO levanto una 2ª app (efímera y
         // confusa) — uso esa. Solo caigo a efímero si el puerto lo ocupa algo AJENO a conductor.
-        const j = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(900) }).then((r) => r.json()).catch(() => null);
+        // Ping ROBUSTO (3s + reintento): con la máquina cargada, 900ms clasificaban una conductor VIVA como
+        // "ajena" → 2ª app efímera zombi (bug real: 2 zombis criados en arranques a 1 min de distancia).
+        let j = null;
+        for (let i = 0; i < 2 && !j?.ok; i++) j = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null);
         if (j?.ok) {
           // app única ya viva → REGISTRAR el proyecto pedido y ENFOCARLO en la web (no un ✅ mudo que ignora B, #5).
           const nm = root.split(/[\\/]/).pop();
@@ -275,6 +278,10 @@ switch (cmd) {
         }
       }
       const why = isAddr ? 'el puerto 4750 lo ocupa algo AJENO a conductor' : `no pude usar el puerto 4750 (${e.message})`;
+      // fallback a puerto EFÍMERO solo con TTY (alguien que VEA la URL). Lanzado detached/stdio-ignore (el
+      // launcher), una app efímera es un ZOMBI que nadie conoce (la URL se imprime a la nada) → mejor salir
+      // con error claro; el launcher ya diagnostica el arranque fallido en .conductor/launcher.log.
+      if (!process.stdout.isTTY) { console.error(`✗ ${why} y no hay terminal que muestre una URL alternativa — NO levanto una app efímera invisible. Libera :4750 (o \`conductor stop\`) y reintenta.`); process.exit(1); }
       srv2 = await createAppServer(appOpts);
       console.log(`⚠ ${why} → sirviendo en un puerto efímero. Cierra lo que ocupe :4750 y reinicia para la app única.`);
     }
@@ -300,13 +307,19 @@ switch (cmd) {
     const file = join(home, 'byok.json');
     // vía COMÚN (login/save): cifra + persiste (0600) + siembra la cache de NOMBRES de modelo (jamás la key).
     const storeByok = async (baseUrl, apiKey, type, model) => {
+      // VALIDAR la URL antes de guardar: un usuario inexperto que teclea mal (p.ej. "litellm.org" sin http, o basura)
+      // recibía un "✓ guardadas" ENGAÑOSO + config rota → qwen fallaba en silencio después. Ahora falla claro y no guarda.
+      let urlOk = false; try { const u = new URL(baseUrl); urlOk = u.protocol === 'http:' || u.protocol === 'https:'; } catch {}
+      if (!urlOk) { console.error(`✗ URL no válida: "${baseUrl}". Debe ser http(s)://…/v1 (p.ej. https://litellm.tu-org/v1). No se guardó nada.`); process.exit(2); }
       mkdirSync(home, { recursive: true });
       const enc = encryptSecret(apiKey);
-      writeFileSync(file, JSON.stringify(enc ? { type, baseUrl, apiKeyEnc: enc, model } : { type, baseUrl, apiKey, model }, null, 2), { mode: 0o600 });
+      // SEGURIDAD: si NO se puede cifrar (clave maestra ~/.conductor/.enckey corrupta o bloqueada por AV/permisos),
+      // FALLAR — jamás escribir la key en claro (antes se guardaba en claro con un aviso que un inexperto se saltaba
+      // → secreto en disco sin cifrar y "✓" engañoso). Nunca degradar la seguridad en silencio.
+      if (!enc || decryptSecret(enc) !== apiKey) { console.error(`✗ No pude cifrar la clave de forma segura (la clave maestra ~/.conductor/.enckey no se pudo leer/crear, o el cifrado no verifica el round-trip — ¿corrupta, o bloqueada por antivirus/permisos?). NO guardo la key en claro. Arréglalo (borra ~/.conductor/.enckey para regenerarla, o revisa permisos) y reintenta.`); process.exit(2); }
+      writeFileSync(file, JSON.stringify({ type, baseUrl, apiKeyEnc: enc, model }, null, 2), { mode: 0o600 });
       if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // no legible por otros usuarios de la máquina
-      console.log(enc
-        ? `✓ credenciales BYOK guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`
-        : `⚠ credenciales guardadas en ${file} pero SIN cifrar: no pude persistir la clave maestra (revisa permisos de ~/.conductor). La KEY quedó en claro — corrígelo y re-guarda.`);
+      console.log(`✓ credenciales BYOK guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`);
       try {
         const base = String(baseUrl).replace(/\/+$/, '');
         const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
@@ -666,7 +679,12 @@ switch (cmd) {
     // ARRANQUE PER-REPO (Opción A): fija el FOCO en el repo desde el que lanzaste `conductor` (server-side) → el
     // panel lo sigue en su poll aunque la pestaña ya estuviera abierta en OTRO repo. En arranque fresco el
     // `serve rootArg` ya enfoca ahí; este POST cubre el caso "app YA viva en otro repo".
-    try { await fetch(url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: rootArg }), signal: AbortSignal.timeout(3000) }); } catch {}
+    try {
+      const fr = await fetch(url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: rootArg }), signal: AbortSignal.timeout(3000) });
+      // usuario inexperto: `conductor` en un dir que NO es proyecto (sin openspec/ ni .git) → el foco se rechaza;
+      // avisamos en vez de abrir EN SILENCIO sobre OTRO repo (el foco anterior) y dejarlo confuso.
+      if (!fr.ok) console.log(`ℹ️ "${rootArg}" no parece un proyecto conductor (falta openspec/ o .git). Abro la app tal cual; para trabajar aquí inicialízalo con /sdd-init, o ve a un repo válido y ejecuta \`conductor\` ahí.`);
+    } catch {}
     if (process.env.CONDUCTOR_NO_OPEN !== '1') {
       try {
         const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;

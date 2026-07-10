@@ -339,6 +339,15 @@ export function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1
   let pending = null, resolver = null;
   const stopSignal = { requested: false };
   const server = createServer((req, res) => {
+    // ENDURECIMIENTO (vía legacy `drive --serve`, NO la app :4750): mismo guard que createAppServer — Host EXACTO
+    // local (anti-CSRF/DNS-rebinding, hostname vía new URL no startsWith) + content-type JSON en POST + tope de
+    // body 1 MB (anti-DoS por memoria). Antes estos POST acumulaban body sin tope y aceptaban Host ajeno.
+    let rsHost = ''; try { rsHost = new URL('http://' + String(req.headers.host || '')).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch {}
+    if (!(rsHost === '127.0.0.1' || rsHost === 'localhost' || rsHost === '::1')) { res.writeHead(403, { 'content-type': 'application/json' }); return res.end('{"ok":false,"error":"host"}'); }
+    if (req.method === 'POST') {
+      if (!String(req.headers['content-type'] || '').includes('application/json')) { res.writeHead(403, { 'content-type': 'application/json' }); return res.end('{"ok":false,"error":"content-type application/json requerido"}'); }
+      let rsSz = 0; req.on('data', (c) => { rsSz += c.length; if (rsSz > 1048576) { try { req.destroy(); } catch {} } });
+    }
     if (req.method === 'POST' && req.url?.startsWith('/api/continue')) {
       let body = '';
       req.on('data', (c) => { body += c; });
@@ -461,7 +470,7 @@ function defaultSpawnRun({ engine, root, name, request, complexity, domain, pres
 
 
 export function createProjectServer({ root, engine, spawnRun = defaultSpawnRun, port = 0, host = '127.0.0.1' }) {
-  const readBody = (req) => new Promise((r) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
+  const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r({}); } }); req.on('end', () => { if (over) return; try { r(JSON.parse(b || '{}')); } catch { r({}); } }); }); // tope 1 MB (anti-DoS) — vía legacy/test
   const server = createServer(async (req, res) => {
     const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
     if (req.url?.startsWith('/api/changes')) {

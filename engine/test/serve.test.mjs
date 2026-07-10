@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
 
 process.env.CONDUCTOR_HOME = join(dirname(fileURLToPath(import.meta.url)), '.tmp-home');
+rmSync(process.env.CONDUCTOR_HOME, { recursive: true, force: true }); // registro de test LIMPIO por run → sin flakes por acumulación entre runs (aislamiento; cazado: v4-P2 fallaba con .tmp-home poblado)
 const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-serve');
 rmSync(TMP, { recursive: true, force: true }); mkdirSync(TMP, { recursive: true });
 const w = (rel, c) => { const p = join(TMP, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, c); };
@@ -43,7 +45,7 @@ await test('serve: aprobación human-in-the-loop — waitApproval se resuelve co
   const wait = srv.waitApproval({ before: 'apply' }).then(() => { approved = true; });
   const st = await (await fetch(srv.url + 'api/state')).json();
   eq(st.pending, { before: 'apply' }, 'el estado expone la pausa pendiente');
-  const res = await fetch(srv.url + 'api/continue', { method: 'POST' });
+  const res = await fetch(srv.url + 'api/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   eq((await res.json()).ok, true);
   await wait;
   eq(approved, true, 'el botón de la web desbloquea el driver');
@@ -56,7 +58,7 @@ await test('serve: STOP — POST /api/stop activa la señal y desbloquea una pau
   const srv = await createRunServer({ changeDir: TMP });
   eq(srv.stopSignal.requested, false);
   const wait = srv.waitApproval({ before: 'apply' });
-  await fetch(srv.url + 'api/stop', { method: 'POST' });
+  await fetch(srv.url + 'api/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   eq(srv.stopSignal.requested, true, 'señal activada');
   eq(await wait, { stop: true }, 'la pausa se resuelve con stop:true (el driver aborta)');
   const st = await (await fetch(srv.url + 'api/state')).json();
@@ -90,6 +92,33 @@ await test('serve: el server responde la página y /api/state por HTTP', async (
   const st = await (await fetch(srv.url + 'api/state')).json();
   eq(st.verdict, 'GREEN', 'estado servido por la API');
   await srv.close();
+});
+
+await test('serve(hardening): createRunServer (vía legacy) rechaza Host ajeno (anti-CSRF/rebinding) y content-type no-JSON', async () => {
+  const srv = await createRunServer({ changeDir: TMP });
+  const port = Number(new URL(srv.url).port);
+  // undici fetch no deja fijar el header Host → usamos http.request crudo para probar el guard de Host
+  const rawStop = (host, ct) => new Promise((res) => {
+    const body = '{}';
+    const r = httpRequest({ host: '127.0.0.1', port, path: '/api/stop', method: 'POST', headers: { host, 'content-type': ct, 'content-length': Buffer.byteLength(body) } }, (rr) => { rr.resume(); res(rr.statusCode); });
+    r.on('error', () => res(0)); r.end(body);
+  });
+  eq(await rawStop('evil.attacker.com', 'application/json'), 403, 'Host ajeno (DNS-rebinding) → 403, no flipea stop');
+  eq(await rawStop('127.0.0.1:' + port, 'text/plain'), 403, 'content-type no-JSON en POST → 403');
+  eq(await rawStop('127.0.0.1:' + port, 'application/json'), 200, 'Host local + JSON → pasa (200)');
+  await srv.close();
+});
+
+await test('runner(complexity-guard): loadOrNew degrada complexity inválida/proto-key a medium (no crashea PHASES[x].map)', async () => {
+  const { loadOrNew } = await import('../lib/pipeline/runner.mjs');
+  const runsDir = join(dirname(fileURLToPath(import.meta.url)), '.tmp-runner-guard');
+  rmSync(runsDir, { recursive: true, force: true });
+  for (const bad of ['bogus', '__proto__', 'toString', 'constructor']) {
+    const s = loadOrNew(runsDir, join(runsDir, 'ch-' + bad.replace(/[^a-z]/g, 'x')), bad);
+    assert(Array.isArray(s.phases) && s.phases.length >= 3, `complexity "${bad}" → fases válidas (medium), sin crash`);
+    eq(s.complexity, 'medium', `complexity "${bad}" degradada a medium`);
+  }
+  rmSync(runsDir, { recursive: true, force: true });
 });
 
 await test('serve: PANEL de proyecto — lista runs, lanza y reanuda por HTTP (spawner inyectado)', async () => {
@@ -324,6 +353,45 @@ await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-
   assert(!j.apiKey, 'no queda el campo apiKey en claro');
   assert(!JSON.stringify(j).includes(KEY), 'la key NO aparece en claro en byok.json');
   assert(!String(out).includes(KEY), 'la key NO aparece en el output del comando (el LLM no la ve)');
+  // URL inválida (usuario inexperto que teclea mal): debe FALLAR y NO guardar nada (no un "✓ guardadas" engañoso)
+  const home2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-badurl');
+  rmSync(home2, { recursive: true, force: true });
+  let rejected = false;
+  try { execFileSync(process.execPath, [bin, 'byok', 'login'], { input: 'not-a-url\nsk-x\n', env: { ...process.env, CONDUCTOR_HOME: home2 }, stdio: 'pipe', windowsHide: true }); } catch { rejected = true; }
+  assert(rejected, 'byok login rechaza una URL inválida (exit≠0)');
+  assert(!existsSync(join(home2, 'byok.json')), 'no guarda config con URL inválida (nada de "✓ guardadas" engañoso)');
+  rmSync(home2, { recursive: true, force: true });
+  // SEGURIDAD: con la clave maestra corrupta, NO guardar la key EN CLARO → debe FALLAR (nunca degradar en silencio)
+  const home3 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-corrupt');
+  rmSync(home3, { recursive: true, force: true }); mkdirSync(home3, { recursive: true });
+  writeFileSync(join(home3, '.enckey'), 'xxxxx'); // .enckey corrupto (no 32 bytes) → encryptSecret devuelve null
+  let failedCorrupt = false;
+  try { execFileSync(process.execPath, [bin, 'byok', 'login'], { input: 'http://127.0.0.1:1/v1\nsk-secret\n', env: { ...process.env, CONDUCTOR_HOME: home3 }, stdio: 'pipe' }); } catch { failedCorrupt = true; }
+  assert(failedCorrupt, 'byok login FALLA si no puede cifrar (clave maestra corrupta)');
+  assert(!existsSync(join(home3, 'byok.json')), 'con cifrado imposible NO guarda la key (ni en claro) — nunca un secreto en disco sin cifrar');
+  rmSync(home3, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+});
+
+await test('serve(byok-concurrency): N `byok login` concurrentes no corrompen la clave maestra (carrera .enckey) — todos OK y la key descifra', async () => {
+  const { spawn } = await import('node:child_process');
+  const { decryptSecret } = await import('../lib/provenance/secret.mjs');
+  const home = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-conc');
+  rmSync(home, { recursive: true, force: true });
+  const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'conductor.mjs');
+  const KEY = 'sk-CONC-TEST-key';
+  const N = 6;
+  const codes = await Promise.all(Array.from({ length: N }, () => new Promise((res) => {
+    const p = spawn(process.execPath, [bin, 'byok', 'login'], { env: { ...process.env, CONDUCTOR_HOME: home }, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    p.stdin.end(`http://127.0.0.1:1/v1\n${KEY}\n`);
+    p.on('close', (c) => res(c));
+  })));
+  assert(codes.every((c) => c === 0), `los ${N} byok login concurrentes salen 0 (sin fallo por la carrera de .enckey): ${JSON.stringify(codes)}`);
+  eq(Buffer.from(readFileSync(join(home, '.enckey'), 'utf8').trim(), 'base64').length, 32, 'clave maestra única de 32 bytes (no corrupta por la carrera)');
+  const saved = process.env.CONDUCTOR_HOME; process.env.CONDUCTOR_HOME = home;
+  const dec = decryptSecret(JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8')).apiKeyEnc);
+  process.env.CONDUCTOR_HOME = saved;
+  eq(dec, KEY, 'la key guardada descifra bien tras la carrera concurrente');
   rmSync(home, { recursive: true, force: true });
 });
 

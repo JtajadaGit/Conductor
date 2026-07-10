@@ -1,6 +1,6 @@
 // Router SPA pushState propio (cero dependencia de routing). Deriva la pantalla y el apiBase desde la
 // ruta — el motor sirve el MISMO index.html para todas (no hay truco __API__). Intercepta <a> internos.
-export type RouteName = 'panel' | 'run' | 'demo' | 'help' | 'session' | 'flow';
+export type RouteName = 'panel' | 'run' | 'demo' | 'help' | 'session' | 'flow' | 'ahorro';
 
 export interface Route {
   name: RouteName;
@@ -19,6 +19,7 @@ export function parseRoute(pathname: string, search = ''): Route {
   try { p = decodeURIComponent(raw); } catch { p = raw; }
   if (p === '/help') return { name: 'help', apiBase: '/api/', query };
   if (p === '/flow') return { name: 'flow', apiBase: '/api/', query };
+  if (p === '/ahorro') return { name: 'ahorro', apiBase: '/api/', query };
   if (p === '/demo') return { name: 'demo', apiBase: '/api/demo/', query };
   if (p.startsWith('/run/') && p.length > 5) {
     const rest = p.slice(5);

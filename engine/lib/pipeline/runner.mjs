@@ -14,6 +14,9 @@ const AGENT = { explore: 'planner', propose: 'planner', clarify: 'planner', spec
 export function runIdFor(changeDir) { return 'run-' + basename(resolve(changeDir)).replace(/[^a-z0-9]+/gi, '-'); }
 
 export function loadOrNew(runsDir, changeDir, complexity = 'medium') {
+  // complexity inválido/typo o clave de prototipo (toString/__proto__) → degrada a 'medium' (coherente con
+  // orchestrate/estimate). Sin esto, PHASES[complexity].map crasheaba con un TypeError críptico (camino legacy `run`).
+  if (!Object.prototype.hasOwnProperty.call(PHASES, complexity)) complexity = 'medium';
   if (!existsSync(runsDir)) mkdirSync(runsDir, { recursive: true });
   const runId = runIdFor(changeDir);
   const p = join(runsDir, `${runId}.json`);

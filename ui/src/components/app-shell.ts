@@ -79,6 +79,7 @@ export class ConductorApp extends CElement {
     else if (n === 'run' || n === 'demo') await import('../screens/run-screen');
     else if (n === 'help') await import('../screens/help-screen');
     else if (n === 'flow') await import('../screens/flow-screen');
+    else if (n === 'ahorro') await import('../screens/ahorro-screen');
     else if (n === 'session') await import('../screens/session-screen');
     this.ready = true;
   }
@@ -101,6 +102,7 @@ export class ConductorApp extends CElement {
     if (r.name === 'run' || r.name === 'demo') return html`<run-screen .apiBase=${r.apiBase} .change=${r.change ?? ''} .projId=${r.projId ?? ''} .phaseId=${r.query.get('phase') ?? ''}></run-screen>`;
     if (r.name === 'help') return html`<help-screen></help-screen>`;
     if (r.name === 'flow') return html`<flow-screen></flow-screen>`;
+    if (r.name === 'ahorro') return html`<ahorro-screen></ahorro-screen>`;
     if (r.name === 'session') return html`<session-screen .apiBase=${r.apiBase} .change=${r.change ?? ''} .projId=${r.projId ?? ''}></session-screen>`;
     return nothing;
   }
