@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
-import { start, next, resolvePhases, KNOWN_PHASES } from './orchestrate.mjs';
+import { start, next, resolvePhases, redoPlanning, KNOWN_PHASES } from './orchestrate.mjs';
 import { resolvePreset } from './presets.mjs';
 import { checkCoherence, parseReport } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
@@ -847,7 +847,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   };
   const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
-  let userNote = null, hotModel = null, fsNoted = false;
+  let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
   const approvals = []; // registro de aprobaciones humanas (provenance / AI Act)
   const decisions = []; // registro AUDITABLE de decisiones del revisor (nota, modelo en caliente, fix dirigido)
   while (!step.done) {
@@ -875,6 +875,25 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       finally { clearInterval(pauseHb); }
       if (pr === REVIEW_ABORT) { const why = `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`; writeTimeline('STOPPED', why); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: why, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
+      // CHAT-EN-PAUSA (#45 v1): {redo:'spec', note:'…'} → rehace esa fase de planificación (y las de planificación
+      // posteriores) con la instrucción del revisor, y VUELVE a pausar aquí con los artefactos regenerados. El
+      // driver sigue mandando (todo lo posterior re-ejecuta EN ORDEN; el gate no se toca). Cap anti-bucle: 5/run.
+      if (pr?.redo && typeof pr.redo === 'string') {
+        if (redoCount >= 5) { log('⚠ redo ignorado: máximo de 5 por run (protege tu presupuesto) — apruebo con la nota si la hay'); }
+        else {
+          const r = redoPlanning({ changeDir, phase: pr.redo });
+          if (r.ok) {
+            redoCount++;
+            if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
+            decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
+            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim() });
+            log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
+            step = r;
+            continue;
+          }
+          log(`⚠ redo rechazado (${r.error}) — continúo con la aprobación normal`);
+        }
+      }
       // FIX DIRIGIDO: el humano elige qué hallazgos van al prompt del fix (default: todos)
       if (phase === 'fix' && Array.isArray(pr?.selected) && step.findings) {
         const sel = pr.selected.map((i) => step.findings[i]).filter(Boolean);

@@ -252,8 +252,17 @@ switch (cmd) {
       // vivo ajeno (no-hermético) y contamine su registro real — bug real detectado al chocar con un serve vivo.
       srv2 = await createAppServer({ ...appOpts, port: Number(portOverride) || 0 });
     } else
-    try { srv2 = await createAppServer({ ...appOpts, port: 4750 }); }
-    catch (e) {
+    {
+      // :4750 con REINTENTO breve (anti TIME_WAIT tras un relevo, Windows sobre todo): un único intento daba
+      // EADDRINUSE espurio mientras el socket del proceso anterior se soltaba → acabábamos en el fallback (o,
+      // lanzado detached, en exit 1) con un "♻ reiniciada" FALSO y la app muerta. 3 intentos × 700ms cubren la ventana.
+      let bindErr = null;
+      for (let i = 0; i < 3 && !srv2; i++) {
+        try { srv2 = await createAppServer({ ...appOpts, port: 4750 }); }
+        catch (e2) { bindErr = e2; if (!/EADDRINUSE/i.test(e2?.code || e2?.message || '')) break; await new Promise((r2) => setTimeout(r2, 700)); }
+      }
+      if (!srv2) {
+      const e = bindErr;
       const isAddr = /EADDRINUSE/i.test(e?.code || e?.message || '');
       if (isAddr) {
         // anti "varios encendidos": si :4750 lo ocupa OTRA conductor VIVA, NO levanto una 2ª app (efímera y
@@ -284,6 +293,7 @@ switch (cmd) {
       if (!process.stdout.isTTY) { console.error(`✗ ${why} y no hay terminal que muestre una URL alternativa — NO levanto una app efímera invisible. Libera :4750 (o \`conductor stop\`) y reintenta.`); process.exit(1); }
       srv2 = await createAppServer(appOpts);
       console.log(`⚠ ${why} → sirviendo en un puerto efímero. Cierra lo que ocupe :4750 y reinicia para la app única.`);
+      }
     }
     console.log(`🌐 conductor · panel del proyecto: ${srv2.url}\n   (Ctrl-C para cerrar)`);
     if (process.env.CONDUCTOR_SERVE_OPEN !== '0') {
@@ -516,6 +526,13 @@ switch (cmd) {
     console.log(`  runner sdk empaquetado: ${sdkB ? 'disponible (actívalo con "runner":"sdk")' : 'no incluido (spawn)'}`);
     const appUp = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r3) => r3.json()).catch(() => null);
     console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con /sdd-run o `conductor serve`)'}`);
+    // PROXY CORPORATIVO: el fetch de Node IGNORA HTTP(S)_PROXY por defecto → si el LiteLLM va detrás del proxy,
+    // el catálogo/BYOK fallan en silencio donde el navegador sí llega. Aviso accionable (Node ≥24: NODE_USE_ENV_PROXY).
+    const proxyEnv = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+    if (proxyEnv) {
+      const envProxyOn = process.env.NODE_USE_ENV_PROXY === '1';
+      console.log(`  proxy corporativo: detectado (${proxyEnv})${envProxyOn ? ' · NODE_USE_ENV_PROXY=1 activo (fetch lo usa)' : ' · ⚠ el fetch de Node NO lo usa por defecto — si tu LiteLLM está detrás del proxy, exporta NODE_USE_ENV_PROXY=1 (Node ≥24) y añade localhost,127.0.0.1 a NO_PROXY (la app local no debe pasar por el proxy)'}`);
+    } else console.log('  proxy corporativo: no detectado (fetch directo)');
     // .copilotignore (token-first): exclusiones de contexto del proyecto. Sin él cada request del modelo
     // arrastra node_modules/lockfiles/binarios. `conductor init` lo genera; aquí avisamos si falta o está vacío.
     try {

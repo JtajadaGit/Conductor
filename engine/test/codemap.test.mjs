@@ -74,4 +74,16 @@ await test('codemap: maxFiles acota el barrido (repos gigantes no cuelgan el arr
   eq(Object.keys(map.files).length, 2, 'respeta el tope');
 });
 
+await test('codemap: dirs pesados de otros stacks (target/var/generated/__pycache__) fuera; maxDirs corta monorepos sin JS', () => {
+  w('target/classes/gen.ts', 'export const x = 1;\n');      // Java/Maven build
+  w('var/cache/x.ts', 'export const y = 1;\n');              // Magento cache
+  w('generated/code/g.ts', 'export const z = 1;\n');         // Magento codegen
+  w('__pycache__/p.ts', 'export const w = 1;\n');            // Python
+  const map = buildCodeMap(TMP);
+  assert(!Object.keys(map.files).some((f) => /^(target|var|generated|__pycache__)\//.test(f)), 'ningún dir de build indexado: ' + Object.keys(map.files).join(','));
+  const capped = buildCodeMap(TMP, { maxDirs: 1 }); // solo la raíz → no desciende a src/
+  assert(!Object.keys(capped.files).some((f) => f.startsWith('src/')), 'maxDirs=1 no desciende a subdirs');
+  for (const d of ['target', 'var', 'generated', '__pycache__']) rmSync(join(TMP, d), { recursive: true, force: true });
+});
+
 rmSync(TMP, { recursive: true, force: true });

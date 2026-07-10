@@ -31,7 +31,7 @@ import { aggregateStats } from '../core/stats.mjs';
 import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
-import { renderDashboard } from './dashboard.mjs';
+import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, encryptSecret, isPortableBlob } from '../provenance/secret.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
@@ -1199,6 +1199,15 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           if (!reg || reg.exited) return json(409, { ok: false });
           reg.stopRequested = true; reg.pending = null; try { reg.child.send({ t: 'stop' }); } catch {}
           return json(200, { ok: true });
+        }
+        if (action === 'receipt' && req.method === 'GET') {
+          // RECIBO DE PR (dev-first): markdown listo para pegar en la descripción del PR. Determinista, del disco.
+          const tlR = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) return json(404, { ok: false, error: 'sin timeline todavía — el recibo sale de un run ejecutado' });
+          let domainR = 'core'; try { domainR = JSON.parse(readFileSync(join(changeDir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+          const mdR = renderReceipt({ name, timeline: tlR, spec: safeRead(changeDir, `specs/${domainR}/spec.md`, 60000) || '', proposal: safeRead(changeDir, 'proposal.md', 30000) || '', verify: safeRead(changeDir, 'verify-report.md', 30000) || '' });
+          if (!mdR) return json(404, { ok: false, error: 'sin datos suficientes para el recibo' });
+          return json(200, { ok: true, markdown: mdR });
         }
         if (action === 'artifact' && req.method === 'POST') {
           const bodyArt = await readBody(req);

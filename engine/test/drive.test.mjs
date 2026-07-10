@@ -406,6 +406,46 @@ await test('drive(v3-P1): nota del humano y MODELO EN CALIENTE — solo para la 
   assert(Array.isArray(tl.approvals) && tl.approvals.some((a) => a.phase === 'apply' && a.via === 'human-web'), 'aprobaciones humanas registradas (AI Act)');
 });
 
+await test('drive(#45): CHAT-EN-PAUSA — redo:"spec" rehace la spec con la instrucción y VUELVE a pausar antes de apply', async () => {
+  fresh();
+  const changeDir = join(TMP, 'openspec', 'changes', 'redo1');
+  const seen = [];
+  let pauses = 0;
+  const r = await drive({
+    changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP,
+    runAgent: (a) => { seen.push({ phase: a.phase, prompt: a.prompt }); return goodAgent(a); },
+    pauseAt: ['apply'],
+    onPause: (i) => {
+      if (i.before !== 'apply') return Promise.resolve({});
+      pauses++;
+      return Promise.resolve(pauses === 1 ? { redo: 'spec', note: 'los contadores empiezan en 10' } : {});
+    },
+  });
+  eq(r.verdict, 'GREEN', 'run termina GREEN tras el redo');
+  eq(pauses, 2, 'volvió a pausar antes de apply tras rehacer (bucle de chat)');
+  const specs = seen.filter((s2) => s2.phase === 'spec');
+  eq(specs.length, 2, 'la fase spec se ejecutó DOS veces (redo real, no fast-forward)');
+  assert(specs[1].prompt.includes('USER NOTE') && specs[1].prompt.includes('empiezan en 10'), 'la instrucción del revisor viaja en el prompt del redo');
+  eq(seen.filter((s2) => s2.phase === 'apply').length, 1, 'apply solo UNA vez (el redo de planificación no re-paga código)');
+  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  assert(Array.isArray(tl.approvals) && tl.approvals.some((a) => a.redo === 'spec'), 'el redo queda auditado en approvals (AI Act)');
+});
+
+await test('drive(#45): redo INVÁLIDO (fase de código) no rehace nada — aprueba con la nota y sigue', async () => {
+  fresh();
+  const changeDir = join(TMP, 'openspec', 'changes', 'redo2');
+  const seen = [];
+  const r = await drive({
+    changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP,
+    runAgent: (a) => { seen.push(a.phase); return goodAgent(a); },
+    pauseAt: ['apply'],
+    onPause: (i) => Promise.resolve(i.before === 'apply' ? { redo: 'apply', note: 'n' } : {}),
+  });
+  eq(r.verdict, 'GREEN');
+  eq(seen.filter((p) => p === 'spec').length, 1, 'nada se rehizo (apply no es rehacible)');
+  eq(seen.filter((p) => p === 'apply').length, 1, 'apply una sola vez');
+});
+
 await test('drive(v3-P1): CHECKPOINT por fase + rollbackTo — deshacer el apply sin tocar la rama del usuario', async () => {
   fresh();
   const { execSync } = await import('node:child_process');

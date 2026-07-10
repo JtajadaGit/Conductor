@@ -3,7 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { RunPoller } from '../api/poller';
-import type { RunState, Phase, CurrentPhase, PendingDecision, DecisionFinding, FileChange, ModelsResponse, RunFiles } from '../api/types';
+import type { RunState, Phase, CurrentPhase, PendingDecision, DecisionFinding, FileChange, ModelsResponse, RunFiles, ContinueBody } from '../api/types';
 import { fmt, secs, verdictClass } from '../lib/format';
 import { loader } from '../lib/loader';
 import { phaseIcon, modelIcon } from '../lib/icons';
@@ -28,6 +28,10 @@ export class RunScreen extends CElement {
   @state() private busy = ''; // acción POST en vuelo ('resume'|'approve'|'rollback'|'archive') → botón deshabilitado con texto de progreso
   @state() private actionErr = ''; // error de la última acción — inline, nunca en silencio
   @state() private archivedMsg = ''; // resultado del archivado (promoted/needsManualMerge)
+  @state() private redoTarget = ''; // fase de planificación elegida en «Rehacer fase…» (chat-en-pausa)
+  @state() private redoErr = ''; // validación inline del rehacer (nota vacía / fase sin elegir) — nunca en silencio
+  @state() private copiedReceipt = false; // feedback «Copiado ✓» (2 s) del botón de descripción de PR
+  private receiptTimer: ReturnType<typeof setTimeout> | undefined; // reset del «Copiado ✓»
   private filesSig = ''; // re-fetch del changeset solo cuando cambia algo que lo afecta (no en cada poll)
   private pendingKey = ''; // identidad de la pausa actual (before|nFindings) → limpia la selección al cambiar de decisión
   private api = new ConductorApi('/api/');
@@ -37,7 +41,7 @@ export class RunScreen extends CElement {
   override updated(_changed: PropertyValues): void {
     if (this.apiBase && this.apiBase !== this.activeBase) { this.activeBase = this.apiBase; this.restart(); }
   }
-  override disconnectedCallback(): void { super.disconnectedCallback(); this.poller?.stop(); document.title = 'conductor'; }
+  override disconnectedCallback(): void { super.disconnectedCallback(); this.poller?.stop(); clearTimeout(this.receiptTimer); document.title = 'conductor'; }
 
   private restart(): void {
     this.poller?.stop();
@@ -45,14 +49,14 @@ export class RunScreen extends CElement {
     // limpia el estado de la DECISIÓN al reiniciar/reanudar: sin esto, la selección de hallazgos (por índice),
     // la nota y el modelo-en-caliente de una pausa anterior se filtraban al `continue` de la SIGUIENTE decisión
     // (targeteando hallazgos equivocados). Solo approve() los limpiaba, y solo tras éxito.
-    this.selected = new Set(); this.note = ''; this.hotModel = '';
+    this.selected = new Set(); this.note = ''; this.hotModel = ''; this.redoTarget = ''; this.redoErr = '';
     this.api = new ConductorApi(this.apiBase);
     this.poller = new RunPoller(this.apiBase, (s) => {
       if (s.done) this.stopping = false; // el run terminó (STOPPED/GREEN/…): reactiva el botón para un futuro resume
       // si llega una decisión DISTINTA a la anterior (nueva pausa tras un fix, otra fase), limpia selección/nota/
       // modelo de la previa → no se envían índices de hallazgos obsoletos contra los de OTRA decisión.
       const pk = s.pending ? `${s.pending.before}|${(s.pending.findings || []).length}` : '';
-      if (pk !== this.pendingKey) { this.pendingKey = pk; if (pk) { this.selected = new Set(); this.note = ''; this.hotModel = ''; } }
+      if (pk !== this.pendingKey) { this.pendingKey = pk; if (pk) { this.selected = new Set(); this.note = ''; this.hotModel = ''; this.redoTarget = ''; this.redoErr = ''; } }
       this.s = s; void this.maybeFetchFiles(s);
       // señal de atención en la pestaña: una pausa esperando decisión no debe ser invisible con la pestaña de fondo
       document.title = s.pending ? '⏸ tu decisión — conductor' : 'conductor';
@@ -77,8 +81,8 @@ export class RunScreen extends CElement {
     const cop = m?.copilot ?? [];
     const byok = m?.byok ?? [];
     const creds = !!m?.byokCreds;
-    return html`<label class="fl">Cambiar modelo<select .value=${this.hotModel} title=${m ? `Copilot: ${m.copilotSource} · qwen: ${m.byokSource}` : ''} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
-      <option value="">Mantener el modelo de esta fase</option>
+    return html`<label class="fl">Modelo de esta fase<select .value=${this.hotModel} title=${m ? `Copilot: ${m.copilotSource} · qwen: ${m.byokSource}` : ''} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
+      <option value="">Mantener el actual</option>
       ${cop.length ? html`<optgroup label="Copilot${m?.copilotPending ? ' · vistos en tus runs' : ''}">${cop.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>` : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
       ${creds && byok.length ? html`<optgroup label="qwen · LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : nothing}
     </select></label>`;
@@ -92,6 +96,67 @@ export class RunScreen extends CElement {
       this.note = ''; this.hotModel = ''; this.selected = new Set();
       if (this.s) this.s = { ...this.s, pending: null }; // óptimista: la card desaparece ya (el poll confirma en ≤2s)
     } finally { this.busy = ''; }
+  }
+  // CHAT-EN-PAUSA: fases de PLANIFICACIÓN ya completadas de este run, en su orden canónico — candidatas a rehacer.
+  private redoOptions(s: RunState): string[] {
+    const PLANNING = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks'];
+    const done = new Set(s.phases.filter((p) => p.ok).map((p) => p.phase));
+    return PLANNING.filter((ph) => done.has(ph));
+  }
+  // Mismo POST de continue que «Aprobar», pero con {redo, note}: el motor rehace esa fase (y las de planificación
+  // posteriores) con la instrucción del textarea y vuelve a pausar aquí con los artefactos actualizados.
+  // `redo` aún no está en ContinueBody (contrato en types.ts compartido con otro cambio) → cast local documentado.
+  private async redoPhase(): Promise<void> {
+    if (!this.redoTarget) { this.redoErr = 'elige la fase que quieres rehacer'; return; }
+    if (!this.note.trim()) { this.redoErr = 'escribe la instrucción para rehacer'; return; }
+    this.busy = 'redo'; this.actionErr = ''; this.redoErr = '';
+    try {
+      const r = await this.api.continue({ redo: this.redoTarget, note: this.note } as ContinueBody & { redo: string });
+      if (!r.ok) { this.actionErr = r.error || 'no se pudo rehacer la fase — reintenta o detén el run'; return; }
+      this.note = ''; this.hotModel = ''; this.selected = new Set(); this.redoTarget = '';
+      if (this.s) this.s = { ...this.s, pending: null }; // óptimista: el poll trae el nuevo estado en ≤2s
+    } finally { this.busy = ''; }
+  }
+  // RECIBO DE PR (solo con GREEN): GET receipt → {ok, markdown} → portapapeles. El markdown es la descripción
+  // lista para pegar en el PR; el feedback vive en el propio botón («Copiado ✓» 2 s) y el error, inline.
+  private async copyReceipt(): Promise<void> {
+    this.busy = 'receipt'; this.actionErr = '';
+    try {
+      const r = await fetch(this.apiBase + 'receipt');
+      const j = (await r.json().catch(() => null)) as { ok?: boolean; markdown?: string; error?: string } | null;
+      if (!r.ok || !j?.ok || typeof j.markdown !== 'string') {
+        this.actionErr = j?.error || `no se pudo obtener la descripción de PR (HTTP ${r.status})`;
+        return;
+      }
+      await this.copyText(j.markdown);
+      this.copiedReceipt = true;
+      clearTimeout(this.receiptTimer);
+      this.receiptTimer = setTimeout(() => { this.copiedReceipt = false; }, 2000);
+    } catch (e) {
+      this.actionErr = 'no se pudo copiar la descripción de PR — ' + (e as Error).message;
+    } finally { this.busy = ''; }
+  }
+  // portapapeles con degradación: Clipboard API y, si falla (permisos/contexto), textarea temporal + execCommand.
+  private async copyText(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        if (!document.execCommand('copy')) throw new Error('el navegador rechazó la copia');
+      } finally { ta.remove(); }
+    }
+  }
+  // la línea «árbol a salvo» enlaza la UI de restauración que YA existe: los botones «↩ Deshacer» de apply/fix
+  // viven en las tarjetas del pipeline (light DOM → this.querySelector alcanza el rail).
+  private scrollToPipeline(): void {
+    this.querySelector('.rail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   // Reanudar reinicia el POLLER: éste se auto-detiene en done, así que sin restart() la pantalla quedaba
   // congelada mostrando el estado terminado aunque el run ya corría de nuevo en el servidor.
@@ -171,10 +236,12 @@ export class RunScreen extends CElement {
         <a class="btn sm sec" href=${this.sessionHref()}>📃 Ver sesión</a>
         ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
         ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : '⬆ Archivar'}</button>` : nothing}
+        ${s.done && verdictClass(s.verdict) === 'GREEN' ? html`<button class="btn sm receipt" ?disabled=${this.busy === 'receipt'} aria-live="polite" @click=${() => void this.copyReceipt()}>${this.copiedReceipt ? 'Copiado ✓' : this.busy === 'receipt' ? 'Copiando…' : '📋 Copiar descripción de PR'}</button>` : nothing}
         ${s.hasDashboard ? html`<a class="btn sm dash" href=${this.dashboardHref()} target="_blank">📊 Informe</a>` : nothing}
         <a class="btn sm aiact" href=${this.apiBase + 'aiact'} target="_blank">🛡 AI Act</a>
         ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
       </div>
+      <p class="safeline" role="note">📍 Checkpoint automático antes de cada fase de código — puedes <button type="button" class="lnk" @click=${() => this.scrollToPipeline()}>restaurar tu árbol desde el detalle de fase</button> («↩ Deshacer» en apply/fix).</p>
       ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
       ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><svg class="why-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.3v4.4M8 11.0v.05" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span><b>Por qué:</b> ${s.reason}</span></div>` : nothing}
@@ -240,6 +307,9 @@ export class RunScreen extends CElement {
     const fnd: DecisionFinding[] = (pd.findings ?? []).map((f) => (typeof f === 'string' ? { message: f } : f));
     const nSel = this.selected.size; // corregir se basa en lo SELECCIONADO, no en si EXISTEN hallazgos
     const errSev = (s?: string) => s === 'error' || s === 'breaking'; // breaking = lo más grave → bucket rojo, nunca "aviso"
+    // rehacer-con-instrucción: solo si hay fases de planificación completadas Y la pausa no es del ciclo fix
+    // (en 'fix' el revisor corrige hallazgos, no replantea el plan; en micro no hay planificación → sin opciones).
+    const redoOpts = pd.before === 'fix' ? [] : this.redoOptions(s);
     return html`<section class="decision">
       <header class="decision-head">
         <span class="decision-led" aria-hidden="true"></span>
@@ -258,11 +328,24 @@ export class RunScreen extends CElement {
               ? html`<button type="button" class="lnk fnd-file" title="ver ${f.file}" @click=${() => this.viewArtifact(f.file as string)}>${f.file}</button>`
               : html`<code class="fnd-file">${f.file}</code>`) : nothing}
           </li>`)}</ul>` : nothing}
-        <div class="pend-controls">
-          <label class="fl" style="flex:1;min-width:14rem">Nota (opcional)<textarea class="pend-note" rows="2" .value=${this.note} @input=${(e: Event) => { this.note = (e.target as HTMLTextAreaElement).value; }} placeholder="Instrucción para esta fase (opcional)"></textarea></label>
+        <div class="decision-form">
+          <label class="fl df-note"><span>Instrucción para esta fase <span class="opt">· opcional</span></span>
+            <textarea class="pend-note" rows="2" .value=${this.note} @input=${(e: Event) => { this.note = (e.target as HTMLTextAreaElement).value; }} placeholder="p. ej. «usa el servicio de auth existente, no crees otro»" aria-describedby=${redoOpts.length ? 'df-help' : nothing as unknown as string}></textarea>
+            ${redoOpts.length ? html`<span class="df-help" id="df-help">Con <b>Aprobar</b> viaja a <b>${pd.before}</b> · con <b>Rehacer</b> viaja a la fase de planificación que elijas (las posteriores se regeneran y el run vuelve a pausar aquí).</span>` : nothing}
+          </label>
           ${this.hotModelSelect()}
         </div>
-        <button class="approve" ?disabled=${this.busy === 'approve'} @click=${() => void this.approve(nSel > 0)}>${this.busy === 'approve' ? 'Enviando…' : (nSel > 0 ? `Corregir ${nSel} hallazgo${nSel === 1 ? '' : 's'}` : 'Aprobar y continuar')}</button>
+        <div class="decision-actions">
+          <button class="approve" ?disabled=${this.busy === 'approve'} @click=${() => void this.approve(nSel > 0)}>${this.busy === 'approve' ? 'Enviando…' : (nSel > 0 ? `Corregir ${nSel} hallazgo${nSel === 1 ? '' : 's'}` : 'Aprobar y continuar')}</button>
+          ${redoOpts.length ? html`<div class="redo-inline">
+            <select aria-label="fase de planificación a rehacer" .value=${this.redoTarget} @change=${(e: Event) => { this.redoTarget = (e.target as HTMLSelectElement).value; this.redoErr = ''; }}>
+              <option value="">Rehacer fase…</option>
+              ${redoOpts.map((ph) => html`<option value=${ph}>${phaseIcon(ph)} ${ph}</option>`)}
+            </select>
+            <button type="button" class="redo-btn" ?disabled=${this.busy !== ''} @click=${() => void this.redoPhase()}>${this.busy === 'redo' ? 'Rehaciendo…' : '↺ Rehacer'}</button>
+          </div>` : nothing}
+        </div>
+        ${this.redoErr ? html`<span class="errline redo-err" role="alert">${this.redoErr}</span>` : nothing}
       </div>
     </section>`;
   }

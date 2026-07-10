@@ -2593,7 +2593,10 @@ __M['codemap'] = (function(){
 // lenguajes cubiertos hoy: JS/TS (el grueso Angular/React). Añadir lenguaje = añadir una entrada, no un motor nuevo.
 const SRC_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']);
 const RESOLVE_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']; // orden de tanteo al resolver un import sin extensión
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '.next', '.nuxt', 'vendor', '.cache', 'tmp', '.tmp']);
+// incluye los dirs pesados de los stacks REALES del despliegue (Java/Maven 'target', Magento 'var'/'generated',
+// Python '__pycache__'): en un repo SIN fuentes JS el tope de ficheros nunca corta y el walk se comería el
+// monorepo entero en cada arranque de run. Los dot-dirs (.gradle, .cache…) ya se saltan por startsWith('.').
+const SKIP_DIR = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '.next', '.nuxt', 'vendor', 'tmp', 'target', '__pycache__', 'generated', 'var']);
 const MAX_BYTES = 512 * 1024; // no parsear ficheros gigantes (bundles/minificados) — coste sin señal
 
 // ruta relativa a root con separador '/' SIEMPRE (determinismo cross-OS: Windows no debe producir otro índice)
@@ -2643,10 +2646,13 @@ function resolveSpec(root, fromFileAbs, spec, fileSet) {
 }
 
 // recorre el árbol de fuentes (determinista: dirs y ficheros ordenados) saltando dirs pesados y ocultos.
-function walkSources(root, maxFiles) {
+// DOBLE tope: maxFiles (fuentes encontradas) Y maxDirs (dirs visitados) — sin el segundo, un monorepo
+// Java/PHP SIN fuentes JS (el tope de ficheros nunca corta) pagaba un walk del repo ENTERO en cada run.
+function walkSources(root, maxFiles, maxDirs = 8000) {
   const out = [];
+  let dirs = 0;
   const rec = (dir) => {
-    if (out.length >= maxFiles) return;
+    if (out.length >= maxFiles || ++dirs > maxDirs) return;
     let ents; try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const ent of ents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       if (out.length >= maxFiles) return;
@@ -2660,9 +2666,9 @@ function walkSources(root, maxFiles) {
 }
 
 // ÍNDICE completo: por fichero { exports, imports:[{spec,to}], defines } + inverso usedBy. Determinista.
-function buildCodeMap(projectRoot, { maxFiles = 4000 } = {}) {
+function buildCodeMap(projectRoot, { maxFiles = 4000, maxDirs = 8000 } = {}) {
   const root = resolve(projectRoot);
-  const absFiles = walkSources(root, maxFiles);
+  const absFiles = walkSources(root, maxFiles, maxDirs);
   const fileSet = new Set(absFiles.map((p) => relPath(root, p)));
   const files = {};
   for (const abs of absFiles) {
@@ -3502,6 +3508,29 @@ function start({ changeDir, request, complexity = 'medium', domain = 'core', pip
   return stepFor(changeDir, s);
 }
 
+// CHAT-EN-PAUSA (redo dirigido, #45 v1): rehace una fase de PLANIFICACIÓN ya completada — retrocede el estado
+// a esa fase y BORRA su artefacto y los de las fases de PLANIFICACIÓN posteriores (coherencia: si la spec cambia,
+// design/tasks se regeneran sobre la nueva). El driver re-ejecuta desde ahí (con la instrucción del revisor como
+// nota) y VOLVERÁ a pausar donde estaba. GOBIERNO intacto: jamás rehace apply/fix/test/verify por esta vía, jamás
+// salta fases (next() sigue exigiendo cada artefacto), y el driver registra la decisión (timeline + decisions).
+const REDOABLE = new Set(['explore', 'propose', 'clarify', 'spec', 'design', 'tasks']);
+function redoPlanning({ changeDir, phase }) {
+  if (!existsSync(statePath(changeDir))) return { ok: false, error: 'no hay run activo' };
+  let s; try { s = loadState(changeDir); } catch (e) { return { ok: false, error: `estado ilegible: ${e.message}` }; }
+  if (s.status !== 'running') return { ok: false, error: `estado "${s.status}": solo se rehace un run en curso` };
+  const target = String(phase || '').trim();
+  const ti = Array.isArray(s.phases) ? s.phases.indexOf(target) : -1;
+  if (!REDOABLE.has(target) || ti < 0 || ti >= s.idx) return { ok: false, error: `"${target}" no es una fase de planificación YA completada de este run` };
+  for (let i = ti; i < s.idx; i++) {
+    const p = s.phases[i];
+    if (!REDOABLE.has(p)) continue; // solo artefactos de planificación — el código (apply/fix) jamás se borra
+    try { rmSync(join(changeDir, artifactOf(p, s.domain)), { force: true }); } catch {}
+  }
+  s.idx = ti;
+  saveState(changeDir, s);
+  return { ok: true, ...stepFor(changeDir, s) };
+}
+
 // gate determinista usado en la fase verify. `strict` (del preset) endurece SIN relajar nunca: strict.id →
 // exige id estable en cada requisito; strict.trace → un hueco de cobertura (sin código/test) BLOQUEA.
 function runGate(dir, srcDir, strict = {}) {
@@ -3692,7 +3721,7 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
   return stepFor(changeDir, s);
 }
 
-return { phaseCondMet, resolvePhases, start, liveSpecIds, next, KNOWN_PHASES, stateFile };
+return { phaseCondMet, resolvePhases, start, redoPlanning, liveSpecIds, next, KNOWN_PHASES, stateFile };
 })();
 
 // ===== lib/sysops/confine.mjs =====
@@ -4074,6 +4103,38 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 // → HTML injection en el dashboard. Number()||0 garantiza que fmt SIEMPRE produce dígitos, nunca markup.
 const fmt = (n) => { const v = Number(n) || 0; return v >= 1000 ? (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(v); };
 
+// RECIBO DE PR (dev-first, determinista, 0 LLM): markdown listo para pegar en la descripción del PR — qué se
+// pidió, qué cambió, requisitos cubiertos, verificación y coste. El gobierno se vuelve beneficio personal del
+// dev (su PR se defiende solo). PURA (datos → markdown) para testearse sin FS; el caller lee los ficheros.
+function renderReceipt({ name = '', timeline = null, spec = '', proposal = '', verify = '' }) {
+  const tl = (timeline && Array.isArray(timeline.phases)) ? timeline.phases : [];
+  if (!tl.length) return null;
+  const md = (s) => String(s || '').replace(/\r/g, '');
+  const L = [`## ✔ ${name || 'cambio'} — verificado con conductor`];
+  if (timeline.request) L.push(`> ${md(timeline.request).replace(/\s+/g, ' ').slice(0, 300)}`);
+  const inT = tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.in) || 0), 0);
+  const outT = tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.out) || 0), 0);
+  const byok = tl.filter((p) => p.provider === 'byok').length;
+  const mins = Math.round(((Number(timeline.total_ms) || tl.reduce((s, p) => s + (Number(p.ms) || 0), 0)) / 60000) * 10) / 10;
+  L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ↓${fmt(inT)} ↑${fmt(outT)} tokens${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
+  const what = (md(proposal).split(/^##\s*What Changes\s*$/mi)[1] || '').split(/^##\s/m)[0].trim();
+  if (what) L.push('', '### Qué cambia', ...what.split('\n').slice(0, 10));
+  const reqs = [...md(spec).matchAll(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->\s*\n###\s*Requirement:\s*([^\n]+)/gi)].slice(0, 12);
+  if (reqs.length) { L.push('', '### Requisitos cubiertos'); for (const [, id, nm] of reqs) L.push(`- \`${id}\` ${nm.trim()}`); }
+  const files = []; const seen = new Set();
+  for (const p of tl) for (const f of (Array.isArray(p.files) ? p.files : [])) { const key = typeof f === 'string' ? f : f && f.p; if (key && !seen.has(key)) { seen.add(key); files.push(typeof f === 'string' ? { p: f } : f); } }
+  if (files.length) { L.push('', '### Ficheros'); for (const f of files.slice(0, 20)) L.push(`- ${f.p}${f.k ? ` (${f.k})` : ''}`); if (files.length > 20) L.push(`- …y ${files.length - 20} más`); }
+  const rvLine = (md(verify).match(/##\s*Verdict[^\n]*(\n[^\n#]*)?/i) || [''])[0];
+  const rv = (rvLine.match(/\b(PASS|RISK|FAIL)\b/i) || [])[1] || null;
+  L.push('', '### Verificación');
+  L.push(`- gate determinista (coherencia + artefactos + traza): ${timeline.verdict === 'GREEN' ? 'PASS' : (timeline.verdict || '?')}`);
+  if (rv) L.push(`- revisión de calidad (verify): ${rv.toUpperCase()}`);
+  const models = tl.filter((p) => p.model || p.modelReported).map((p) => `${p.phase}=${p.modelReported || p.model}`);
+  if (models.length) L.push(`- modelo por fase: ${models.join(' · ')}`);
+  L.push('', '_Recibo generado por conductor a partir de los artefactos y el timeline del run (determinista, 0 LLM)._');
+  return L.join('\n');
+}
+
 function renderDashboard({ change, gates = [], trace, cost, timeline }) {
   const c = count(gates);
   const tl = timeline && timeline.phases ? timeline.phases : (Array.isArray(timeline) ? timeline : null);
@@ -4127,7 +4188,7 @@ ${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transf
 </html>`;
 }
 
-return { renderDashboard };
+return { renderReceipt, renderDashboard };
 })();
 
 // ===== lib/pipeline/drive.mjs =====
@@ -4149,7 +4210,7 @@ __M['drive'] = (function(){
 
 
 
-const { start, next, resolvePhases, KNOWN_PHASES } = __M['orchestrate'];
+const { start, next, resolvePhases, redoPlanning, KNOWN_PHASES } = __M['orchestrate'];
 const { resolvePreset } = __M['presets'];
 const { checkCoherence, parseReport } = __M['coherence'];
 const { checkArtifacts } = __M['artifacts'];
@@ -4980,7 +5041,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   };
   const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
-  let userNote = null, hotModel = null, fsNoted = false;
+  let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
   const approvals = []; // registro de aprobaciones humanas (provenance / AI Act)
   const decisions = []; // registro AUDITABLE de decisiones del revisor (nota, modelo en caliente, fix dirigido)
   while (!step.done) {
@@ -5008,6 +5069,25 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       finally { clearInterval(pauseHb); }
       if (pr === REVIEW_ABORT) { const why = `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`; writeTimeline('STOPPED', why); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: why, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
+      // CHAT-EN-PAUSA (#45 v1): {redo:'spec', note:'…'} → rehace esa fase de planificación (y las de planificación
+      // posteriores) con la instrucción del revisor, y VUELVE a pausar aquí con los artefactos regenerados. El
+      // driver sigue mandando (todo lo posterior re-ejecuta EN ORDEN; el gate no se toca). Cap anti-bucle: 5/run.
+      if (pr?.redo && typeof pr.redo === 'string') {
+        if (redoCount >= 5) { log('⚠ redo ignorado: máximo de 5 por run (protege tu presupuesto) — apruebo con la nota si la hay'); }
+        else {
+          const r = redoPlanning({ changeDir, phase: pr.redo });
+          if (r.ok) {
+            redoCount++;
+            if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
+            decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
+            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim() });
+            log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
+            step = r;
+            continue;
+          }
+          log(`⚠ redo rechazado (${r.error}) — continúo con la aprobación normal`);
+        }
+      }
       // FIX DIRIGIDO: el humano elige qué hallazgos van al prompt del fix (default: todos)
       if (phase === 'fix' && Array.isArray(pr?.selected) && step.findings) {
         const sel = pr.selected.map((i) => step.findings[i]).filter(Boolean);
@@ -5807,7 +5887,7 @@ const { aggregateStats } = __M['stats'];
 const { parseEvents, parseOtelSession } = __M['events'];
 const { listCopilotModels } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
-const { renderDashboard } = __M['dashboard'];
+const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, encryptSecret, isPortableBlob } = __M['secret'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -6975,6 +7055,15 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           reg.stopRequested = true; reg.pending = null; try { reg.child.send({ t: 'stop' }); } catch {}
           return json(200, { ok: true });
         }
+        if (action === 'receipt' && req.method === 'GET') {
+          // RECIBO DE PR (dev-first): markdown listo para pegar en la descripción del PR. Determinista, del disco.
+          const tlR = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) return json(404, { ok: false, error: 'sin timeline todavía — el recibo sale de un run ejecutado' });
+          let domainR = 'core'; try { domainR = JSON.parse(readFileSync(join(changeDir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+          const mdR = renderReceipt({ name, timeline: tlR, spec: safeRead(changeDir, `specs/${domainR}/spec.md`, 60000) || '', proposal: safeRead(changeDir, 'proposal.md', 30000) || '', verify: safeRead(changeDir, 'verify-report.md', 30000) || '' });
+          if (!mdR) return json(404, { ok: false, error: 'sin datos suficientes para el recibo' });
+          return json(200, { ok: true, markdown: mdR });
+        }
         if (action === 'artifact' && req.method === 'POST') {
           const bodyArt = await readBody(req);
           if (!bodyArt) return json(400, { ok: false, error: 'body JSON inválido' });
@@ -7521,8 +7610,17 @@ switch (cmd) {
       // vivo ajeno (no-hermético) y contamine su registro real — bug real detectado al chocar con un serve vivo.
       srv2 = await createAppServer({ ...appOpts, port: Number(portOverride) || 0 });
     } else
-    try { srv2 = await createAppServer({ ...appOpts, port: 4750 }); }
-    catch (e) {
+    {
+      // :4750 con REINTENTO breve (anti TIME_WAIT tras un relevo, Windows sobre todo): un único intento daba
+      // EADDRINUSE espurio mientras el socket del proceso anterior se soltaba → acabábamos en el fallback (o,
+      // lanzado detached, en exit 1) con un "♻ reiniciada" FALSO y la app muerta. 3 intentos × 700ms cubren la ventana.
+      let bindErr = null;
+      for (let i = 0; i < 3 && !srv2; i++) {
+        try { srv2 = await createAppServer({ ...appOpts, port: 4750 }); }
+        catch (e2) { bindErr = e2; if (!/EADDRINUSE/i.test(e2?.code || e2?.message || '')) break; await new Promise((r2) => setTimeout(r2, 700)); }
+      }
+      if (!srv2) {
+      const e = bindErr;
       const isAddr = /EADDRINUSE/i.test(e?.code || e?.message || '');
       if (isAddr) {
         // anti "varios encendidos": si :4750 lo ocupa OTRA conductor VIVA, NO levanto una 2ª app (efímera y
@@ -7553,6 +7651,7 @@ switch (cmd) {
       if (!process.stdout.isTTY) { console.error(`✗ ${why} y no hay terminal que muestre una URL alternativa — NO levanto una app efímera invisible. Libera :4750 (o \`conductor stop\`) y reintenta.`); process.exit(1); }
       srv2 = await createAppServer(appOpts);
       console.log(`⚠ ${why} → sirviendo en un puerto efímero. Cierra lo que ocupe :4750 y reinicia para la app única.`);
+      }
     }
     console.log(`🌐 conductor · panel del proyecto: ${srv2.url}\n   (Ctrl-C para cerrar)`);
     if (process.env.CONDUCTOR_SERVE_OPEN !== '0') {
@@ -7785,6 +7884,13 @@ switch (cmd) {
     console.log(`  runner sdk empaquetado: ${sdkB ? 'disponible (actívalo con "runner":"sdk")' : 'no incluido (spawn)'}`);
     const appUp = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r3) => r3.json()).catch(() => null);
     console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con /sdd-run o `conductor serve`)'}`);
+    // PROXY CORPORATIVO: el fetch de Node IGNORA HTTP(S)_PROXY por defecto → si el LiteLLM va detrás del proxy,
+    // el catálogo/BYOK fallan en silencio donde el navegador sí llega. Aviso accionable (Node ≥24: NODE_USE_ENV_PROXY).
+    const proxyEnv = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+    if (proxyEnv) {
+      const envProxyOn = process.env.NODE_USE_ENV_PROXY === '1';
+      console.log(`  proxy corporativo: detectado (${proxyEnv})${envProxyOn ? ' · NODE_USE_ENV_PROXY=1 activo (fetch lo usa)' : ' · ⚠ el fetch de Node NO lo usa por defecto — si tu LiteLLM está detrás del proxy, exporta NODE_USE_ENV_PROXY=1 (Node ≥24) y añade localhost,127.0.0.1 a NO_PROXY (la app local no debe pasar por el proxy)'}`);
+    } else console.log('  proxy corporativo: no detectado (fetch directo)');
     // .copilotignore (token-first): exclusiones de contexto del proyecto. Sin él cada request del modelo
     // arrastra node_modules/lockfiles/binarios. `conductor init` lo genera; aquí avisamos si falta o está vacío.
     try {
@@ -8075,4 +8181,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: fc3561da2a4e40fb625fa739bae8df4cd13b4e2431e9634e35812c027ac1f614
+// build-inputs-sha256: 12ab196fb637b0bd949fe48da3847da02e835b8d501ae34d993005eae6b4d4ca

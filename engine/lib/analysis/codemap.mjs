@@ -14,7 +14,10 @@ import { join, resolve, relative, dirname, extname } from 'node:path';
 // lenguajes cubiertos hoy: JS/TS (el grueso Angular/React). Añadir lenguaje = añadir una entrada, no un motor nuevo.
 const SRC_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']);
 const RESOLVE_EXT = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']; // orden de tanteo al resolver un import sin extensión
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '.next', '.nuxt', 'vendor', '.cache', 'tmp', '.tmp']);
+// incluye los dirs pesados de los stacks REALES del despliegue (Java/Maven 'target', Magento 'var'/'generated',
+// Python '__pycache__'): en un repo SIN fuentes JS el tope de ficheros nunca corta y el walk se comería el
+// monorepo entero en cada arranque de run. Los dot-dirs (.gradle, .cache…) ya se saltan por startsWith('.').
+const SKIP_DIR = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '.next', '.nuxt', 'vendor', 'tmp', 'target', '__pycache__', 'generated', 'var']);
 const MAX_BYTES = 512 * 1024; // no parsear ficheros gigantes (bundles/minificados) — coste sin señal
 
 // ruta relativa a root con separador '/' SIEMPRE (determinismo cross-OS: Windows no debe producir otro índice)
@@ -64,10 +67,13 @@ function resolveSpec(root, fromFileAbs, spec, fileSet) {
 }
 
 // recorre el árbol de fuentes (determinista: dirs y ficheros ordenados) saltando dirs pesados y ocultos.
-function walkSources(root, maxFiles) {
+// DOBLE tope: maxFiles (fuentes encontradas) Y maxDirs (dirs visitados) — sin el segundo, un monorepo
+// Java/PHP SIN fuentes JS (el tope de ficheros nunca corta) pagaba un walk del repo ENTERO en cada run.
+function walkSources(root, maxFiles, maxDirs = 8000) {
   const out = [];
+  let dirs = 0;
   const rec = (dir) => {
-    if (out.length >= maxFiles) return;
+    if (out.length >= maxFiles || ++dirs > maxDirs) return;
     let ents; try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const ent of ents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       if (out.length >= maxFiles) return;
@@ -81,9 +87,9 @@ function walkSources(root, maxFiles) {
 }
 
 // ÍNDICE completo: por fichero { exports, imports:[{spec,to}], defines } + inverso usedBy. Determinista.
-export function buildCodeMap(projectRoot, { maxFiles = 4000 } = {}) {
+export function buildCodeMap(projectRoot, { maxFiles = 4000, maxDirs = 8000 } = {}) {
   const root = resolve(projectRoot);
-  const absFiles = walkSources(root, maxFiles);
+  const absFiles = walkSources(root, maxFiles, maxDirs);
   const fileSet = new Set(absFiles.map((p) => relPath(root, p)));
   const files = {};
   for (const abs of absFiles) {

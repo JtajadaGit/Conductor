@@ -92,12 +92,24 @@
 .approve:not(:disabled):hover { filter: brightness(1.08); transform: translateY(-1px); }
 .approve:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: none; box-shadow: none; }
 .approve:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-/* DECISIÓN del revisor — momento clave: nota (textarea) + select "Cambiar modelo", alineados y premium */
-.pend-controls { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-start; }
-.pend-controls .fl { gap: var(--sp-1); }
-.pend-note { width: 100%; resize: vertical; min-height: 2.5rem; max-height: 11rem; line-height: 1.5; }
-.pend-controls select { min-width: 13rem; }
-@media (max-width: 620px) { .pend-controls .fl { flex: 1 1 100%; } .pend-controls select { min-width: 0; width: 100%; } }
+/* DECISIÓN del revisor — UN formulario, UNA jerarquía: (1) grid instrucción+modelo alineados,
+   (2) fila de acciones con primaria (Aprobar) y secundaria (Rehacer). Nada compite con la decisión. */
+.decision-form { display: grid; grid-template-columns: minmax(0, 1fr) 15rem; gap: var(--sp-2) var(--sp-4); width: 100%; align-items: start; }
+.decision-form .fl { gap: .3rem; min-width: 0; }
+.decision-form .opt { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--tx3); }
+.pend-note { width: 100%; resize: vertical; min-height: 2.6rem; max-height: 11rem; line-height: 1.5; }
+.decision-form select { width: 100%; min-height: 38px; }
+.df-help { font-size: .72rem; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--tx3); line-height: 1.5; }
+.df-help b { color: var(--tx2); font-weight: 600; }
+.decision-actions { display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding-top: .3rem; flex-wrap: wrap; }
+.redo-inline { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
+.redo-inline select { min-height: 38px; max-width: 13rem; color: var(--tx2); }
+@media (max-width: 680px) {
+  .decision-form { grid-template-columns: 1fr; }
+  .decision-actions { flex-direction: column; align-items: stretch; }
+  .redo-inline { margin-left: 0; }
+  .redo-inline select { max-width: none; flex: 1; }
+}
 .rollbtn { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--bd); background: var(--bg2); border-radius: var(--r-sm); padding: .34rem .6rem; cursor: pointer; font-size: .74rem; color: var(--tx2); transition: color .15s, border-color .15s, background .15s; }
 .rollbtn:hover { color: var(--bad); border-color: var(--bad); }
 
@@ -467,3 +479,43 @@ help-screen code { white-space: nowrap; }
 .lm-auto:hover { color: var(--tx2); }
 .lm-auto input { width: .85rem; height: .85rem; accent-color: var(--warn); }
 .lm-auto.on { color: var(--warn); }
+
+/* /panel-radiografia */
+/* ── RADIOGRAFÍA DEL REPO (degustación gratis): tarjeta de valor cuando el proyecto aún no tiene runs —
+   el motor lee el código por ingeniería inversa determinista (0 LLM · 0 tokens · 0 red) y enseña las
+   capacidades que ya entiende. Con runs, sobrevive como pliegue discreto tras el historial. */
+.xray-card { margin-top: .9rem; padding: 1rem 1.15rem 1.1rem; border: 1px solid var(--bd); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--accentbg); color: var(--tx); }
+.xray-titlerow { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; margin-bottom: .15rem; }
+.xray-titlerow .sect { margin: 0; }
+.xray-free { font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ok); border: 1px solid currentColor; border-radius: 999px; padding: .12rem .55rem; white-space: nowrap; }
+.xray-pitch { margin: .45rem 0 .75rem; font-size: .86rem; line-height: 1.55; color: var(--tx2); max-width: 62ch; }
+.xray-head { margin: .2rem 0 .5rem; font-size: .9rem; color: var(--tx); }
+.xray-list { margin: 0; padding: 0; list-style: none; font-size: .82rem; line-height: 1.45; max-width: 40rem; }
+.xray-row { display: flex; align-items: baseline; gap: .8rem; padding: .2rem 0; border-bottom: 1px dashed color-mix(in srgb, var(--bd) 65%, transparent); }
+.xray-row:last-child { border-bottom: none; }
+.xray-id { flex: 1; min-width: 0; font: .8rem/1.35 var(--mono); color: var(--tx); word-break: break-all; }
+.xray-n { flex: none; color: var(--tx2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.xray-more { margin: .3rem 0 0; font-size: .78rem; }
+.xray-note { margin: .6rem 0 0; font-size: .76rem; line-height: 1.55; color: var(--tx3); max-width: 64ch; }
+.xray-err { margin: .3rem 0 .55rem; font-size: .84rem; color: var(--bad); }
+.xray-fold summary .muted { font-size: .78rem; }
+.xray-foldbody { margin-top: .7rem; }
+/* foco de teclado VISIBLE (a11y): botón de análisis y summary del pliegue marcan el foco con el acento */
+.xray-card .btn:focus-visible, .xray-foldbody .btn:focus-visible, .xray-fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* /run-extras */
+/* línea «árbol a salvo» (cabecera del run): informativa, permanente y discreta — bajo la barra de acciones */
+.safeline { margin: .15rem 0 .9rem; font-size: .76rem; color: var(--tx3); line-height: 1.5; }
+.safeline .lnk { font-size: inherit; }
+
+/* botón secundario «↺ Rehacer» (vive en .decision-actions junto a su select; ghost accent, nunca compite con .approve) */
+.redo-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--bd)); background: var(--accentbg); color: var(--accent); border-radius: var(--r-sm); padding: .45rem .85rem; cursor: pointer; font-size: .78rem; font-weight: 650; white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
+.redo-btn:not(:disabled):hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.redo-btn:disabled { opacity: .55; cursor: not-allowed; }
+.redo-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.redo-err { width: 100%; margin-top: 0; } /* hereda .errline; línea propia bajo la fila de acciones */
+
+/* botón «Copiar descripción de PR» (solo GREEN): evidencia en azul suave, mismo idiom outlined que .btn.dash */
+.btn.receipt { background: var(--accentbg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--bd)); box-shadow: none; }
+.btn.receipt:not(:disabled):hover { background: var(--accent); color: #fff; border-color: var(--accent); filter: none; }
+@media (prefers-reduced-motion: reduce) { .redo-btn { transition: none; } }

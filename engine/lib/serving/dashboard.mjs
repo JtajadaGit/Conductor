@@ -8,6 +8,38 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 // → HTML injection en el dashboard. Number()||0 garantiza que fmt SIEMPRE produce dígitos, nunca markup.
 const fmt = (n) => { const v = Number(n) || 0; return v >= 1000 ? (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(v); };
 
+// RECIBO DE PR (dev-first, determinista, 0 LLM): markdown listo para pegar en la descripción del PR — qué se
+// pidió, qué cambió, requisitos cubiertos, verificación y coste. El gobierno se vuelve beneficio personal del
+// dev (su PR se defiende solo). PURA (datos → markdown) para testearse sin FS; el caller lee los ficheros.
+export function renderReceipt({ name = '', timeline = null, spec = '', proposal = '', verify = '' }) {
+  const tl = (timeline && Array.isArray(timeline.phases)) ? timeline.phases : [];
+  if (!tl.length) return null;
+  const md = (s) => String(s || '').replace(/\r/g, '');
+  const L = [`## ✔ ${name || 'cambio'} — verificado con conductor`];
+  if (timeline.request) L.push(`> ${md(timeline.request).replace(/\s+/g, ' ').slice(0, 300)}`);
+  const inT = tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.in) || 0), 0);
+  const outT = tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.out) || 0), 0);
+  const byok = tl.filter((p) => p.provider === 'byok').length;
+  const mins = Math.round(((Number(timeline.total_ms) || tl.reduce((s, p) => s + (Number(p.ms) || 0), 0)) / 60000) * 10) / 10;
+  L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ↓${fmt(inT)} ↑${fmt(outT)} tokens${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
+  const what = (md(proposal).split(/^##\s*What Changes\s*$/mi)[1] || '').split(/^##\s/m)[0].trim();
+  if (what) L.push('', '### Qué cambia', ...what.split('\n').slice(0, 10));
+  const reqs = [...md(spec).matchAll(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->\s*\n###\s*Requirement:\s*([^\n]+)/gi)].slice(0, 12);
+  if (reqs.length) { L.push('', '### Requisitos cubiertos'); for (const [, id, nm] of reqs) L.push(`- \`${id}\` ${nm.trim()}`); }
+  const files = []; const seen = new Set();
+  for (const p of tl) for (const f of (Array.isArray(p.files) ? p.files : [])) { const key = typeof f === 'string' ? f : f && f.p; if (key && !seen.has(key)) { seen.add(key); files.push(typeof f === 'string' ? { p: f } : f); } }
+  if (files.length) { L.push('', '### Ficheros'); for (const f of files.slice(0, 20)) L.push(`- ${f.p}${f.k ? ` (${f.k})` : ''}`); if (files.length > 20) L.push(`- …y ${files.length - 20} más`); }
+  const rvLine = (md(verify).match(/##\s*Verdict[^\n]*(\n[^\n#]*)?/i) || [''])[0];
+  const rv = (rvLine.match(/\b(PASS|RISK|FAIL)\b/i) || [])[1] || null;
+  L.push('', '### Verificación');
+  L.push(`- gate determinista (coherencia + artefactos + traza): ${timeline.verdict === 'GREEN' ? 'PASS' : (timeline.verdict || '?')}`);
+  if (rv) L.push(`- revisión de calidad (verify): ${rv.toUpperCase()}`);
+  const models = tl.filter((p) => p.model || p.modelReported).map((p) => `${p.phase}=${p.modelReported || p.model}`);
+  if (models.length) L.push(`- modelo por fase: ${models.join(' · ')}`);
+  L.push('', '_Recibo generado por conductor a partir de los artefactos y el timeline del run (determinista, 0 LLM)._');
+  return L.join('\n');
+}
+
 export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
   const c = count(gates);
   const tl = timeline && timeline.phases ? timeline.phases : (Array.isArray(timeline) ? timeline : null);

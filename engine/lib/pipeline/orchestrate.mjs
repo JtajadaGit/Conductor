@@ -2,7 +2,7 @@
 // por el prompt). El agente es un bucle tonto: conductor_start → (escribe el artefacto) → conductor_next.
 // El servidor impone la secuencia: no devuelve el siguiente paso hasta que el artefacto del actual existe,
 // y valida con el gate en verify. Así un modelo flojo NO puede saltar fases ni freestylear. Sin sub-agentes.
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { checkCoherence, readSpec } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
@@ -129,6 +129,29 @@ export function start({ changeDir, request, complexity = 'medium', domain = 'cor
   const s = { request, complexity, domain, phases: resolvePhases(complexity, pipeline, { changeDir, request }).filter(Boolean), idx: 0, status: 'running' };
   saveState(changeDir, s);
   return stepFor(changeDir, s);
+}
+
+// CHAT-EN-PAUSA (redo dirigido, #45 v1): rehace una fase de PLANIFICACIÓN ya completada — retrocede el estado
+// a esa fase y BORRA su artefacto y los de las fases de PLANIFICACIÓN posteriores (coherencia: si la spec cambia,
+// design/tasks se regeneran sobre la nueva). El driver re-ejecuta desde ahí (con la instrucción del revisor como
+// nota) y VOLVERÁ a pausar donde estaba. GOBIERNO intacto: jamás rehace apply/fix/test/verify por esta vía, jamás
+// salta fases (next() sigue exigiendo cada artefacto), y el driver registra la decisión (timeline + decisions).
+const REDOABLE = new Set(['explore', 'propose', 'clarify', 'spec', 'design', 'tasks']);
+export function redoPlanning({ changeDir, phase }) {
+  if (!existsSync(statePath(changeDir))) return { ok: false, error: 'no hay run activo' };
+  let s; try { s = loadState(changeDir); } catch (e) { return { ok: false, error: `estado ilegible: ${e.message}` }; }
+  if (s.status !== 'running') return { ok: false, error: `estado "${s.status}": solo se rehace un run en curso` };
+  const target = String(phase || '').trim();
+  const ti = Array.isArray(s.phases) ? s.phases.indexOf(target) : -1;
+  if (!REDOABLE.has(target) || ti < 0 || ti >= s.idx) return { ok: false, error: `"${target}" no es una fase de planificación YA completada de este run` };
+  for (let i = ti; i < s.idx; i++) {
+    const p = s.phases[i];
+    if (!REDOABLE.has(p)) continue; // solo artefactos de planificación — el código (apply/fix) jamás se borra
+    try { rmSync(join(changeDir, artifactOf(p, s.domain)), { force: true }); } catch {}
+  }
+  s.idx = ti;
+  saveState(changeDir, s);
+  return { ok: true, ...stepFor(changeDir, s) };
 }
 
 // gate determinista usado en la fase verify. `strict` (del preset) endurece SIN relajar nunca: strict.id →
