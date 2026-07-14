@@ -52,8 +52,21 @@ await test('mcp-config: imprime el snippet con la ruta REAL del motor resuelta e
   const enginePath = resolve(BIN).split('\\').join('/');
   assert(out.includes(enginePath), 'la ruta impresa es la del PROPIO motor que corre: ' + enginePath);
   assert(out.includes('"servers"') && out.includes('"mcpServers"') && out.includes('"mcp"'), 'las TRES formas de config (VS Code, mcpServers estándar, y clave "mcp" con command en array)');
+  assert(out.includes('vscode:mcp/install?name=conductor&config='), 'deeplink one-click con el formato oficial');
+  assert(out.includes('PORTABLE'), 'la forma portable (sin rutas, post npm -g) se ofrece primero');
   assert(/"command":\s*\[\s*\n?\s*"node"/.test(out.replace(/\s+/g, ' ')) || out.includes('"command": ['), 'el formato array presente (hosts que no usan mcpServers)');
   assert(out.includes('"mcp"') && out.includes('"node"'), 'command node + subcomando mcp (absoluto: en macOS los GUI no heredan PATH)');
+});
+
+await test('mcp: STATELESS-tolerante — tools/list y tools/call funcionan SIN initialize (spec 2026-07-28 elimina el handshake)', async () => {
+  // el protocolo MCP publica el 2026-07-28 su mayor revisión: stateless, sin initialize. Los clientes nuevos
+  // llamarán directo; este server debe servirles igual que a los viejos (que sí hacen handshake). Guard anti-regresión.
+  const c = client();
+  const list = await c.rpc('tools/list', {}); // SIN initialize previo, a propósito
+  assert(Array.isArray(list.result?.tools) && list.result.tools.length >= 14, 'tools/list responde sin handshake');
+  const echo = await c.callTool('echo', { text: 'stateless' });
+  eq(echo.text, 'stateless', 'tools/call responde sin handshake');
+  c.srv.kill();
 });
 
 await test('mcp: ping y errores JSON-RPC', async () => {

@@ -809,9 +809,12 @@ switch (cmd) {
     //                                                     fallback/Windows: fusión en <dir>/.vscode/mcp.json
     //   conductor connect --to <config> [--key …]       → fusión NO destructiva en la config de CUALQUIER host
     const engineC = resolve(process.argv[1]).split('\\').join('/');
+    // instalación npm (motor bajo node_modules/conductor) → shim `conductor` en PATH global → config PORTABLE
+    // sin rutas (sobrevive a actualizaciones; VS Code resuelve el env del shell incluso lanzado desde GUI en Mac)
+    const portableC = /node_modules[\\/]+conductor[\\/]/i.test(resolve(process.argv[1]));
     const applyMerge = (f, key) => {
       const prev = existsSync(f) ? readFileSync(f, 'utf8') : '';
-      const r = mergeMcpEntry(prev, engineC, { key });
+      const r = mergeMcpEntry(prev, engineC, { key, portable: portableC });
       if (r.error) { console.error(`✗ ${r.error}`); process.exit(1); }
       if (!r.changed) { console.log(`✓ ya estaba conectado (${f}, clave "${r.key}") — nada que hacer`); process.exit(0); }
       mkdirSync(dirname(f), { recursive: true });
@@ -826,15 +829,26 @@ switch (cmd) {
       // con shell el JSON se descuartiza → en win32 vamos directos a la fusión del fichero (igual de oficial).
       if (process.platform !== 'win32') {
         try {
-          execFileSync('code', ['--add-mcp', JSON.stringify({ name: 'conductor', command: 'node', args: [engineC, 'mcp'] })], { stdio: 'pipe', timeout: 15000 });
+          const addArg = portableC ? { name: 'conductor', command: 'conductor', args: ['mcp'] } : { name: 'conductor', command: 'node', args: [engineC, 'mcp'] };
+          execFileSync('code', ['--add-mcp', JSON.stringify(addArg)], { stdio: 'pipe', timeout: 15000 });
           console.log('✅ conductor conectado a VS Code (code --add-mcp). Reinicia la ventana y pide en el chat: "abre el panel de conductor".');
           process.exit(0);
         } catch { /* sin CLI `code` en PATH → fusión directa abajo */ }
       }
       applyMerge(join(dirV, '.vscode', 'mcp.json'), 'servers');
     }
+    // /conductor NATIVO para hosts con comandos-markdown: deja conductor.md en el dir de comandos del host
+    // (el nombre del fichero se convierte en el slash-command; el cuerpo instruye al agente a llamar conductor_app).
+    const cmdDir = flag('--command-dir');
+    if (cmdDir) {
+      const dC = resolve(cmdDir); mkdirSync(dC, { recursive: true });
+      const fC = join(dC, 'conductor.md');
+      writeFileSync(fC, ['---', 'description: Abre el panel local de conductor en este proyecto (pipeline SDD verificado)', '---', 'Usa la tool MCP `conductor_app` para abrir el panel de conductor. Si el usuario indica una ruta en $ARGUMENTS, pásala como projectRoot; si no, usa la raíz del proyecto actual. Devuelve la URL del panel.', ''].join('\n'));
+      console.log(`✅ comando de chat instalado: ${fC}\n   En tu host: /conductor   (requiere el MCP conectado: connect --to <su-config>)`);
+      process.exit(0);
+    }
     const to = flag('--to');
-    if (!to) bad('connect --vscode [dir]  |  connect --to <config-del-host> [--key servers|mcpServers|mcp]');
+    if (!to) bad('connect --vscode [dir]  |  connect --to <config-del-host> [--key servers|mcpServers|mcp]  |  connect --command-dir <dir-de-comandos-del-host>');
     applyMerge(resolve(to), flag('--key', 'auto'));
   }
   case 'mcp-config': {
@@ -843,6 +857,15 @@ switch (cmd) {
     // en Windows/Mac/Linux. Se usa ruta ABSOLUTA + `node` (no el shim `conductor`) a propósito: en macOS las
     // apps GUI no heredan el PATH del shell, así que un command relativo fallaría justo donde menos se ve.
     const engineAbs = resolve(process.argv[1]).split('\\').join('/');
+    // PORTABLE primero (instalación npm: shim `conductor` en PATH → config sin rutas, idéntica en toda máquina;
+    // VS Code resuelve el env del shell incluso lanzado desde GUI). Deeplink one-click con el formato oficial
+    // vscode:mcp/install?name=…&config=<json-urlencoded>. La forma con ruta absoluta queda como fallback.
+    const portableCfg = { type: 'stdio', command: 'conductor', args: ['mcp'] };
+    console.log('— PORTABLE (tras `npm i -g …`: sin rutas, vale en cualquier máquina) —');
+    console.log('  VS Code one-click:  vscode:mcp/install?name=conductor&config=' + encodeURIComponent(JSON.stringify(portableCfg)));
+    console.log('  cualquier host:     ' + JSON.stringify({ mcpServers: { conductor: { command: 'conductor', args: ['mcp'] } } }));
+    console.log('  hosts clave "mcp":  ' + JSON.stringify({ mcp: { conductor: { type: 'local', command: ['conductor', 'mcp'], enabled: true } } }));
+    console.log('\n— FALLBACK con ruta absoluta (si el shim no está en el PATH del host) —');
     const vsc = { servers: { conductor: { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] } } };
     const std = { mcpServers: { conductor: { command: 'node', args: [engineAbs, 'mcp'] } } };
     console.log('— VS Code · pega en .vscode/mcp.json (workspace) o vía "MCP: Add Server":\n');

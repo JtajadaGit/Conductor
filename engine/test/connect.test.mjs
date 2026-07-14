@@ -71,6 +71,27 @@ await test('connect: config REAL de un host corporativo (provider+modelos+permis
   eq(j2.provider, hostCfg.provider, 'también intacto con clave explícita');
 });
 
+await test('connect: modo PORTABLE (instalación npm) — config sin rutas en los 3 formatos (sobrevive a updates)', () => {
+  const r = mergeMcpEntry('', ENG, { portable: true });
+  eq(JSON.parse(r.text).mcpServers.conductor, { command: 'conductor', args: ['mcp'] });
+  const rv = mergeMcpEntry(JSON.stringify({ servers: {} }), ENG, { portable: true });
+  eq(JSON.parse(rv.text).servers.conductor, { type: 'stdio', command: 'conductor', args: ['mcp'] });
+  const ra = mergeMcpEntry(JSON.stringify({ mcp: {} }), ENG, { portable: true });
+  eq(JSON.parse(ra.text).mcp.conductor, { type: 'local', command: ['conductor', 'mcp'], enabled: true });
+  assert(!r.text.includes(ENG), 'ni rastro de rutas absolutas en modo portable');
+});
+
+await test('connect(CLI): --command-dir deja el slash-command /conductor (markdown+frontmatter+$ARGUMENTS)', () => {
+  const dir = join(HERE, '.tmp-connect-cmd');
+  rmSync(dir, { recursive: true, force: true });
+  const out = execFileSync(process.execPath, [BIN, 'connect', '--command-dir', dir], { encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 20000 });
+  assert(out.includes('/conductor'), 'anuncia el comando: ' + out.trim().split('\n')[0]);
+  const md = readFileSync(join(dir, 'conductor.md'), 'utf8');
+  assert(md.startsWith('---') && md.includes('description:'), 'frontmatter del formato de comandos');
+  assert(md.includes('conductor_app') && md.includes('$ARGUMENTS'), 'instruye la tool MCP y acepta argumentos');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 await test('connect(CLI): --vscode crea .vscode/mcp.json con clave "servers" (PATH capado → jamás toca un VS Code real)', () => {
   const dir = join(HERE, '.tmp-connect-vsc');
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });

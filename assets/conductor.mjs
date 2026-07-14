@@ -3870,7 +3870,14 @@ __M['connect'] = (function(){
 
 const KEYS = ['servers', 'mcpServers', 'mcp'];
 
-function entryFor(key, engineAbs) {
+function entryFor(key, engineAbs, portable) {
+  // portable = instalación npm (shim `conductor` en PATH global): config SIN rutas — sobrevive a
+  // actualizaciones del paquete y es idéntica en todas las máquinas. Fallback: node + ruta absoluta.
+  if (portable) {
+    if (key === 'servers') return { type: 'stdio', command: 'conductor', args: ['mcp'] };
+    if (key === 'mcp') return { type: 'local', command: ['conductor', 'mcp'], enabled: true };
+    return { command: 'conductor', args: ['mcp'] };
+  }
   if (key === 'servers') return { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] };
   if (key === 'mcp') return { type: 'local', command: ['node', engineAbs, 'mcp'], enabled: true };
   return { command: 'node', args: [engineAbs, 'mcp'] };
@@ -3881,7 +3888,7 @@ function entryFor(key, engineAbs) {
 // - JSON inválido → error (JAMÁS pisar una config que no entendemos; el usuario no pierde nada).
 // - clave detectada automáticamente si ya existe una de las tres; `key` explícita gana.
 // - idempotente: si la entrada ya es EXACTAMENTE la nuestra, changed:false y el texto original intacto.
-function mergeMcpEntry(cfgText, engineAbs, { key = 'auto' } = {}) {
+function mergeMcpEntry(cfgText, engineAbs, { key = 'auto', portable = false } = {}) {
   const engine = String(engineAbs).split('\\').join('/');
   let cfg;
   const raw = String(cfgText || '').trim();
@@ -3889,7 +3896,7 @@ function mergeMcpEntry(cfgText, engineAbs, { key = 'auto' } = {}) {
   else { try { cfg = JSON.parse(raw); } catch (e) { return { error: `la config existente no es JSON válido (${e.message}) — no la toco; arréglala o pásame otro fichero` }; } }
   if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { error: 'la config existente no es un objeto JSON — no la toco' };
   const effKey = KEYS.includes(key) ? key : (KEYS.find((k) => cfg[k] && typeof cfg[k] === 'object') || 'mcpServers');
-  const entry = entryFor(effKey, engine);
+  const entry = entryFor(effKey, engine, portable);
   const cur = cfg[effKey] && typeof cfg[effKey] === 'object' ? cfg[effKey] : {};
   if (JSON.stringify(cur.conductor) === JSON.stringify(entry)) return { text: cfgText, changed: false, key: effKey };
   cfg[effKey] = { ...cur, conductor: entry }; // fusión: las demás entradas del usuario quedan INTACTAS
@@ -8396,9 +8403,12 @@ switch (cmd) {
     //                                                     fallback/Windows: fusión en <dir>/.vscode/mcp.json
     //   conductor connect --to <config> [--key …]       → fusión NO destructiva en la config de CUALQUIER host
     const engineC = resolve(process.argv[1]).split('\\').join('/');
+    // instalación npm (motor bajo node_modules/conductor) → shim `conductor` en PATH global → config PORTABLE
+    // sin rutas (sobrevive a actualizaciones; VS Code resuelve el env del shell incluso lanzado desde GUI en Mac)
+    const portableC = /node_modules[\\/]+conductor[\\/]/i.test(resolve(process.argv[1]));
     const applyMerge = (f, key) => {
       const prev = existsSync(f) ? readFileSync(f, 'utf8') : '';
-      const r = mergeMcpEntry(prev, engineC, { key });
+      const r = mergeMcpEntry(prev, engineC, { key, portable: portableC });
       if (r.error) { console.error(`✗ ${r.error}`); process.exit(1); }
       if (!r.changed) { console.log(`✓ ya estaba conectado (${f}, clave "${r.key}") — nada que hacer`); process.exit(0); }
       mkdirSync(dirname(f), { recursive: true });
@@ -8413,15 +8423,26 @@ switch (cmd) {
       // con shell el JSON se descuartiza → en win32 vamos directos a la fusión del fichero (igual de oficial).
       if (process.platform !== 'win32') {
         try {
-          execFileSync('code', ['--add-mcp', JSON.stringify({ name: 'conductor', command: 'node', args: [engineC, 'mcp'] })], { stdio: 'pipe', timeout: 15000 });
+          const addArg = portableC ? { name: 'conductor', command: 'conductor', args: ['mcp'] } : { name: 'conductor', command: 'node', args: [engineC, 'mcp'] };
+          execFileSync('code', ['--add-mcp', JSON.stringify(addArg)], { stdio: 'pipe', timeout: 15000 });
           console.log('✅ conductor conectado a VS Code (code --add-mcp). Reinicia la ventana y pide en el chat: "abre el panel de conductor".');
           process.exit(0);
         } catch { /* sin CLI `code` en PATH → fusión directa abajo */ }
       }
       applyMerge(join(dirV, '.vscode', 'mcp.json'), 'servers');
     }
+    // /conductor NATIVO para hosts con comandos-markdown: deja conductor.md en el dir de comandos del host
+    // (el nombre del fichero se convierte en el slash-command; el cuerpo instruye al agente a llamar conductor_app).
+    const cmdDir = flag('--command-dir');
+    if (cmdDir) {
+      const dC = resolve(cmdDir); mkdirSync(dC, { recursive: true });
+      const fC = join(dC, 'conductor.md');
+      writeFileSync(fC, ['---', 'description: Abre el panel local de conductor en este proyecto (pipeline SDD verificado)', '---', 'Usa la tool MCP `conductor_app` para abrir el panel de conductor. Si el usuario indica una ruta en $ARGUMENTS, pásala como projectRoot; si no, usa la raíz del proyecto actual. Devuelve la URL del panel.', ''].join('\n'));
+      console.log(`✅ comando de chat instalado: ${fC}\n   En tu host: /conductor   (requiere el MCP conectado: connect --to <su-config>)`);
+      process.exit(0);
+    }
     const to = flag('--to');
-    if (!to) bad('connect --vscode [dir]  |  connect --to <config-del-host> [--key servers|mcpServers|mcp]');
+    if (!to) bad('connect --vscode [dir]  |  connect --to <config-del-host> [--key servers|mcpServers|mcp]  |  connect --command-dir <dir-de-comandos-del-host>');
     applyMerge(resolve(to), flag('--key', 'auto'));
   }
   case 'mcp-config': {
@@ -8430,6 +8451,15 @@ switch (cmd) {
     // en Windows/Mac/Linux. Se usa ruta ABSOLUTA + `node` (no el shim `conductor`) a propósito: en macOS las
     // apps GUI no heredan el PATH del shell, así que un command relativo fallaría justo donde menos se ve.
     const engineAbs = resolve(process.argv[1]).split('\\').join('/');
+    // PORTABLE primero (instalación npm: shim `conductor` en PATH → config sin rutas, idéntica en toda máquina;
+    // VS Code resuelve el env del shell incluso lanzado desde GUI). Deeplink one-click con el formato oficial
+    // vscode:mcp/install?name=…&config=<json-urlencoded>. La forma con ruta absoluta queda como fallback.
+    const portableCfg = { type: 'stdio', command: 'conductor', args: ['mcp'] };
+    console.log('— PORTABLE (tras `npm i -g …`: sin rutas, vale en cualquier máquina) —');
+    console.log('  VS Code one-click:  vscode:mcp/install?name=conductor&config=' + encodeURIComponent(JSON.stringify(portableCfg)));
+    console.log('  cualquier host:     ' + JSON.stringify({ mcpServers: { conductor: { command: 'conductor', args: ['mcp'] } } }));
+    console.log('  hosts clave "mcp":  ' + JSON.stringify({ mcp: { conductor: { type: 'local', command: ['conductor', 'mcp'], enabled: true } } }));
+    console.log('\n— FALLBACK con ruta absoluta (si el shim no está en el PATH del host) —');
     const vsc = { servers: { conductor: { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] } } };
     const std = { mcpServers: { conductor: { command: 'node', args: [engineAbs, 'mcp'] } } };
     console.log('— VS Code · pega en .vscode/mcp.json (workspace) o vía "MCP: Add Server":\n');
@@ -8537,4 +8567,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 75bb6a6f27f7d2e7d134354e108ddf1ed1d5cfc64065817b17af13d1983d49a3
+// build-inputs-sha256: 5b626ce85361fb8d9e4c3d062a0ca0dab64375ec1a0a53823af224d91d99bcd7

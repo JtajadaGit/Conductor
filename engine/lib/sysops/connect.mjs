@@ -9,7 +9,14 @@
 
 const KEYS = ['servers', 'mcpServers', 'mcp'];
 
-function entryFor(key, engineAbs) {
+function entryFor(key, engineAbs, portable) {
+  // portable = instalación npm (shim `conductor` en PATH global): config SIN rutas — sobrevive a
+  // actualizaciones del paquete y es idéntica en todas las máquinas. Fallback: node + ruta absoluta.
+  if (portable) {
+    if (key === 'servers') return { type: 'stdio', command: 'conductor', args: ['mcp'] };
+    if (key === 'mcp') return { type: 'local', command: ['conductor', 'mcp'], enabled: true };
+    return { command: 'conductor', args: ['mcp'] };
+  }
   if (key === 'servers') return { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] };
   if (key === 'mcp') return { type: 'local', command: ['node', engineAbs, 'mcp'], enabled: true };
   return { command: 'node', args: [engineAbs, 'mcp'] };
@@ -20,7 +27,7 @@ function entryFor(key, engineAbs) {
 // - JSON inválido → error (JAMÁS pisar una config que no entendemos; el usuario no pierde nada).
 // - clave detectada automáticamente si ya existe una de las tres; `key` explícita gana.
 // - idempotente: si la entrada ya es EXACTAMENTE la nuestra, changed:false y el texto original intacto.
-export function mergeMcpEntry(cfgText, engineAbs, { key = 'auto' } = {}) {
+export function mergeMcpEntry(cfgText, engineAbs, { key = 'auto', portable = false } = {}) {
   const engine = String(engineAbs).split('\\').join('/');
   let cfg;
   const raw = String(cfgText || '').trim();
@@ -28,7 +35,7 @@ export function mergeMcpEntry(cfgText, engineAbs, { key = 'auto' } = {}) {
   else { try { cfg = JSON.parse(raw); } catch (e) { return { error: `la config existente no es JSON válido (${e.message}) — no la toco; arréglala o pásame otro fichero` }; } }
   if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { error: 'la config existente no es un objeto JSON — no la toco' };
   const effKey = KEYS.includes(key) ? key : (KEYS.find((k) => cfg[k] && typeof cfg[k] === 'object') || 'mcpServers');
-  const entry = entryFor(effKey, engine);
+  const entry = entryFor(effKey, engine, portable);
   const cur = cfg[effKey] && typeof cfg[effKey] === 'object' ? cfg[effKey] : {};
   if (JSON.stringify(cur.conductor) === JSON.stringify(entry)) return { text: cfgText, changed: false, key: effKey };
   cfg[effKey] = { ...cur, conductor: entry }; // fusión: las demás entradas del usuario quedan INTACTAS
