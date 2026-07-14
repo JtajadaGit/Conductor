@@ -71,6 +71,22 @@ await test('connect: config REAL de un host corporativo (provider+modelos+permis
   eq(j2.provider, hostCfg.provider, 'también intacto con clave explícita');
 });
 
+await test('connect(CLI): --vscode crea .vscode/mcp.json con clave "servers" (PATH capado → jamás toca un VS Code real)', () => {
+  const dir = join(HERE, '.tmp-connect-vsc');
+  rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
+  // PATH solo con node: el CLI `code` no se encuentra → en TODO OS cae a la fusión del fichero (determinista)
+  const out = execFileSync(process.execPath, [BIN, 'connect', '--vscode', dir], {
+    encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 20000,
+    env: { ...process.env, PATH: dirname(process.execPath), Path: dirname(process.execPath) },
+  });
+  assert(out.includes('✅'), 'conectado: ' + out.trim().split('\n')[0]);
+  const j = JSON.parse(readFileSync(join(dir, '.vscode', 'mcp.json'), 'utf8'));
+  eq(j.servers.conductor.type, 'stdio', 'formato del editor (clave servers, stdio)');
+  eq(j.servers.conductor.command, 'node');
+  assert(String(j.servers.conductor.args[0]).endsWith('conductor.mjs'), 'ruta absoluta al motor');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 await test('connect(CLI): --to fusiona en el fichero con backup y la 2ª pasada no cambia nada', () => {
   const dir = join(HERE, '.tmp-connect');
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });

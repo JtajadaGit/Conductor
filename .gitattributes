@@ -1,12 +1,14 @@
-# Files excluded from git archive (plugin distribution packaging).
-# If the marketplace uses git archive, these files stay on the server — devs never see them.
+# Files excluded from git archive (plugin distribution packaging + npm-desde-GitHub, que usa el tarball
+# de codeload = git archive). Si el marketplace usa git archive, estos ficheros se quedan en el servidor.
+# ⚠ PATRONES ANCLADOS con "/" inicial y "/**": un patrón sin anclar ("ui/") matchea CUALQUIER dir llamado
+# así a cualquier profundidad — se comió assets/ui/ y la instalación npm llegaba SIN el panel (bug real).
 # For a fully clean dist, run: node engine/build-dist.mjs → dist-plugin/
 
-CLAUDE.md           export-ignore
-task/               export-ignore
-engine/             export-ignore
-ui/                 export-ignore
-eval/               export-ignore
-.github/            export-ignore
-.gitignore          export-ignore
-.gitattributes      export-ignore
+/CLAUDE.md          export-ignore
+/task/**            export-ignore
+/engine/**          export-ignore
+/ui/**              export-ignore
+/eval/**            export-ignore
+/.github/**         export-ignore
+/.gitignore         export-ignore
+/.gitattributes     export-ignore
