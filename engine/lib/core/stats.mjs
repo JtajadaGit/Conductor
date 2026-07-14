@@ -45,7 +45,7 @@ export function aggregateStats(projects) {
   const byModel = Object.create(null); // model -> acumulado
   const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
   const perProject = [];
-  let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0;
+  let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0, unpriced = 0;
   let msTotal = 0, msRuns = 0, tin = 0, tout = 0, cost = 0, naive = 0;
   let fixRuns = 0, recoveredRuns = 0; // self-repair: runs que tuvieron ≥1 ciclo fix y cuántos acabaron GREEN
 
@@ -74,6 +74,7 @@ export function aggregateStats(projects) {
         const m = ph.model || ph.modelReported || '(sin modelo)';
         const prov = providerOf(ph);
         const c = costOf(m, i, o), nc = costOf(NAIVE, i, o);
+        if (!priceOf(m).known) unpriced++; // HONESTIDAD: fase con modelo sin precio conocido → el total la excluye y se declara
         tin += i; tout += o; cost += c; naive += nc;
         pIn += i; pOut += o; pCost += c; pNaive += nc;
         if (prov === 'byok') pByok++; else pCop++;
@@ -99,7 +100,7 @@ export function aggregateStats(projects) {
     mean_ms: msRuns ? Math.round(msTotal / msRuns) : 0,
     tokens: { in: tin, out: tout },
     selfRepair: { runs_with_fix: fixRuns, recovered: recoveredRuns, rate_pct: fixRuns > 0 ? +((recoveredRuns / fixRuns) * 100).toFixed(1) : 0 },
-    cost_usd: +cost.toFixed(4), naive_all_premium_usd: +naive.toFixed(4),
+    cost_usd: +cost.toFixed(4), naive_all_premium_usd: +naive.toFixed(4), unpriced,
     saved_usd: +saved.toFixed(4), saved_pct: naive > 0 ? +((saved / naive) * 100).toFixed(1) : 0,
     byProvider: Object.values(byProvider)
       .map((v) => ({ provider: v.provider, calls: v.calls, in: v.in, out: v.out, models: [...v.models], cost_usd: +v.cost.toFixed(4), naive_usd: +v.naive.toFixed(4) }))

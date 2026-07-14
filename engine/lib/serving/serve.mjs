@@ -16,6 +16,7 @@ import { PRESET_NAMES } from '../pipeline/presets.mjs';
 import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
 import { classifyTier } from '../core/tiers.mjs';
+import { setLivePrices, priceOf } from '../core/cost.mjs';
 import { renderAiact } from './aiact.mjs';
 // UI ÚNICA = Vite (assets/ui), servida por ui-static. Este fallback mínimo solo aparece si la UI no está
 // compilada (sin assets/ui) — ya no hay UI inline legacy. RUN_PAGE/PANEL_PAGE quedan como este aviso.
@@ -598,15 +599,42 @@ export function readModelsCache() { return readJson(MODELS_CACHE()); }
 // estable venga la URL del env o del form, con o sin '/' final → sin esto una misma qwen descartaba su cache.
 const normByokUrl = (u) => { const b = String(u || '').replace(/\/+$/, ''); return b ? (b.endsWith('/v1') ? b : b + '/v1') : ''; };
 const byokUrlHash = (u) => createHash('sha256').update(normByokUrl(u)).digest('hex').slice(0, 6);
-export function writeModelsCache(byokIds, baseUrl) {
+export function writeModelsCache(byokIds, baseUrl, prices = null) {
   if (!byokIds?.length) return; // nunca sobrescribir la cache con una lista vacía (defensa en profundidad)
   try {
     const cur = readJson(MODELS_CACHE()) || {};
     cur.version = 1;
-    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models' };
+    // prices = $/1M por modelo del catálogo del proveedor (solo ids+números, JAMÁS la key). Si el fetch de
+    // precios falló pero el de nombres no, se CONSERVAN los previos del mismo proveedor (mejor el precio de
+    // ayer que un 0 mudo); al cambiar de proveedor (hash distinto) los precios viejos NO se arrastran.
+    const prevPrices = cur.byok && cur.byok.baseUrlHash === byokUrlHash(baseUrl) ? cur.byok.prices : undefined;
+    const effPrices = (prices && Object.keys(prices).length) ? prices : prevPrices;
+    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models', ...(effPrices ? { prices: effPrices } : {}) };
     mkdirSync(CONDUCTOR_HOME(), { recursive: true });
     writeFileSync(MODELS_CACHE(), JSON.stringify(cur, null, 2));
   } catch {}
+}
+// PRECIO REAL por modelo desde el proxy BYOK ($/1M): endpoint de info del catálogo (raíz o /v1 según versión
+// del proxy). null si el proxy no lo expone a esta key → los modelos quedan "sin precio conocido" (se DICE,
+// no se inventa un 0). Exportada para testearse contra un servidor local falso.
+export async function fetchByokPrices(baseUrl, apiKey) {
+  const root = String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+  for (const u of [root + '/model/info', root + '/v1/model/info']) {
+    try {
+      const r = await fetch(u, { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const out = {};
+      for (const m of j.data ?? []) {
+        const info = m.model_info || {};
+        const id = m.model_name || m.id;
+        const ic = Number(info.input_cost_per_token), oc = Number(info.output_cost_per_token);
+        if (id && Number.isFinite(ic) && Number.isFinite(oc) && ic >= 0 && oc >= 0) out[id] = { in: +(ic * 1e6).toFixed(4), out: +(oc * 1e6).toFixed(4) };
+      }
+      if (Object.keys(out).length) return out;
+    } catch { /* probar la siguiente forma del endpoint */ }
+  }
+  return null;
 }
 // ¿es `id` un modelo de la familia Copilot (claude/gpt/gemini/o-series/grok)? Se usa para que el grupo
 // BYOK (proveedor propio: qwen/deepseek/…) nunca liste un modelo Copilot por una cache vieja o un run mal
@@ -655,7 +683,17 @@ async function _computeAvailableModels(registry) {
     try {
       const base = String(creds.baseUrl).replace(/\/+$/, '');
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
-      if (r.ok) { const j = await r.json(); const ids = []; for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); } if (ids.length) { byokSource = 'LiteLLM /v1/models (en vivo)'; live = true; writeModelsCache(ids, creds.baseUrl); } }
+      if (r.ok) {
+        const j = await r.json(); const ids = [];
+        for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
+        if (ids.length) {
+          byokSource = 'LiteLLM /v1/models (en vivo)'; live = true;
+          // PRECIO REAL en el mismo ciclo: con modelos clase-premium vía LiteLLM, el "byok=0" era mentira.
+          const livePrices = await fetchByokPrices(base, creds.apiKey);
+          writeModelsCache(ids, creds.baseUrl, livePrices);
+          if (livePrices) setLivePrices(livePrices);
+        }
+      }
     } catch {}
   }
   if (!live) {
@@ -665,7 +703,7 @@ async function _computeAvailableModels(registry) {
     // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve). Sin creds no hay
     // proveedor actual que validar (curHash=null) → se permite como fallback de display (lanzar byok sin creds ya da BLOCKED).
     const curHash = creds ? byokUrlHash(creds.baseUrl) : null;
-    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; }
+    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); }
   }
   if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
   _models.at = Date.now();
@@ -692,7 +730,10 @@ async function _computeAvailableModels(registry) {
   // tier por modelo (economy|balanced|premium) → el panel arma el preset "Optimizar coste" sin adivinar
   const tiers = {};
   for (const id of [...byokIds, ...copilotIds]) tiers[id] = classifyTier(id);
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
+  const prices = {};
+  for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 

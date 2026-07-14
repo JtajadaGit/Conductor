@@ -1836,6 +1836,8 @@ return { scanHollowTests };
 __M['cost'] = (function(){
 // conductor/lib/cost.mjs — telemetría de coste por fase desde token-usage.jsonl (esquema gh-aw).
 
+
+
 const PRICE = {
   'claude-opus-4-8': { in: 5, out: 25, tier: 'opus' }, 'claude-opus-4-7': { in: 5, out: 25, tier: 'opus' },
   'claude-sonnet-4-6': { in: 3, out: 15, tier: 'sonnet' }, 'claude-haiku-4-5': { in: 1, out: 5, tier: 'haiku' },
@@ -1853,9 +1855,34 @@ const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 // lookup por PROPIEDAD PROPIA (M9): un id de modelo "toString"/"valueOf"/"constructor" (vienen de la
 // telemetría OTel, no de un enum controlado) hacía que PRICE[model] devolviera la función heredada de
 // Object.prototype → coste NaN run-wide. Se exige propiedad propia y forma {in,out} numérica.
+// PRECIO EN VIVO desde el proxy BYOK (verdad económica, no tabla): serve/byok-save cachean los precios del
+// catálogo del proveedor en ~/.conductor/models-cache.json (solo ids+números, JAMÁS la key) y aquí se consultan
+// ANTES que la tabla estática — un modelo caro servido por tu LiteLLM (clase-premium) deja de salir "0".
+// Modelo sin precio → known:false (0 explícito y MARCADO — el caller puede decir "coste desconocido", nunca
+// un 0 fabricado mudo). Carga perezosa + memoizada; setLivePrices() la refresca tras un fetch en vivo.
+let _live = null; // null = aún no cargado del cache; {} = cargado (con o sin datos)
+function setLivePrices(prices) {
+  _live = {};
+  for (const [id, p] of Object.entries(prices || {})) {
+    const inC = Number(p && p.in), outC = Number(p && p.out);
+    if (Number.isFinite(inC) && Number.isFinite(outC) && inC >= 0 && outC >= 0) _live[_normId(id)] = { in: inC, out: outC, tier: 'byok', known: true };
+  }
+}
+function loadLivePrices(force = false) {
+  if (_live !== null && !force) return;
+  _live = {};
+  try {
+    const home = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+    const cache = JSON.parse(readFileSync(join(home, 'models-cache.json'), 'utf8'));
+    if (cache && cache.byok && cache.byok.prices) setLivePrices(cache.byok.prices);
+  } catch { /* sin cache = sin precios en vivo (la tabla estática sigue cubriendo Copilot) */ }
+}
 function priceOf(model) {
-  const p = _own(PRICE, model) ? PRICE[model] : (_own(_priceIndex, _normId(model)) ? _priceIndex[_normId(model)] : null);
-  return (p && typeof p.in === 'number' && typeof p.out === 'number') ? p : { in: 0, out: 0 };
+  if (_live === null) loadLivePrices();
+  const lk = _normId(model);
+  if (_own(_live, lk)) return _live[lk];
+  const p = _own(PRICE, model) ? PRICE[model] : (_own(_priceIndex, lk) ? _priceIndex[lk] : null);
+  return (p && typeof p.in === 'number' && typeof p.out === 'number') ? { ...p, known: true } : { in: 0, out: 0, known: false };
 }
 const num = (x) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, n) : 0; }; // coerción + clamp ≥0 (L23)
 const costOf = (m, i, o) => { const p = priceOf(m); return (num(i) * p.in + num(o) * p.out) / 1e6; };
@@ -1901,7 +1928,7 @@ function computeCost(jsonlPath) {
   };
 }
 
-return { priceOf, computeCost, PRICE };
+return { setLivePrices, loadLivePrices, priceOf, computeCost, PRICE };
 })();
 
 // ===== lib/core/stats.mjs =====
@@ -1952,7 +1979,7 @@ function aggregateStats(projects) {
   const byModel = Object.create(null); // model -> acumulado
   const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
   const perProject = [];
-  let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0;
+  let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0, unpriced = 0;
   let msTotal = 0, msRuns = 0, tin = 0, tout = 0, cost = 0, naive = 0;
   let fixRuns = 0, recoveredRuns = 0; // self-repair: runs que tuvieron ≥1 ciclo fix y cuántos acabaron GREEN
 
@@ -1981,6 +2008,7 @@ function aggregateStats(projects) {
         const m = ph.model || ph.modelReported || '(sin modelo)';
         const prov = providerOf(ph);
         const c = costOf(m, i, o), nc = costOf(NAIVE, i, o);
+        if (!priceOf(m).known) unpriced++; // HONESTIDAD: fase con modelo sin precio conocido → el total la excluye y se declara
         tin += i; tout += o; cost += c; naive += nc;
         pIn += i; pOut += o; pCost += c; pNaive += nc;
         if (prov === 'byok') pByok++; else pCop++;
@@ -2006,7 +2034,7 @@ function aggregateStats(projects) {
     mean_ms: msRuns ? Math.round(msTotal / msRuns) : 0,
     tokens: { in: tin, out: tout },
     selfRepair: { runs_with_fix: fixRuns, recovered: recoveredRuns, rate_pct: fixRuns > 0 ? +((recoveredRuns / fixRuns) * 100).toFixed(1) : 0 },
-    cost_usd: +cost.toFixed(4), naive_all_premium_usd: +naive.toFixed(4),
+    cost_usd: +cost.toFixed(4), naive_all_premium_usd: +naive.toFixed(4), unpriced,
     saved_usd: +saved.toFixed(4), saved_pct: naive > 0 ? +((saved / naive) * 100).toFixed(1) : 0,
     byProvider: Object.values(byProvider)
       .map((v) => ({ provider: v.provider, calls: v.calls, in: v.in, out: v.out, models: [...v.models], cost_usd: +v.cost.toFixed(4), naive_usd: +v.naive.toFixed(4) }))
@@ -3722,6 +3750,85 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
 }
 
 return { phaseCondMet, resolvePhases, start, redoPlanning, liveSpecIds, next, KNOWN_PHASES, stateFile };
+})();
+
+// ===== lib/pipeline/ttypause.mjs =====
+__M['ttypause'] = (function(){
+// conductor/lib/pipeline/ttypause.mjs — PAUSAS DE REVISIÓN EN TERMINAL (la vía dev-first sin web).
+// El driver pausa antes de apply/verify (o fix) y, sin mini-web ni IPC, el dev decide EN SU CONSOLA:
+// aprobar · nota · modelo · rehacer fase (chat-en-pausa) · stop — las MISMAS decisiones que la web, mismo
+// contrato de resolución de onPause ({} | {note} | {model} | {redo,note} | {selected} | {stop}). Factoría con
+// `ask` inyectable → 100% testeable sin TTY real. 0 deps.
+
+// normaliza la respuesta corta del dev ("a", "", "s", "nota …") a una ACCIÓN
+function parseChoice(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === '' || s === 'a' || s === 'aprobar' || s === 'y' || s === 'yes') return 'approve';
+  if (s === 'n' || s === 'nota' || s === 'note') return 'note';
+  if (s === 'm' || s === 'modelo' || s === 'model') return 'model';
+  if (s === 'r' || s === 'rehacer' || s === 'redo') return 'redo';
+  if (s === 's' || s === 'stop' || s === 'q') return 'stop';
+  if (/^[\d\s,]+$/.test(s)) return 'select'; // "1,3" → selección de hallazgos (pausa fix)
+  return null; // no reconocido → re-preguntar
+}
+
+// "1, 3" → índices 0-based válidos contra la lista de hallazgos (dedup, orden estable)
+function parseSelection(raw, findingsCount) {
+  const idx = [...new Set(String(raw || '').split(/[\s,]+/).filter(Boolean).map((x) => Number(x) - 1))]
+    .filter((i) => Number.isInteger(i) && i >= 0 && i < findingsCount).sort((a, b) => a - b);
+  return idx;
+}
+
+// crea el onPause de terminal. deps: ask(pregunta) → Promise<string> · log(línea). serveUrl opcional (se
+// imprime como alternativa rica). El bucle re-pregunta ante entrada no reconocida (nunca aprueba por typo).
+function createTtyPause({ ask, log, serveUrl = '' }) {
+  return async (info) => {
+    const phase = info?.before || '?';
+    const findings = Array.isArray(info?.findings) ? info.findings : [];
+    log('');
+    log(`⏸ REVISIÓN — pausado antes de "${phase}"${serveUrl ? `  (revisión rica: ${serveUrl})` : ''}`);
+    if (findings.length) {
+      log('  hallazgos del gate:');
+      findings.forEach((f, i) => log(`   ${i + 1}. [${f.severity || 'info'}] ${f.message}${f.file ? ` — ${f.file}` : ''}`));
+    }
+    for (;;) {
+      const menu = findings.length
+        ? '[Enter=corregir todos · 1,3=solo esos · n=nota · m=modelo · s=stop] '
+        : '[Enter=aprobar · n=nota · m=modelo · r=rehacer fase · s=stop] ';
+      const raw = await ask(`  decisión ${menu}`);
+      const choice = parseChoice(raw);
+      if (choice === 'approve') return {};
+      if (choice === 'stop') return { stop: true };
+      if (choice === 'select' && findings.length) {
+        const selected = parseSelection(raw, findings.length);
+        if (selected.length) return { selected };
+        log('  ⚠ ningún número válido — usa índices de la lista (p. ej. "1,3")');
+        continue;
+      }
+      if (choice === 'note') {
+        const note = String(await ask('  nota para esta fase: ')).trim();
+        if (note) return { note };
+        log('  ⚠ nota vacía — nada que enviar'); continue;
+      }
+      if (choice === 'model') {
+        const model = String(await ask('  modelo para esta fase (proveedor:modelo, p. ej. byok:qwen…): ')).trim();
+        if (model) return { model };
+        log('  ⚠ modelo vacío'); continue;
+      }
+      if (choice === 'redo') {
+        if (findings.length) { log('  ⚠ en la pausa de fix se corrigen hallazgos, no se rehace el plan'); continue; }
+        const redo = String(await ask('  fase de planificación a rehacer (explore/propose/clarify/spec/design/tasks): ')).trim().toLowerCase();
+        if (!redo) { log('  ⚠ fase vacía'); continue; }
+        const note = String(await ask('  instrucción para el redo (obligatoria): ')).trim();
+        if (!note) { log('  ⚠ el redo sin instrucción no aporta — escribe qué debe cambiar'); continue; }
+        return { redo, note };
+      }
+      log('  ⚠ no te he entendido — Enter aprueba; s detiene');
+    }
+  };
+}
+
+return { parseChoice, parseSelection, createTtyPause };
 })();
 
 // ===== lib/sysops/confine.mjs =====
@@ -5872,6 +5979,7 @@ const { PRESET_NAMES } = __M['presets'];
 const { resolvePlan, PHASE_ACTION } = __M['plan'];
 const { loadPolicy } = __M['policy'];
 const { classifyTier } = __M['tiers'];
+const { setLivePrices, priceOf } = __M['cost'];
 const { renderAiact } = __M['aiact'];
 // UI ÚNICA = Vite (assets/ui), servida por ui-static. Este fallback mínimo solo aparece si la UI no está
 // compilada (sin assets/ui) — ya no hay UI inline legacy. RUN_PAGE/PANEL_PAGE quedan como este aviso.
@@ -6453,15 +6561,42 @@ function readModelsCache() { return readJson(MODELS_CACHE()); }
 // estable venga la URL del env o del form, con o sin '/' final → sin esto una misma qwen descartaba su cache.
 const normByokUrl = (u) => { const b = String(u || '').replace(/\/+$/, ''); return b ? (b.endsWith('/v1') ? b : b + '/v1') : ''; };
 const byokUrlHash = (u) => createHash('sha256').update(normByokUrl(u)).digest('hex').slice(0, 6);
-function writeModelsCache(byokIds, baseUrl) {
+function writeModelsCache(byokIds, baseUrl, prices = null) {
   if (!byokIds?.length) return; // nunca sobrescribir la cache con una lista vacía (defensa en profundidad)
   try {
     const cur = readJson(MODELS_CACHE()) || {};
     cur.version = 1;
-    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models' };
+    // prices = $/1M por modelo del catálogo del proveedor (solo ids+números, JAMÁS la key). Si el fetch de
+    // precios falló pero el de nombres no, se CONSERVAN los previos del mismo proveedor (mejor el precio de
+    // ayer que un 0 mudo); al cambiar de proveedor (hash distinto) los precios viejos NO se arrastran.
+    const prevPrices = cur.byok && cur.byok.baseUrlHash === byokUrlHash(baseUrl) ? cur.byok.prices : undefined;
+    const effPrices = (prices && Object.keys(prices).length) ? prices : prevPrices;
+    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models', ...(effPrices ? { prices: effPrices } : {}) };
     mkdirSync(CONDUCTOR_HOME(), { recursive: true });
     writeFileSync(MODELS_CACHE(), JSON.stringify(cur, null, 2));
   } catch {}
+}
+// PRECIO REAL por modelo desde el proxy BYOK ($/1M): endpoint de info del catálogo (raíz o /v1 según versión
+// del proxy). null si el proxy no lo expone a esta key → los modelos quedan "sin precio conocido" (se DICE,
+// no se inventa un 0). Exportada para testearse contra un servidor local falso.
+async function fetchByokPrices(baseUrl, apiKey) {
+  const root = String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+  for (const u of [root + '/model/info', root + '/v1/model/info']) {
+    try {
+      const r = await fetch(u, { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const out = {};
+      for (const m of j.data ?? []) {
+        const info = m.model_info || {};
+        const id = m.model_name || m.id;
+        const ic = Number(info.input_cost_per_token), oc = Number(info.output_cost_per_token);
+        if (id && Number.isFinite(ic) && Number.isFinite(oc) && ic >= 0 && oc >= 0) out[id] = { in: +(ic * 1e6).toFixed(4), out: +(oc * 1e6).toFixed(4) };
+      }
+      if (Object.keys(out).length) return out;
+    } catch { /* probar la siguiente forma del endpoint */ }
+  }
+  return null;
 }
 // ¿es `id` un modelo de la familia Copilot (claude/gpt/gemini/o-series/grok)? Se usa para que el grupo
 // BYOK (proveedor propio: qwen/deepseek/…) nunca liste un modelo Copilot por una cache vieja o un run mal
@@ -6510,7 +6645,17 @@ async function _computeAvailableModels(registry) {
     try {
       const base = String(creds.baseUrl).replace(/\/+$/, '');
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
-      if (r.ok) { const j = await r.json(); const ids = []; for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); } if (ids.length) { byokSource = 'LiteLLM /v1/models (en vivo)'; live = true; writeModelsCache(ids, creds.baseUrl); } }
+      if (r.ok) {
+        const j = await r.json(); const ids = [];
+        for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
+        if (ids.length) {
+          byokSource = 'LiteLLM /v1/models (en vivo)'; live = true;
+          // PRECIO REAL en el mismo ciclo: con modelos clase-premium vía LiteLLM, el "byok=0" era mentira.
+          const livePrices = await fetchByokPrices(base, creds.apiKey);
+          writeModelsCache(ids, creds.baseUrl, livePrices);
+          if (livePrices) setLivePrices(livePrices);
+        }
+      }
     } catch {}
   }
   if (!live) {
@@ -6520,7 +6665,7 @@ async function _computeAvailableModels(registry) {
     // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve). Sin creds no hay
     // proveedor actual que validar (curHash=null) → se permite como fallback de display (lanzar byok sin creds ya da BLOCKED).
     const curHash = creds ? byokUrlHash(creds.baseUrl) : null;
-    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; }
+    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); }
   }
   if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
   _models.at = Date.now();
@@ -6547,7 +6692,10 @@ async function _computeAvailableModels(registry) {
   // tier por modelo (economy|balanced|premium) → el panel arma el preset "Optimizar coste" sin adivinar
   const tiers = {};
   for (const id of [...byokIds, ...copilotIds]) tiers[id] = classifyTier(id);
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
+  const prices = {};
+  for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 
@@ -7170,7 +7318,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   });
 }
 
-return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, readModelsCache, writeModelsCache, isCopilotFamily, checkByokModels, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
+return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, readModelsCache, writeModelsCache, fetchByokPrices, isCopilotFamily, checkByokModels, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
 })();
 
 // ===== lib/sysops/ci.mjs =====
@@ -7240,6 +7388,7 @@ return { githubWorkflow, gitlabCi };
 __M['mcp'] = (function(){
 // conductor/lib/mcp.mjs — MCP server (stdio, protocolo 2025-11-25) exponiendo TODO el motor.
 // Sin deps. stdout = solo JSON-RPC; logs a stderr.
+
 
 
 
@@ -7325,6 +7474,33 @@ const TOOLS = {
       const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : name.split('-')[0], srcDir: root, log: (m) => log(m) });
       return { verdict: r.verdict, gate: r.gate || null, phase: r.phase || null, trail: r.trail || [], changeDir };
     } },
+  // ENTRADA UNIVERSAL POR MCP (equivale a /sdd-run): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
+  // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
+  // desde el panel (decisión de producto: la web es la superficie de lanzamiento/revisión, el host solo la abre).
+  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. Equivalent to /sdd-run from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' } }, required: [] } },
+    run: async ({ projectRoot }) => {
+      const root = resolve(projectRoot || process.cwd());
+      const port = Number(process.env.CONDUCTOR_PORT) || 4750;
+      const url = `http://127.0.0.1:${port}/`;
+      const ping = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
+      let alive = await ping();
+      if (!alive) {
+        spawn(process.execPath, [resolve(process.argv[1]), 'serve', root], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
+        for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); alive = await ping(); }
+        if (!alive) return { ok: false, url, error: `la app no arrancó (¿el puerto ${port} lo ocupa otro proceso? diagnostica con \`conductor doctor\`)` };
+      }
+      // foco per-repo server-side (Opción A): una pestaña ya abierta en OTRO repo se re-enfoca sola en su poll
+      let focused = false, name = root.split(/[\\/]/).pop(), openspec = null;
+      try {
+        const fr = await fetch(url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: root }), signal: AbortSignal.timeout(3000) });
+        const j = await fr.json().catch(() => null);
+        if (fr.ok && j && j.ok) { focused = true; name = j.name || name; openspec = j.openspec ?? null; }
+      } catch { /* foco best-effort: sin él la app abre con el foco anterior y se avisa en note */ }
+      if (process.env.CONDUCTOR_NO_OPEN !== '1') {
+        try { const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch { /* sin navegador: la URL devuelta basta */ }
+      }
+      return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
+    } },
 };
 
 function serve() {
@@ -7395,7 +7571,7 @@ const { listArchive, searchChanges } = __M['archive'];
 const { buildAtlas } = __M['atlas'];
 const { seal, verifySeal, generateKeypair, signFile, verifyFile, hashSpecs } = __M['provenance'];
 const { githubWorkflow, gitlabCi } = __M['ci'];
-const { renderDashboard } = __M['dashboard'];
+const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { format, human, isBlocking, count } = __M['report'];
 const R = __M['runner'];
 const { validate } = __M['jsonschema'];
@@ -7405,10 +7581,11 @@ const L = __M['ledger'];
 const { lintMigrations } = __M['migration'];
 const { scoreCandidate } = __M['eval'];
 const { drive, readDriveConfig } = __M['drive'];
+const { createTtyPause } = __M['ttypause'];
 const { initConfig, CONFIG_SCHEMA } = __M['scaffold'];
 const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
-const { createRunServer, createAppServer, writeModelsCache, loadRegistry } = __M['serve'];
+const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
 const { encryptSecret, decryptSecret } = __M['secret'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
@@ -7549,10 +7726,21 @@ switch (cmd) {
       }
       catch (e) { console.error(`serve no disponible: ${e.message}`); }
     }
-    // human-in-the-loop POR DEFECTO cuando hay web: pausa antes de apply y verify para revisar
-    // los artefactos (specs) y aprobar con el botón. --auto (o config autoApprove:true) = sin pausas.
+    // human-in-the-loop POR DEFECTO: con web, aprueba con el botón; SIN web pero con TERMINAL interactiva,
+    // las MISMAS decisiones en la consola (aprobar/nota/modelo/rehacer/stop — vía dev-first). --auto (o
+    // config autoApprove:true) = sin pausas; sin TTY (CI/pipes) el comportamiento de siempre (sin pausas).
     const auto = has('--auto') || ucfg.autoApprove === true;
-    const pause = srv && !auto ? { pauseAt: ['apply', 'verify'], onPause: (info) => { console.log(`⏸ REVISIÓN: aprueba en ${srv.url} para continuar con "${info.before}"`); return srv.waitApproval(info); } } : {};
+    let pause = {}, ttyRl = null;
+    if (!auto && srv) pause = { pauseAt: ['apply', 'verify'], onPause: (info) => { console.log(`⏸ REVISIÓN: aprueba en ${srv.url} para continuar con "${info.before}"`); return srv.waitApproval(info); } };
+    else if (!auto && !ipc && ((process.stdin.isTTY && process.stdout.isTTY) || process.env.CONDUCTOR_TTY === '1')) {
+      // CONDUCTOR_TTY=1 = forzar el modo interactivo donde isTTY no se detecta (Git Bash/MinTTY en Windows).
+      ttyRl = createInterface({ input: process.stdin, output: process.stdout });
+      // Ctrl-C con un question() activo: readline CAPTURA el SIGINT y sin listener el proceso no muere en
+      // ningún OS (el dev quedaría atrapado en la pausa). Salida limpia: el run queda reanudable (resume).
+      ttyRl.on('SIGINT', () => { console.log('\n■ interrumpido — el run queda reanudable desde el panel o con `resume`'); process.exit(130); });
+      const ask = (q) => new Promise((res) => ttyRl.question(q, (a) => res(a)));
+      pause = { pauseAt: ['apply', 'verify'], onPause: createTtyPause({ ask, log: (m) => console.log(m) }) };
+    }
     const r = await drive({
       ...(runner ? { runAgent: runner } : {}),
       ...pause,
@@ -7565,6 +7753,7 @@ switch (cmd) {
       runTests: has('--run-tests'), // toggle "test" del panel: ejecutar pruebas REALES post-gate (verify por ejecución, opcional); fallo → TESTS-FAIL
       srcDir: flag('--src'), log: (m) => console.log(m),
     });
+    if (ttyRl) try { ttyRl.close(); } catch {}
     if (srv) { await new Promise((res) => setTimeout(res, 2500)); await srv.close(); } // margen para el último poll
     // STOPPED = resultado CORRECTO pedido por el humano → exit 0 + cierre explícito; si saliera con
     // código de error, Autopilot lo interpreta como fallo y "sigue trabajando" (bug visto en runtime).
@@ -7691,7 +7880,7 @@ switch (cmd) {
       try {
         const base = String(baseUrl).replace(/\/+$/, '');
         const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
-        if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); writeModelsCache(ids, baseUrl); console.log(`  catálogo cacheado: ${ids.length} modelo(s) — el picker los mostrará en todo arranque`); }
+        if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); const prices = await fetchByokPrices(base, apiKey); writeModelsCache(ids, baseUrl, prices); console.log(`  catálogo cacheado: ${ids.length} modelo(s)${prices ? ` · precio REAL de ${Object.keys(prices).length} modelo(s) del proxy (la app deja de asumir 0€)` : ' · el proxy no expone precios a esta key (se mostrarán como "desconocido", nunca 0 inventado)'}`); }
         else console.log(`  (no pude listar modelos ahora: HTTP ${r.status}; la cache se sembrará en el primer uso del panel)`);
       } catch { console.log('  (sin red ahora → la cache de modelos se sembrará en el primer uso del panel)'); }
     };
@@ -7777,6 +7966,19 @@ switch (cmd) {
     const okk = r.shaOk && r.sigOk;
     console.log(`\nconductor verify (${r.algo})\n  sha256:    ${r.shaOk ? 'OK' : 'TAMPERED'}\n  signature: ${r.sigOk ? 'OK' : 'INVÁLIDA'}${r.reason ? ' (' + r.reason + ')' : ''}\n  verdict sellado: ${r.verdict}\n  → ${okk ? 'INTEGRIDAD + AUTENTICIDAD VERIFICADAS' : 'SELLO INVÁLIDO'}\n`);
     process.exit(okk ? 0 : 1);
+  }
+  case 'receipt': {
+    // RECIBO DE PR por terminal (mismo render que la web): markdown listo para pegar en la descripción del PR.
+    const dirR = pos[0]; if (!dirR || !existsSync(dirR)) bad('receipt <changeDir> [-o out.md]');
+    let tlR = null; try { tlR = JSON.parse(readFileSync(join(dirR, '.conductor', 'timeline.json'), 'utf8')); } catch {}
+    if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) { console.error('receipt: sin timeline todavía — el recibo sale de un run ejecutado'); process.exit(1); }
+    let domR = 'core'; try { domR = JSON.parse(readFileSync(join(dirR, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+    const readOpt = (f) => { try { return readFileSync(join(dirR, f), 'utf8'); } catch { return ''; } };
+    const nameR = resolve(dirR).split(/[\\/]/).pop();
+    const mdR = renderReceipt({ name: nameR, timeline: tlR, spec: readOpt(`specs/${domR}/spec.md`), proposal: readOpt('proposal.md'), verify: readOpt('verify-report.md') });
+    if (!mdR) { console.error('receipt: datos insuficientes para el recibo'); process.exit(1); }
+    const oR = flag('-o'); if (oR) { writeFileSync(oR, mdR); console.log(`recibo de PR → ${oR}`); } else console.log(mdR);
+    process.exit(0);
   }
   case 'dashboard': {
     const dir = pos[0], src = flag('--src'); if (!dir) bad('dashboard <changeDir> --src <dir>');
@@ -8119,6 +8321,7 @@ function printHelp() {
   drift <changeDir> --src <dir> [--format ...] # living-spec: divergencia spec↔código
   ledger append <seal.json> --ledger <p>  ·  ledger verify --ledger <p>   # audit chain
   policy init|validate <f>|enforce <changeDir> [--policy f] [--override "razón"] [--by user]
+  receipt <changeDir> [-o out.md]              # recibo de PR (markdown) del run verificado — pégalo en tu PR
   dashboard <changeDir> --src <d> [--usage j] [-o html]
   eval <changeDir> --src <dir> [--json]        # puntúa la calidad de un cambio del pipeline
   selfcheck [--expect-version v] [--expect-sha h] [--pub key.pem [--sig f]]   # drift + firma del motor
@@ -8163,6 +8366,7 @@ function printStats(r, single) {
   const copPh = cop ? cop.calls : 0, byokPh = byk ? byk.calls : 0, totPh = copPh + byokPh;
   console.log(`\n  AI CREDITS  ${copPh} fase(s) Copilot (premium · consumen AIC) · ${byokPh} fase(s) qwen a 0 AIC (LiteLLM)`);
   if (byokPh) console.log(`  AHORRO      qwen evitó ~${byokPh} petición(es) premium → ${totPh ? Math.round((byokPh / totPh) * 100) : 0}% del trabajo a 0 AIC  (coste estimado ≈${money(r.cost_usd)} · sin mezcla ≈${money(r.naive_all_premium_usd)})`);
+  if (r.unpriced) console.log(`  ⚠ COSTE INCOMPLETO  ${r.unpriced} fase(s) con modelo SIN precio conocido, excluidas del total — \`conductor byok login\` trae el precio real de tu proxy`);
   if (r.perProject.length > 1) {
     console.log(`\n  POR PROYECTO`);
     for (const p of r.perProject) console.log(`    ${trunc(p.id || p.root.split(/[\\/]/).pop(), 24).padEnd(24)} ${p.runs} run(s) (${p.green}✓) · ${p.byok_phases} qwen(0 AIC) / ${p.copilot_phases} Copilot`);
@@ -8181,4 +8385,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 12ab196fb637b0bd949fe48da3847da02e835b8d501ae34d993005eae6b4d4ca
+// build-inputs-sha256: e454f9d76111fb904d1e7108eb18d9923fcce0d2ebeafcc177e768cb8a31cb41

@@ -30,9 +30,12 @@ await test('mcp: tools/list expone el motor completo', async () => {
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
   const list = await c.rpc('tools/list', {});
   const names = list.result.tools.map((t) => t.name);
-  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift'])
+  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift', 'conductor_app'])
     assert(names.includes(n), `falta ${n}`);
   assert(list.result.tools.every((t) => t.inputSchema?.type === 'object'));
+  // conductor_app = la ENTRADA universal (equivale a /sdd-run desde cualquier host MCP): projectRoot opcional
+  const app = list.result.tools.find((t) => t.name === 'conductor_app');
+  assert(app.inputSchema.properties.projectRoot && !(app.inputSchema.required || []).length, 'conductor_app: projectRoot opcional');
   c.srv.kill();
 });
 await test('mcp: conductor_gate ejecuta el gate real', async () => {

@@ -1,5 +1,7 @@
 // conductor/lib/cost.mjs — telemetría de coste por fase desde token-usage.jsonl (esquema gh-aw).
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export const PRICE = {
   'claude-opus-4-8': { in: 5, out: 25, tier: 'opus' }, 'claude-opus-4-7': { in: 5, out: 25, tier: 'opus' },
@@ -18,9 +20,34 @@ const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 // lookup por PROPIEDAD PROPIA (M9): un id de modelo "toString"/"valueOf"/"constructor" (vienen de la
 // telemetría OTel, no de un enum controlado) hacía que PRICE[model] devolviera la función heredada de
 // Object.prototype → coste NaN run-wide. Se exige propiedad propia y forma {in,out} numérica.
+// PRECIO EN VIVO desde el proxy BYOK (verdad económica, no tabla): serve/byok-save cachean los precios del
+// catálogo del proveedor en ~/.conductor/models-cache.json (solo ids+números, JAMÁS la key) y aquí se consultan
+// ANTES que la tabla estática — un modelo caro servido por tu LiteLLM (clase-premium) deja de salir "0".
+// Modelo sin precio → known:false (0 explícito y MARCADO — el caller puede decir "coste desconocido", nunca
+// un 0 fabricado mudo). Carga perezosa + memoizada; setLivePrices() la refresca tras un fetch en vivo.
+let _live = null; // null = aún no cargado del cache; {} = cargado (con o sin datos)
+export function setLivePrices(prices) {
+  _live = {};
+  for (const [id, p] of Object.entries(prices || {})) {
+    const inC = Number(p && p.in), outC = Number(p && p.out);
+    if (Number.isFinite(inC) && Number.isFinite(outC) && inC >= 0 && outC >= 0) _live[_normId(id)] = { in: inC, out: outC, tier: 'byok', known: true };
+  }
+}
+export function loadLivePrices(force = false) {
+  if (_live !== null && !force) return;
+  _live = {};
+  try {
+    const home = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+    const cache = JSON.parse(readFileSync(join(home, 'models-cache.json'), 'utf8'));
+    if (cache && cache.byok && cache.byok.prices) setLivePrices(cache.byok.prices);
+  } catch { /* sin cache = sin precios en vivo (la tabla estática sigue cubriendo Copilot) */ }
+}
 export function priceOf(model) {
-  const p = _own(PRICE, model) ? PRICE[model] : (_own(_priceIndex, _normId(model)) ? _priceIndex[_normId(model)] : null);
-  return (p && typeof p.in === 'number' && typeof p.out === 'number') ? p : { in: 0, out: 0 };
+  if (_live === null) loadLivePrices();
+  const lk = _normId(model);
+  if (_own(_live, lk)) return _live[lk];
+  const p = _own(PRICE, model) ? PRICE[model] : (_own(_priceIndex, lk) ? _priceIndex[lk] : null);
+  return (p && typeof p.in === 'number' && typeof p.out === 'number') ? { ...p, known: true } : { in: 0, out: 0, known: false };
 }
 const num = (x) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, n) : 0; }; // coerción + clamp ≥0 (L23)
 const costOf = (m, i, o) => { const p = priceOf(m); return (num(i) * p.in + num(o) * p.out) / 1e6; };

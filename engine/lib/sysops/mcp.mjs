@@ -3,6 +3,7 @@
 import { createInterface } from 'node:readline';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { spawn, execSync } from 'node:child_process';
 import { checkCoherence } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { checkContract } from '../contract/contract.mjs';
@@ -85,6 +86,33 @@ const TOOLS = {
       const changeDir = join(root, 'openspec', 'changes', name);
       const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : name.split('-')[0], srcDir: root, log: (m) => log(m) });
       return { verdict: r.verdict, gate: r.gate || null, phase: r.phase || null, trail: r.trail || [], changeDir };
+    } },
+  // ENTRADA UNIVERSAL POR MCP (equivale a /sdd-run): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
+  // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
+  // desde el panel (decisión de producto: la web es la superficie de lanzamiento/revisión, el host solo la abre).
+  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. Equivalent to /sdd-run from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' } }, required: [] } },
+    run: async ({ projectRoot }) => {
+      const root = resolve(projectRoot || process.cwd());
+      const port = Number(process.env.CONDUCTOR_PORT) || 4750;
+      const url = `http://127.0.0.1:${port}/`;
+      const ping = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
+      let alive = await ping();
+      if (!alive) {
+        spawn(process.execPath, [resolve(process.argv[1]), 'serve', root], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
+        for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); alive = await ping(); }
+        if (!alive) return { ok: false, url, error: `la app no arrancó (¿el puerto ${port} lo ocupa otro proceso? diagnostica con \`conductor doctor\`)` };
+      }
+      // foco per-repo server-side (Opción A): una pestaña ya abierta en OTRO repo se re-enfoca sola en su poll
+      let focused = false, name = root.split(/[\\/]/).pop(), openspec = null;
+      try {
+        const fr = await fetch(url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: root }), signal: AbortSignal.timeout(3000) });
+        const j = await fr.json().catch(() => null);
+        if (fr.ok && j && j.ok) { focused = true; name = j.name || name; openspec = j.openspec ?? null; }
+      } catch { /* foco best-effort: sin él la app abre con el foco anterior y se avisa en note */ }
+      if (process.env.CONDUCTOR_NO_OPEN !== '1') {
+        try { const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch { /* sin navegador: la URL devuelta basta */ }
+      }
+      return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
 };
 
