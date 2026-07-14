@@ -42,6 +42,35 @@ await test('connect: JSON inválido → error y NO toca nada (jamás pisar la co
   assert(mergeMcpEntry('[1,2]', ENG).error, 'un array tampoco es una config válida');
 });
 
+await test('connect: config REAL de un host corporativo (provider+modelos+permisos) sobrevive INTACTA a la fusión', () => {
+  // forma real de la config de un host de agentes de la empresa (sanitizada): provider con modelos y
+  // variantes de reasoning, permisos, logLevel. La fusión añade el MCP y NO descuadra ni un byte del resto.
+  const hostCfg = {
+    $schema: 'https://host.example/config.json',
+    provider: {
+      litellm: {
+        npm: '@ai-sdk/openai-compatible',
+        options: { baseURL: 'https://proxy.example', apiKey: 'sk-XXXX', timeout: 300000 },
+        models: {
+          'deepseek-v4-pro': { tool_call: true, reasoning: true, limit: { context: 250000, output: 16384 }, variants: { high: { options: { chat_template_kwargs: { thinking: true, reasoning_effort: 'high' } } } } },
+          'glm-v52': { tool_call: true, limit: { context: 250000, output: 16384 } },
+        },
+      },
+    },
+    permission: { doom_loop: 'ask' },
+    logLevel: 'DEBUG',
+  };
+  const r = mergeMcpEntry(JSON.stringify(hostCfg, null, 1), ENG);
+  eq(r.key, 'mcpServers', 'sin clave MCP previa → crea la estándar (se fuerza el formato del host con --key mcp)');
+  const j = JSON.parse(r.text);
+  eq(j.provider, hostCfg.provider, 'el bloque provider (modelos, variantes, límites) queda byte a byte');
+  eq(j.permission, hostCfg.permission); eq(j.logLevel, 'DEBUG'); eq(j.$schema, hostCfg.$schema);
+  const r2 = mergeMcpEntry(JSON.stringify(hostCfg), ENG, { key: 'mcp' });
+  const j2 = JSON.parse(r2.text);
+  eq(j2.mcp.conductor.command, ['node', ENG, 'mcp'], 'formato command-array con clave explícita');
+  eq(j2.provider, hostCfg.provider, 'también intacto con clave explícita');
+});
+
 await test('connect(CLI): --to fusiona en el fichero con backup y la 2ª pasada no cambia nada', () => {
   const dir = join(HERE, '.tmp-connect');
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
