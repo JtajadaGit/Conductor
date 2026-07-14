@@ -340,7 +340,10 @@ switch (cmd) {
       // FALLAR — jamás escribir la key en claro (antes se guardaba en claro con un aviso que un inexperto se saltaba
       // → secreto en disco sin cifrar y "✓" engañoso). Nunca degradar la seguridad en silencio.
       if (!enc || decryptSecret(enc) !== apiKey) { console.error(`✗ No pude cifrar la clave de forma segura (la clave maestra ~/.conductor/.enckey no se pudo leer/crear, o el cifrado no verifica el round-trip — ¿corrupta, o bloqueada por antivirus/permisos?). NO guardo la key en claro. Arréglalo (borra ~/.conductor/.enckey para regenerarla, o revisa permisos) y reintenta.`); process.exit(2); }
-      writeFileSync(file, JSON.stringify({ type, baseUrl, apiKeyEnc: enc, model }, null, 2), { mode: 0o600 });
+      // límites del proveedor (si tu org los define por env o flags, viajan con las creds a TODAS las superficies)
+      const maxOut = Number(flag('--max-output')) || Number(process.env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) || null;
+      const maxIn = Number(flag('--max-input')) || Number(process.env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) || null;
+      writeFileSync(file, JSON.stringify({ type, baseUrl, apiKeyEnc: enc, model, ...(maxOut ? { maxOutputTokens: maxOut } : {}), ...(maxIn ? { maxPromptTokens: maxIn } : {}) }, null, 2), { mode: 0o600 });
       if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // no legible por otros usuarios de la máquina
       console.log(`✓ credenciales BYOK guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`);
       try {
@@ -760,6 +763,25 @@ switch (cmd) {
     }
     break;
   }
+  case 'mcp-config': {
+    // SNIPPET OFICIAL para conectar CUALQUIER host MCP: imprime la config con la ruta REAL del motor en ESTA
+    // máquina, resuelta en runtime — la documentación nunca lleva rutas de nadie y el mismo comando funciona
+    // en Windows/Mac/Linux. Se usa ruta ABSOLUTA + `node` (no el shim `conductor`) a propósito: en macOS las
+    // apps GUI no heredan el PATH del shell, así que un command relativo fallaría justo donde menos se ve.
+    const engineAbs = resolve(process.argv[1]).split('\\').join('/');
+    const vsc = { servers: { conductor: { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] } } };
+    const std = { mcpServers: { conductor: { command: 'node', args: [engineAbs, 'mcp'] } } };
+    console.log('— VS Code · pega en .vscode/mcp.json (workspace) o vía "MCP: Add Server":\n');
+    console.log(JSON.stringify(vsc, null, 2));
+    console.log('\n— hosts MCP con clave "mcpServers" (formato estándar):\n');
+    console.log(JSON.stringify(std, null, 2));
+    // tercer formato extendido: hosts cuya config usa la clave "mcp" con el command como ARRAY
+    const arr = { mcp: { conductor: { type: 'local', command: ['node', engineAbs, 'mcp'], enabled: true } } };
+    console.log('\n— hosts MCP con clave "mcp" y command en ARRAY:\n');
+    console.log(JSON.stringify(arr, null, 2));
+    console.log('\nPega el bloque cuyo formato coincida con la config de tu host. Prueba de humo: en su chat, pide "abre el panel de conductor en este proyecto" (tool conductor_app).');
+    process.exit(0);
+  }
   case 'version': case '--version': console.log(`conductor ${VERSION}`); break;
   default: printHelp();
 }
@@ -796,6 +818,7 @@ function printHelp() {
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
+  mcp-config                                   # imprime el snippet MCP con la ruta REAL de este motor (pégalo en tu host)
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
   process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
 }

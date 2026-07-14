@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,15 @@ await test('mcp: conductor_gate ejecuta el gate real', async () => {
   eq(fail.verdict, 'FAIL');
   c.srv.kill();
 });
+await test('mcp-config: imprime el snippet con la ruta REAL del motor resuelta en runtime (docs sin rutas de nadie)', () => {
+  const out = execFileSync(process.execPath, [BIN, 'mcp-config'], { encoding: 'utf8', windowsHide: true });
+  const enginePath = resolve(BIN).split('\\').join('/');
+  assert(out.includes(enginePath), 'la ruta impresa es la del PROPIO motor que corre: ' + enginePath);
+  assert(out.includes('"servers"') && out.includes('"mcpServers"') && out.includes('"mcp"'), 'las TRES formas de config (VS Code, mcpServers estándar, y clave "mcp" con command en array)');
+  assert(/"command":\s*\[\s*\n?\s*"node"/.test(out.replace(/\s+/g, ' ')) || out.includes('"command": ['), 'el formato array presente (hosts que no usan mcpServers)');
+  assert(out.includes('"mcp"') && out.includes('"node"'), 'command node + subcomando mcp (absoluto: en macOS los GUI no heredan PATH)');
+});
+
 await test('mcp: ping y errores JSON-RPC', async () => {
   const c = client();
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });

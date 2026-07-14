@@ -1033,7 +1033,11 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           if (!apiKeyEnc || decryptSecret(apiKeyEnc) !== key) {
             return json(500, { ok: false, error: 'no se pudo cifrar la clave de forma segura; no se guarda en texto plano. Revisa permisos de ~/.conductor; o exporta COPILOT_PROVIDER_API_KEY en tu shell.' });
           }
-          const data = apiKeyEnc ? { type: type || 'openai', baseUrl: bUrl, apiKeyEnc } : { type: type || 'openai', baseUrl: bUrl, apiKey: key };
+          // límites del proveedor: del form si llegan, si no del env de la app (proxies corporativos los exigen)
+          const maxOutB = Number(b.maxOutputTokens) || Number(process.env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) || null;
+          const maxInB = Number(b.maxPromptTokens) || Number(process.env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) || null;
+          const lims = { ...(maxOutB ? { maxOutputTokens: maxOutB } : {}), ...(maxInB ? { maxPromptTokens: maxInB } : {}) };
+          const data = apiKeyEnc ? { type: type || 'openai', baseUrl: bUrl, apiKeyEnc, ...lims } : { type: type || 'openai', baseUrl: bUrl, apiKey: key, ...lims };
           const bf = join(home, 'byok.json');
           writeFileSync(bf, JSON.stringify(data, null, 2), { mode: 0o600 });
           if (process.platform !== 'win32') try { chmodSync(bf, 0o600); } catch {} // la key no queda legible por otros usuarios

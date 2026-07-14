@@ -241,7 +241,9 @@ export function byokCreds(env = process.env) {
     const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
     // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
-    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai' };
+    // límites del proveedor (algunos proxies corporativos los EXIGEN por env): viajan con las credenciales
+    // para que un run lanzado desde el panel/IDE (sin shell configurada) no salga sin límites → truncados.
+    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai', maxOutputTokens: Number(j.maxOutputTokens) || null, maxPromptTokens: Number(j.maxPromptTokens) || null };
   } catch {}
   return null;
 }
@@ -338,7 +340,12 @@ export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopS
   if (spec.provider === 'copilot') for (const k of BYOK_ENV) delete env[k]; // fase contra el catálogo Business
   if (spec.provider === 'byok' && !env.COPILOT_PROVIDER_API_KEY) {
     const c = byokCreds(env); // fallback ~/.conductor/byok.json (la mezcla funciona sin env exportadas)
-    if (c) { env.COPILOT_PROVIDER_TYPE = c.type; env.COPILOT_PROVIDER_BASE_URL = c.baseUrl; env.COPILOT_PROVIDER_API_KEY = c.apiKey; }
+    if (c) {
+      env.COPILOT_PROVIDER_TYPE = c.type; env.COPILOT_PROVIDER_BASE_URL = c.baseUrl; env.COPILOT_PROVIDER_API_KEY = c.apiKey;
+      // límites del proveedor persistidos con las creds (proxies corporativos los exigen; sin ellos, truncados)
+      if (c.maxOutputTokens && !env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = String(c.maxOutputTokens);
+      if (c.maxPromptTokens && !env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS = String(c.maxPromptTokens);
+    }
     else { try { process.stderr.write(`⚠ byok:${spec.model} pedido SIN credenciales (ni env ni ~/.conductor/byok.json) — la fase irá al CATÁLOGO Business. Arregla con: conductor byok save\n`); } catch {} }
   }
   if (spec.model) env.COPILOT_MODEL = spec.model;

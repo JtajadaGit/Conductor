@@ -4542,7 +4542,9 @@ function byokCreds(env = process.env) {
     const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
     // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
-    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai' };
+    // límites del proveedor (algunos proxies corporativos los EXIGEN por env): viajan con las credenciales
+    // para que un run lanzado desde el panel/IDE (sin shell configurada) no salga sin límites → truncados.
+    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai', maxOutputTokens: Number(j.maxOutputTokens) || null, maxPromptTokens: Number(j.maxPromptTokens) || null };
   } catch {}
   return null;
 }
@@ -4639,7 +4641,12 @@ function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, 
   if (spec.provider === 'copilot') for (const k of BYOK_ENV) delete env[k]; // fase contra el catálogo Business
   if (spec.provider === 'byok' && !env.COPILOT_PROVIDER_API_KEY) {
     const c = byokCreds(env); // fallback ~/.conductor/byok.json (la mezcla funciona sin env exportadas)
-    if (c) { env.COPILOT_PROVIDER_TYPE = c.type; env.COPILOT_PROVIDER_BASE_URL = c.baseUrl; env.COPILOT_PROVIDER_API_KEY = c.apiKey; }
+    if (c) {
+      env.COPILOT_PROVIDER_TYPE = c.type; env.COPILOT_PROVIDER_BASE_URL = c.baseUrl; env.COPILOT_PROVIDER_API_KEY = c.apiKey;
+      // límites del proveedor persistidos con las creds (proxies corporativos los exigen; sin ellos, truncados)
+      if (c.maxOutputTokens && !env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = String(c.maxOutputTokens);
+      if (c.maxPromptTokens && !env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS = String(c.maxPromptTokens);
+    }
     else { try { process.stderr.write(`⚠ byok:${spec.model} pedido SIN credenciales (ni env ni ~/.conductor/byok.json) — la fase irá al CATÁLOGO Business. Arregla con: conductor byok save\n`); } catch {} }
   }
   if (spec.model) env.COPILOT_MODEL = spec.model;
@@ -6995,7 +7002,11 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           if (!apiKeyEnc || decryptSecret(apiKeyEnc) !== key) {
             return json(500, { ok: false, error: 'no se pudo cifrar la clave de forma segura; no se guarda en texto plano. Revisa permisos de ~/.conductor; o exporta COPILOT_PROVIDER_API_KEY en tu shell.' });
           }
-          const data = apiKeyEnc ? { type: type || 'openai', baseUrl: bUrl, apiKeyEnc } : { type: type || 'openai', baseUrl: bUrl, apiKey: key };
+          // límites del proveedor: del form si llegan, si no del env de la app (proxies corporativos los exigen)
+          const maxOutB = Number(b.maxOutputTokens) || Number(process.env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) || null;
+          const maxInB = Number(b.maxPromptTokens) || Number(process.env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) || null;
+          const lims = { ...(maxOutB ? { maxOutputTokens: maxOutB } : {}), ...(maxInB ? { maxPromptTokens: maxInB } : {}) };
+          const data = apiKeyEnc ? { type: type || 'openai', baseUrl: bUrl, apiKeyEnc, ...lims } : { type: type || 'openai', baseUrl: bUrl, apiKey: key, ...lims };
           const bf = join(home, 'byok.json');
           writeFileSync(bf, JSON.stringify(data, null, 2), { mode: 0o600 });
           if (process.platform !== 'win32') try { chmodSync(bf, 0o600); } catch {} // la key no queda legible por otros usuarios
@@ -7874,7 +7885,10 @@ switch (cmd) {
       // FALLAR — jamás escribir la key en claro (antes se guardaba en claro con un aviso que un inexperto se saltaba
       // → secreto en disco sin cifrar y "✓" engañoso). Nunca degradar la seguridad en silencio.
       if (!enc || decryptSecret(enc) !== apiKey) { console.error(`✗ No pude cifrar la clave de forma segura (la clave maestra ~/.conductor/.enckey no se pudo leer/crear, o el cifrado no verifica el round-trip — ¿corrupta, o bloqueada por antivirus/permisos?). NO guardo la key en claro. Arréglalo (borra ~/.conductor/.enckey para regenerarla, o revisa permisos) y reintenta.`); process.exit(2); }
-      writeFileSync(file, JSON.stringify({ type, baseUrl, apiKeyEnc: enc, model }, null, 2), { mode: 0o600 });
+      // límites del proveedor (si tu org los define por env o flags, viajan con las creds a TODAS las superficies)
+      const maxOut = Number(flag('--max-output')) || Number(process.env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) || null;
+      const maxIn = Number(flag('--max-input')) || Number(process.env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) || null;
+      writeFileSync(file, JSON.stringify({ type, baseUrl, apiKeyEnc: enc, model, ...(maxOut ? { maxOutputTokens: maxOut } : {}), ...(maxIn ? { maxPromptTokens: maxIn } : {}) }, null, 2), { mode: 0o600 });
       if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // no legible por otros usuarios de la máquina
       console.log(`✓ credenciales BYOK guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`);
       try {
@@ -8294,6 +8308,25 @@ switch (cmd) {
     }
     break;
   }
+  case 'mcp-config': {
+    // SNIPPET OFICIAL para conectar CUALQUIER host MCP: imprime la config con la ruta REAL del motor en ESTA
+    // máquina, resuelta en runtime — la documentación nunca lleva rutas de nadie y el mismo comando funciona
+    // en Windows/Mac/Linux. Se usa ruta ABSOLUTA + `node` (no el shim `conductor`) a propósito: en macOS las
+    // apps GUI no heredan el PATH del shell, así que un command relativo fallaría justo donde menos se ve.
+    const engineAbs = resolve(process.argv[1]).split('\\').join('/');
+    const vsc = { servers: { conductor: { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] } } };
+    const std = { mcpServers: { conductor: { command: 'node', args: [engineAbs, 'mcp'] } } };
+    console.log('— VS Code · pega en .vscode/mcp.json (workspace) o vía "MCP: Add Server":\n');
+    console.log(JSON.stringify(vsc, null, 2));
+    console.log('\n— hosts MCP con clave "mcpServers" (formato estándar):\n');
+    console.log(JSON.stringify(std, null, 2));
+    // tercer formato extendido: hosts cuya config usa la clave "mcp" con el command como ARRAY
+    const arr = { mcp: { conductor: { type: 'local', command: ['node', engineAbs, 'mcp'], enabled: true } } };
+    console.log('\n— hosts MCP con clave "mcp" y command en ARRAY:\n');
+    console.log(JSON.stringify(arr, null, 2));
+    console.log('\nPega el bloque cuyo formato coincida con la config de tu host. Prueba de humo: en su chat, pide "abre el panel de conductor en este proyecto" (tool conductor_app).');
+    process.exit(0);
+  }
   case 'version': case '--version': console.log(`conductor ${VERSION}`); break;
   default: printHelp();
 }
@@ -8330,6 +8363,7 @@ function printHelp() {
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
+  mcp-config                                   # imprime el snippet MCP con la ruta REAL de este motor (pégalo en tu host)
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
   process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
 }
@@ -8385,4 +8419,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: e454f9d76111fb904d1e7108eb18d9923fcce0d2ebeafcc177e768cb8a31cb41
+// build-inputs-sha256: f21670e027b3692ba5882e0b9b66e1711d5afbdd5fa8cef8c7b57fdbbaa3bb98
