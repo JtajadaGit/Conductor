@@ -17,7 +17,7 @@
 //   conductor version | help
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, chmodSync } from 'node:fs';
-import { execSync, spawn } from 'node:child_process';
+import { execSync, execFileSync, spawn } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
@@ -46,6 +46,7 @@ import { lintMigrations } from '../lib/contract/migration.mjs';
 import { scoreCandidate } from '../lib/gates/eval.mjs';
 import { drive, readDriveConfig } from '../lib/pipeline/drive.mjs';
 import { createTtyPause } from '../lib/pipeline/ttypause.mjs';
+import { mergeMcpEntry } from '../lib/sysops/connect.mjs';
 import { initConfig, CONFIG_SCHEMA } from '../lib/analysis/scaffold.mjs';
 import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
@@ -763,6 +764,40 @@ switch (cmd) {
     }
     break;
   }
+  case 'connect': {
+    // INSTALACIÓN OFICIAL en hosts MCP: UN comando y conectado — sin copiar bloques a mano.
+    //   conductor connect --vscode [dir]                → vía `code --add-mcp` (mecanismo oficial del editor);
+    //                                                     fallback/Windows: fusión en <dir>/.vscode/mcp.json
+    //   conductor connect --to <config> [--key …]       → fusión NO destructiva en la config de CUALQUIER host
+    const engineC = resolve(process.argv[1]).split('\\').join('/');
+    const applyMerge = (f, key) => {
+      const prev = existsSync(f) ? readFileSync(f, 'utf8') : '';
+      const r = mergeMcpEntry(prev, engineC, { key });
+      if (r.error) { console.error(`✗ ${r.error}`); process.exit(1); }
+      if (!r.changed) { console.log(`✓ ya estaba conectado (${f}, clave "${r.key}") — nada que hacer`); process.exit(0); }
+      mkdirSync(dirname(f), { recursive: true });
+      if (prev) writeFileSync(f + '.bak', prev); // backup SOLO si había algo (fusión reversible)
+      writeFileSync(f, r.text);
+      console.log(`✅ conductor conectado: ${f} (clave "${r.key}"${prev ? `, backup ${f}.bak` : ''}).\n   Reinicia el host y pide en su chat: "abre el panel de conductor en este proyecto".`);
+      process.exit(0);
+    };
+    if (has('--vscode')) {
+      const dirV = resolve(pos[0] || '.');
+      // el CLI `code` es la vía oficial; en Windows los shims .cmd no se pueden spawnear sin shell (EINVAL) y
+      // con shell el JSON se descuartiza → en win32 vamos directos a la fusión del fichero (igual de oficial).
+      if (process.platform !== 'win32') {
+        try {
+          execFileSync('code', ['--add-mcp', JSON.stringify({ name: 'conductor', command: 'node', args: [engineC, 'mcp'] })], { stdio: 'pipe', timeout: 15000 });
+          console.log('✅ conductor conectado a VS Code (code --add-mcp). Reinicia la ventana y pide en el chat: "abre el panel de conductor".');
+          process.exit(0);
+        } catch { /* sin CLI `code` en PATH → fusión directa abajo */ }
+      }
+      applyMerge(join(dirV, '.vscode', 'mcp.json'), 'servers');
+    }
+    const to = flag('--to');
+    if (!to) bad('connect --vscode [dir]  |  connect --to <config-del-host> [--key servers|mcpServers|mcp]');
+    applyMerge(resolve(to), flag('--key', 'auto'));
+  }
   case 'mcp-config': {
     // SNIPPET OFICIAL para conectar CUALQUIER host MCP: imprime la config con la ruta REAL del motor en ESTA
     // máquina, resuelta en runtime — la documentación nunca lleva rutas de nadie y el mismo comando funciona
@@ -818,7 +853,8 @@ function printHelp() {
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
-  mcp-config                                   # imprime el snippet MCP con la ruta REAL de este motor (pégalo en tu host)
+  connect --vscode [dir] | --to <config>       # INSTALA conductor en tu host MCP (un comando, fusión no destructiva)
+  mcp-config                                   # (alternativa manual) imprime el snippet MCP con la ruta real del motor
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
   process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
 }

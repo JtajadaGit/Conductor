@@ -3857,6 +3857,48 @@ function assertConfined(root, args, keys) {
 return { isOutside, assertConfined };
 })();
 
+// ===== lib/sysops/connect.mjs =====
+__M['connect'] = (function(){
+// conductor/lib/sysops/connect.mjs — CONEXIÓN OFICIAL a hosts MCP: fusiona la entrada de conductor en la
+// config JSON del host (fusión NO destructiva, idempotente, con detección del formato). Es la instalación
+// "un comando y listo" — nada de copiar bloques a mano. 0 deps, puro (texto → texto) para testearse sin FS.
+//
+// Formatos soportados (detectados por la clave presente en el fichero, u ordenados por `key`):
+//   servers    → { type:'stdio', command:'node', args:[motor,'mcp'] }            (estilo .vscode/mcp.json)
+//   mcpServers → { command:'node', args:[motor,'mcp'] }                          (estándar extendido)
+//   mcp        → { type:'local', command:['node',motor,'mcp'], enabled:true }    (hosts con command en ARRAY)
+
+const KEYS = ['servers', 'mcpServers', 'mcp'];
+
+function entryFor(key, engineAbs) {
+  if (key === 'servers') return { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] };
+  if (key === 'mcp') return { type: 'local', command: ['node', engineAbs, 'mcp'], enabled: true };
+  return { command: 'node', args: [engineAbs, 'mcp'] };
+}
+
+// fusiona la entrada "conductor" en el TEXTO de una config JSON. Devuelve { text, changed, key, error }.
+// - fichero vacío/ausente ("" o undefined) → se crea el objeto con la clave pedida (default mcpServers).
+// - JSON inválido → error (JAMÁS pisar una config que no entendemos; el usuario no pierde nada).
+// - clave detectada automáticamente si ya existe una de las tres; `key` explícita gana.
+// - idempotente: si la entrada ya es EXACTAMENTE la nuestra, changed:false y el texto original intacto.
+function mergeMcpEntry(cfgText, engineAbs, { key = 'auto' } = {}) {
+  const engine = String(engineAbs).split('\\').join('/');
+  let cfg;
+  const raw = String(cfgText || '').trim();
+  if (!raw) cfg = {};
+  else { try { cfg = JSON.parse(raw); } catch (e) { return { error: `la config existente no es JSON válido (${e.message}) — no la toco; arréglala o pásame otro fichero` }; } }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { error: 'la config existente no es un objeto JSON — no la toco' };
+  const effKey = KEYS.includes(key) ? key : (KEYS.find((k) => cfg[k] && typeof cfg[k] === 'object') || 'mcpServers');
+  const entry = entryFor(effKey, engine);
+  const cur = cfg[effKey] && typeof cfg[effKey] === 'object' ? cfg[effKey] : {};
+  if (JSON.stringify(cur.conductor) === JSON.stringify(entry)) return { text: cfgText, changed: false, key: effKey };
+  cfg[effKey] = { ...cur, conductor: entry }; // fusión: las demás entradas del usuario quedan INTACTAS
+  return { text: JSON.stringify(cfg, null, 2) + '\n', changed: true, key: effKey };
+}
+
+return { mergeMcpEntry };
+})();
+
 // ===== lib/analysis/scaffold.mjs =====
 __M['scaffold'] = (function(){
 // conductor/lib/scaffold.mjs — genera la config de usuario (openspec/conductor.json) + su JSON Schema
@@ -7593,6 +7635,7 @@ const { lintMigrations } = __M['migration'];
 const { scoreCandidate } = __M['eval'];
 const { drive, readDriveConfig } = __M['drive'];
 const { createTtyPause } = __M['ttypause'];
+const { mergeMcpEntry } = __M['connect'];
 const { initConfig, CONFIG_SCHEMA } = __M['scaffold'];
 const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
@@ -8308,6 +8351,40 @@ switch (cmd) {
     }
     break;
   }
+  case 'connect': {
+    // INSTALACIÓN OFICIAL en hosts MCP: UN comando y conectado — sin copiar bloques a mano.
+    //   conductor connect --vscode [dir]                → vía `code --add-mcp` (mecanismo oficial del editor);
+    //                                                     fallback/Windows: fusión en <dir>/.vscode/mcp.json
+    //   conductor connect --to <config> [--key …]       → fusión NO destructiva en la config de CUALQUIER host
+    const engineC = resolve(process.argv[1]).split('\\').join('/');
+    const applyMerge = (f, key) => {
+      const prev = existsSync(f) ? readFileSync(f, 'utf8') : '';
+      const r = mergeMcpEntry(prev, engineC, { key });
+      if (r.error) { console.error(`✗ ${r.error}`); process.exit(1); }
+      if (!r.changed) { console.log(`✓ ya estaba conectado (${f}, clave "${r.key}") — nada que hacer`); process.exit(0); }
+      mkdirSync(dirname(f), { recursive: true });
+      if (prev) writeFileSync(f + '.bak', prev); // backup SOLO si había algo (fusión reversible)
+      writeFileSync(f, r.text);
+      console.log(`✅ conductor conectado: ${f} (clave "${r.key}"${prev ? `, backup ${f}.bak` : ''}).\n   Reinicia el host y pide en su chat: "abre el panel de conductor en este proyecto".`);
+      process.exit(0);
+    };
+    if (has('--vscode')) {
+      const dirV = resolve(pos[0] || '.');
+      // el CLI `code` es la vía oficial; en Windows los shims .cmd no se pueden spawnear sin shell (EINVAL) y
+      // con shell el JSON se descuartiza → en win32 vamos directos a la fusión del fichero (igual de oficial).
+      if (process.platform !== 'win32') {
+        try {
+          execFileSync('code', ['--add-mcp', JSON.stringify({ name: 'conductor', command: 'node', args: [engineC, 'mcp'] })], { stdio: 'pipe', timeout: 15000 });
+          console.log('✅ conductor conectado a VS Code (code --add-mcp). Reinicia la ventana y pide en el chat: "abre el panel de conductor".');
+          process.exit(0);
+        } catch { /* sin CLI `code` en PATH → fusión directa abajo */ }
+      }
+      applyMerge(join(dirV, '.vscode', 'mcp.json'), 'servers');
+    }
+    const to = flag('--to');
+    if (!to) bad('connect --vscode [dir]  |  connect --to <config-del-host> [--key servers|mcpServers|mcp]');
+    applyMerge(resolve(to), flag('--key', 'auto'));
+  }
   case 'mcp-config': {
     // SNIPPET OFICIAL para conectar CUALQUIER host MCP: imprime la config con la ruta REAL del motor en ESTA
     // máquina, resuelta en runtime — la documentación nunca lleva rutas de nadie y el mismo comando funciona
@@ -8363,7 +8440,8 @@ function printHelp() {
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
-  mcp-config                                   # imprime el snippet MCP con la ruta REAL de este motor (pégalo en tu host)
+  connect --vscode [dir] | --to <config>       # INSTALA conductor en tu host MCP (un comando, fusión no destructiva)
+  mcp-config                                   # (alternativa manual) imprime el snippet MCP con la ruta real del motor
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
   process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
 }
@@ -8419,4 +8497,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: f21670e027b3692ba5882e0b9b66e1711d5afbdd5fa8cef8c7b57fdbbaa3bb98
+// build-inputs-sha256: 18f47c347778b595a917e5ac20557be16e53fe54a786c2753595666addf51454

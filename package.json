@@ -1,0 +1,20 @@
+{
+  "name": "conductor",
+  "version": "3.12.0",
+  "description": "Spec-Driven Development pipeline. A deterministic driver (code, not an LLM) runs every phase in order with a no-LLM gate.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "conductor": "assets/conductor.mjs"
+  },
+  "files": [
+    "assets",
+    "plugin",
+    "plugin.json",
+    ".mcp.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
