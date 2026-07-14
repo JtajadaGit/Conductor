@@ -8351,6 +8351,45 @@ switch (cmd) {
     }
     break;
   }
+  case 'install': {
+    // ONBOARDING GUIADO (estilo instalador enterprise): UNA orden tras `npm i -g …` y quedas operativo.
+    // Reutiliza los comandos reales como subprocesos (stdio heredado → interactivo de verdad); cada paso es
+    // saltable y un fallo no aborta el resto. Sin TTY (CI/pipes) imprime la checklist y sale — jamás se cuelga.
+    const selfI = resolve(process.argv[1]);
+    const runI = (args) => { try { execFileSync(process.execPath, [selfI, ...args], { stdio: 'inherit', timeout: 600000 }); return true; } catch { return false; } };
+    console.log(`\nconductor ${VERSION} — instalación guiada`);
+    console.log('────────────────────────────────────────────');
+    if (!process.stdin.isTTY && process.env.CONDUCTOR_TTY !== '1') {
+      console.log('Sin terminal interactiva. Los 3 pasos, manuales:\n  1) conductor byok login              credenciales del proxy (una vez, key oculta y cifrada)\n  2) conductor connect --vscode        o  connect --to <config-de-tu-host-MCP>\n  3) conductor                          abre el panel en tu repo');
+      process.exit(0);
+    }
+    // entrada: TTY real → readline interactivo; pipe con CONDUCTOR_TTY=1 (Git Bash/tests) → TODO stdin de
+    // golpe y respuestas en cola (readline pregunta-a-pregunta sobre un pipe PIERDE líneas — carrera conocida,
+    // la misma de byok login). askI devuelve la respuesta CRUDA (un path no debe pasar por toLowerCase).
+    let rlI = null, askI;
+    if (process.stdin.isTTY) {
+      rlI = createInterface({ input: process.stdin, output: process.stdout });
+      askI = (q) => new Promise((res) => rlI.question(q, (a) => res(String(a).trim())));
+    } else {
+      const rawI = await new Promise((res) => { let b = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (d) => b += d); process.stdin.on('end', () => res(b)); });
+      const colaI = rawI.split(/\r?\n/);
+      askI = (q) => { process.stdout.write(q + '\n'); return Promise.resolve(String(colaI.shift() ?? '').trim()); };
+    }
+    const yes = (a) => { const s = String(a).toLowerCase(); return s === '' || s === 's' || s === 'si' || s === 'sí' || s === 'y' || s === 'yes'; };
+    const homeI = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+    if (existsSync(join(homeI, 'byok.json'))) console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
+    else if (yes(await askI('1/3 · ¿Configurar las credenciales del proxy ahora? [S/n] '))) { rlI?.pause(); runI(['byok', 'login']); rlI?.resume(); }
+    else console.log('   (cuando quieras: conductor byok login)');
+    const hI = (await askI('2/3 · ¿Conectar tu editor/host MCP? [1] VS Code · [2] otro host · [Enter] saltar ')).toLowerCase();
+    if (hI === '1') { rlI?.pause(); runI(['connect', '--vscode']); rlI?.resume(); }
+    else if (hI === '2') { const p = await askI('   ruta de la config de tu host: '); if (p) { rlI?.pause(); runI(['connect', '--to', p]); rlI?.resume(); } }
+    else console.log('   (cuando quieras: conductor connect --vscode | --to <config>)');
+    const oI = yes(await askI('3/3 · ¿Abrir el panel ahora en este repo? [S/n] '));
+    rlI?.close();
+    if (oI) runI([]);
+    console.log('\n✅ Listo. A partir de aquí: /sdd-run en Copilot · «abre el panel de conductor» en tu host MCP · `conductor` en terminal.');
+    process.exit(0);
+  }
   case 'connect': {
     // INSTALACIÓN OFICIAL en hosts MCP: UN comando y conectado — sin copiar bloques a mano.
     //   conductor connect --vscode [dir]                → vía `code --add-mcp` (mecanismo oficial del editor);
@@ -8440,7 +8479,8 @@ function printHelp() {
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
-  connect --vscode [dir] | --to <config>       # INSTALA conductor en tu host MCP (un comando, fusión no destructiva)
+  install                                      # instalación GUIADA (credenciales → host → panel) — empieza aquí
+  connect --vscode [dir] | --to <config>       # conecta conductor a tu host MCP (un comando, fusión no destructiva)
   mcp-config                                   # (alternativa manual) imprime el snippet MCP con la ruta real del motor
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
   process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
@@ -8497,4 +8537,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 18f47c347778b595a917e5ac20557be16e53fe54a786c2753595666addf51454
+// build-inputs-sha256: 75bb6a6f27f7d2e7d134354e108ddf1ed1d5cfc64065817b17af13d1983d49a3
