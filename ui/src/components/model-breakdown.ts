@@ -5,7 +5,7 @@ import type { Cost } from '../api/types';
 import { fmt } from '../lib/format';
 
 /** <model-breakdown> — consumo por modelo (tokens + % del output total). Hace tangible el "token-first":
- * se ve qué se hizo gratis (qwen byok) vs premium, fase a fase. */
+ * se ve qué se hizo vía LiteLLM (BYOK) vs premium, fase a fase. */
 @customElement('model-breakdown')
 export class ModelBreakdown extends CElement {
   @property({ attribute: false }) cost: Cost | null = null;

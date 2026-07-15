@@ -75,16 +75,16 @@ export class RunScreen extends CElement {
     try { this.files = await this.api.runFiles(); this.filesSig = sig; } catch { /* reintenta al próximo poll */ }
   }
 
-  // select de modelo en caliente (sustituye al input libre): Copilot + qwen disponibles, como en el panel.
+  // select de modelo en caliente (sustituye al input libre): Copilot + LiteLLM disponibles, como en el panel.
   private hotModelSelect(): TemplateResult {
     const m = this.models;
     const cop = m?.copilot ?? [];
     const byok = m?.byok ?? [];
     const creds = !!m?.byokCreds;
-    return html`<label class="fl">Modelo de esta fase<select .value=${this.hotModel} title=${m ? `Copilot: ${m.copilotSource} · qwen: ${m.byokSource}` : ''} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
+    return html`<label class="fl">Modelo de esta fase<select .value=${this.hotModel} title=${m ? `Copilot: ${m.copilotSource} · LiteLLM: ${m.byokSource}` : ''} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
       <option value="">Mantener el actual</option>
       ${cop.length ? html`<optgroup label="Copilot${m?.copilotPending ? ' · vistos en tus runs' : ''}">${cop.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>` : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
-      ${creds && byok.length ? html`<optgroup label="qwen · LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : nothing}
+      ${creds && byok.length ? html`<optgroup label="LiteLLM · conectado">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : html`<option value="" disabled>LiteLLM: ${creds ? 'catálogo vacío (¿key rechazada? mira el panel)' : 'sin conectar — configura la key en el panel'}</option>`}
     </select></label>`;
   }
 
@@ -365,7 +365,7 @@ export class RunScreen extends CElement {
       <span>${secs(s.total_ms ?? (s.current ? s.now - s.current.startedAt : null))}</span>
       ${tin + tout > 0 ? html`<span title="tokens de entrada/salida acumulados">↓${fmt(tin)} ↑${fmt(tout)}</span>` : nothing}
       ${files ? html`<span>${files} fichero${files === 1 ? '' : 's'}</span>` : nothing}
-      ${sv && sv.byok_phases > 0 ? html`<span class="st-ok" title="fases en qwen vía LiteLLM — 0 AI Credits (↓${fmt(sv.byok_in)} ↑${fmt(sv.byok_out)} tokens fuera de Copilot)">qwen ${sv.byok_phases}/${sv.byok_phases + sv.copilot_phases} · 0 AIC</span>` : nothing}
+      ${sv && sv.byok_phases > 0 ? html`<span class="st-ok" title="fases vía LiteLLM — 0 AI Credits (↓${fmt(sv.byok_in)} ↑${fmt(sv.byok_out)} tokens fuera de Copilot)">LiteLLM ${sv.byok_phases}/${sv.byok_phases + sv.copilot_phases} · 0 AIC</span>` : nothing}
       ${gh ? html`<span title="AI Credits de tu cuenta Copilot">AIC ${gh.used}/${gh.entitlement}</span>` : nothing}
     </div>`;
   }

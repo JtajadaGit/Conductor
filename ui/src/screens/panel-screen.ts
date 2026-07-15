@@ -5,7 +5,6 @@ import { ConductorApi } from '../api/client';
 import { router } from '../router';
 import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate, PlanCheck } from '../api/types';
 import { fmt, kebab, verdictClass, sanitizeProjects } from '../lib/format';
-import { loader } from '../lib/loader';
 import '../components/status-pill';
 import '../components/mention-input';
 
@@ -30,11 +29,6 @@ const CANON_PHASES = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks'
 // GOBIERNO INNEGOCIABLE: estas 3 NO se pueden desmarcar. spec (sin ella no hay coherencia que verificar),
 // apply (sin código no hay nada que entregar) y verify (gate determinista, el motor lo reimpone como fase TERMINAL).
 const LOCKED_PHASES = ['spec', 'apply', 'verify'];
-
-// forma REAL de GET /api/explain (serve.mjs): capacidades como CONTEOS (id · nº endpoints · nº units ·
-// nº ficheros — el motor no vuelca files[], token-first) + borradores de spec/tasks que aquí no pintamos.
-type XrayCap = { id: string; name: string; endpoints: number; units: number; files: number };
-type XrayResponse = { ok: boolean; error?: string; capabilities?: XrayCap[]; hasOpenapi?: boolean };
 
 /** PANTALLA / : métricas del proyecto + formulario de lanzamiento + lista de runs (multi-proyecto). */
 @customElement('panel-screen')
@@ -236,75 +230,6 @@ export class PanelScreen extends CElement {
   // GET /api/explain = ingeniería inversa DETERMINISTA del código (0 LLM · 0 tokens · 0 red): el motor
   // lee el repo enfocado y devuelve las capacidades que ya entiende. Es el "pruébalo sin pagar" del
   // panel: un proyecto SIN runs ve valor ANTES de lanzar nada; con runs sobrevive como pliegue discreto.
-  @state() private xray: XrayCap[] | null = null;
-  @state() private xrayBusy = false;
-  @state() private xrayError = '';
-  private xrayFor = ''; // projectId del último análisis — si el foco cambia de repo, el dato es de OTRO proyecto
-
-  private async fetchXray(): Promise<void> {
-    if (this.xrayBusy) return;
-    const pid = this.projId; // capturado ANTES del await: el foco puede cambiar mientras la respuesta viaja
-    this.xrayBusy = true; this.xrayError = '';
-    try {
-      const r = await fetch('/api/explain' + (pid ? '?projectId=' + encodeURIComponent(pid) : ''));
-      const j = (await r.json().catch(() => null)) as XrayResponse | null;
-      if (j?.ok) { this.xray = j.capabilities ?? []; this.xrayFor = pid; }
-      else { this.xray = null; this.xrayError = j?.error ?? `el análisis no respondió (HTTP ${r.status})`; }
-    } catch {
-      this.xray = null;
-      this.xrayError = 'No se pudo conectar con el servidor local. Comprueba que la aplicación está en ejecución.';
-    } finally { this.xrayBusy = false; }
-  }
-  // ¿el dato pintado corresponde al repo EN FOCO? (Opción A: el foco lo manda el servidor y puede cambiar)
-  private xrayFresh(): boolean { return this.xray !== null && this.xrayFor === this.projId; }
-  private ensureXray(): void { if (!this.xrayFresh() && !this.xrayBusy) void this.fetchXray(); }
-
-  // cuerpo común (tarjeta y pliegue): cargando → error → invitación con botón → resultados o vacío
-  private xrayBody(): TemplateResult {
-    if (this.xrayBusy) return loader('Analizando tu código');
-    if (this.xrayError) {
-      return html`
-        <p class="xray-err" role="alert">${this.xrayError}</p>
-        <button type="button" class="btn sm sec" @click=${() => void this.fetchXray()} aria-label="Reintentar la radiografía del repositorio">Reintentar</button>`;
-    }
-    if (!this.xrayFresh()) {
-      return html`
-        <p class="xray-pitch">conductor lee tu código con <strong>ingeniería inversa determinista</strong> — sin modelos, sin gastar un token, sin salir de tu máquina — y levanta el mapa de capacidades sobre el que el pipeline construye después.</p>
-        <button type="button" class="btn" @click=${() => void this.fetchXray()} aria-label="Analizar el repositorio enfocado — gratis, sin gastar tokens">Analizar mi repo — gratis</button>`;
-    }
-    const caps = this.xray ?? [];
-    if (!caps.length) return html`<p class="xray-note" role="status">Aún no reconozco capacidades en este repo — lanza tu primera feature y el índice crecerá.</p>`;
-    const rows = caps.slice(0, 12);
-    const extra = caps.length - rows.length;
-    return html`
-      <p class="xray-head" role="status">conductor ya entiende <strong>${caps.length} ${caps.length === 1 ? 'capacidad' : 'capacidades'}</strong> de tu código.</p>
-      <ul class="xray-list">
-        ${rows.map((c) => html`<li class="xray-row"><code class="xray-id">${c.id}</code><span class="xray-n">${c.endpoints} endpoint${c.endpoints === 1 ? '' : 's'}</span><span class="xray-n">${c.files} fichero${c.files === 1 ? '' : 's'}</span></li>`)}
-      </ul>
-      ${extra > 0 ? html`<p class="muted xray-more">…y ${extra} más</p>` : nothing}
-      <p class="xray-note">Radiografía determinista: 0 LLM · 0 tokens · 0 red. Sobre este mapa construye el pipeline — la spec de tu primera feature parte de aquí, no de cero.</p>`;
-  }
-
-  // tarjeta COMPLETA (proyecto sin runs): la degustación es el protagonista del estado vacío
-  private xrayCard(): TemplateResult {
-    return html`
-      <section class="xray-card" aria-labelledby="xray-title">
-        <div class="xray-titlerow">
-          <h2 class="sect" id="xray-title">Radiografía del repo</h2>
-          <span class="xray-free">gratis · 0 tokens</span>
-        </div>
-        ${this.xrayBody()}
-      </section>`;
-  }
-  // pliegue DISCRETO (proyecto con runs): no estorba el flujo principal pero la radiografía no se pierde.
-  // Al abrirlo se analiza solo (local y determinista — no hay coste que pedir permiso para gastar).
-  private xrayFold(): TemplateResult {
-    return html`
-      <details class="launch-fold xray-fold" @toggle=${(e: Event) => { if ((e.target as HTMLDetailsElement).open) this.ensureXray(); }}>
-        <summary>🔎 Radiografía del repo <span class="muted" style="font-weight:500">· gratis, 0 tokens</span></summary>
-        <div class="xray-foldbody">${this.xrayBody()}</div>
-      </details>`;
-  }
 
   private async resume(p: ProjectSummary, c: ChangeSummary): Promise<void> {
     const r = await this.api.resumeNamed(c.name, p.id);
@@ -632,12 +557,7 @@ export class PanelScreen extends CElement {
           : doneItems.map(({ p, c }) => this.runRow(p, c))}
       ` : nothing}
 
-      <!-- DEGUSTACIÓN GRATIS: sin runs, la radiografía es la tarjeta protagonista del estado vacío
-           (valor ANTES de lanzar nada); con runs queda como pliegue discreto para no perderla. -->
-      ${m.total === 0 ? html`
-        <p class="muted" style="margin-top:.5rem">Aún no hay runs. Lanza el primero arriba — o prueba antes la radiografía, sin gastar nada.</p>
-        ${this.xrayCard()}
-      ` : this.xrayFold()}
+      ${m.total === 0 ? html`<p class="muted" style="margin-top:.5rem">Aún no hay runs. Lanza el primero arriba.</p>` : nothing}
 
       ${this.archived.length ? html`
         <details class="arch">

@@ -1,6 +1,6 @@
-import{_ as e,d as t,m as n,t as r}from"./index-Gt37scUF.js";var i=class extends t{render(){return e`
+import{_ as e,d as t,m as n,t as r}from"./index-BGWvcg2r.js";var i=class extends t{render(){return e`
       <h1>Cómo funciona</h1>
-      <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluido qwen vía LiteLLM a coste 0 de AI Credits.</p>
+      <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
       <h2 class="sect">Empezar (todo desde esta app)</h2>
       <ol class="muted steps">
@@ -35,7 +35,7 @@ import{_ as e,d as t,m as n,t as r}from"./index-Gt37scUF.js";var i=class extends
       </ul>
 
       <h2 class="sect">Ahorro de tokens, visible</h2>
-      <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla qwen (LiteLLM, 0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. La tarjeta «Ahorro qwen» del run enseña cuántas fases salieron gratis. <a class="lnk" href="/ahorro">Todas las técnicas de ahorro →</a></p>
+      <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla LiteLLM (0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. El chip «LiteLLM · 0 AIC» del run enseña cuántas fases salieron gratis. <a class="lnk" href="/ahorro">Todas las técnicas de ahorro →</a></p>
 
       <h2 class="sect">Transparencia (AI Act)</h2>
       <p class="muted">Cada run produce evidencia: informe del run, sello de procedencia firmado (Ed25519) encadenado al ledger del proyecto, y el informe de transparencia AI Act (modelos usados, aprobaciones humanas, verificación, firma).</p>

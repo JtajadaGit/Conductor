@@ -6898,15 +6898,15 @@ const DEMO_STATE = () => ({
   pending: { before: 'fix', role: 'coder', findings: [{ message: 'REQ-HEADER: el scenario "shows title" no tiene test asociado', severity: 'error', file: 'verify-report.md' }, { message: 'tasks.md: 2/3 tareas sin cerrar', severity: 'warning', file: 'tasks.md' }] },
   approvals: [{ phase: 'apply', at: new Date().toISOString(), via: 'human-web' }],
   phases: [
-    { phase: 'propose', role: 'planner', model: 'qwen36-msc1', provider: 'byok', attempts: 1, ms: 61000, tokens: { in: 433000, out: 1300 }, files: [{ p: 'proposal.md', k: 'create' }], ok: true },
-    { phase: 'spec', role: 'planner', model: 'qwen36-msc1', provider: 'byok', attempts: 2, ms: 64000, tokens: { in: 510000, out: 1500 }, files: [{ p: 'specs/header/spec.md', k: 'create' }], lastError: 'timeout en el intento 1 — reintentado con éxito', ok: true },
+    { phase: 'propose', role: 'planner', model: 'deepseek-v4-flash', provider: 'byok', attempts: 1, ms: 61000, tokens: { in: 433000, out: 1300 }, files: [{ p: 'proposal.md', k: 'create' }], ok: true },
+    { phase: 'spec', role: 'planner', model: 'deepseek-v4-flash', provider: 'byok', attempts: 2, ms: 64000, tokens: { in: 510000, out: 1500 }, files: [{ p: 'specs/header/spec.md', k: 'create' }], lastError: 'timeout en el intento 1 — reintentado con éxito', ok: true },
     { phase: 'apply', role: 'coder', model: 'claude-haiku-4.5', provider: 'copilot', attempts: 1, ms: 180000, tokens: { in: 1083000, out: 16200 }, files: [{ p: 'src/header.js', k: 'create' }, { p: 'src/header.test.js', k: 'create' }, { p: 'src/app.js', k: 'edit' }], ok: true },
-    { phase: 'verify', role: 'reviewer', model: 'qwen36-msc1', provider: 'byok', attempts: 1, ms: 95000, tokens: { in: 200000, out: 900 }, files: [{ p: 'verify-report.md', k: 'create' }], lenses: ['correctness', 'security', 'tests'], ok: true },
+    { phase: 'verify', role: 'reviewer', model: 'deepseek-v4-flash', provider: 'byok', attempts: 1, ms: 95000, tokens: { in: 200000, out: 900 }, files: [{ p: 'verify-report.md', k: 'create' }], lenses: ['correctness', 'security', 'tests'], ok: true },
   ],
-  cost: { byModel: { 'qwen36-msc1 (byok)': { in: 1143000, out: 3700, phases: 3 }, 'claude-haiku-4.5 (copilot)': { in: 1083000, out: 16200, phases: 1 } } },
+  cost: { byModel: { 'deepseek-v4-flash (byok)': { in: 1143000, out: 3700, phases: 3 }, 'claude-haiku-4.5 (copilot)': { in: 1083000, out: 16200, phases: 1 } } },
   live: [{ p: 'src/header.css', k: 'create' }],
   logTail: ['[10:00:01] ⏳ propose (planner)', '[10:01:02] ✅ propose', '[10:02:31] ✅ spec', '[10:05:44] ✅ apply', '[10:05:44] ⏸ pausado antes de "fix" — el gate encontró 2 hallazgos'],
-  modelOptions: ['byok:qwen36-msc1', 'byok:qwen36-msc2', 'copilot:claude-haiku-4.5', 'copilot:claude-sonnet-4.6'],
+  modelOptions: ['byok:deepseek-v4-flash', 'byok:glm-v52', 'copilot:claude-haiku-4.5', 'copilot:claude-sonnet-4.6'],
   usage: { spend: 7.18, budget: 40, runDelta: 0.0123 },
   ghUsage: { plan: 'business', used: 2219, entitlement: 6000, percentUsed: 37, reset: '07-01' },
   verifyExcerpt: '# Verify Report (multi-lens, 3/3)',
@@ -8168,7 +8168,7 @@ switch (cmd) {
     if (has('--json')) { console.log(JSON.stringify(est, null, 2)); process.exit(0); }
     console.log(`\nconductor estimate · ${est.complexity}  (tokens estimados, preflight SIN API)\n`);
     for (const r of est.phases) console.log(`  ${r.phase.padEnd(10)} in ~${String(r.estIn).padStart(6)}  out ~${String(r.estOut).padStart(6)}`);
-    console.log(`\n  TOTAL ~${est.total} tokens (in ~${est.totalIn} · out ~${est.totalOut}). Con BYOK/qwen ≈ $0; con catálogo premium, × tarifa del modelo.\n`);
+    console.log(`\n  TOTAL ~${est.total} tokens (in ~${est.totalIn} · out ~${est.totalOut}). Con modelos LiteLLM el coste va a tu proxy (precio real en la app); con catálogo premium, AIC.\n`);
     process.exit(0);
   }
   case 'skills': {
@@ -8636,19 +8636,19 @@ function printStats(r, single) {
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
-    const label = p.provider === 'byok' ? 'byok (qwen-class · $0)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
+    const label = p.provider === 'byok' ? 'LiteLLM (BYOK · tu proxy)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
     console.log(`    ${trunc(label, 24).padEnd(24)} ${String(p.calls).padStart(4)} fase(s) · ↓${k(p.in)} ↑${k(p.out)}`);
   }
   console.log(`\n  POR MODELO`);
   for (const m of r.byModel) console.log(`    ${trunc(m.model, 22).padEnd(22)} ${String(m.calls).padStart(4)} fase(s) · ↓${k(m.in)} ↑${k(m.out)}  [${m.provider}]`);
   const cop = r.byProvider.find((p) => p.provider === 'copilot'); const byk = r.byProvider.find((p) => p.provider === 'byok');
   const copPh = cop ? cop.calls : 0, byokPh = byk ? byk.calls : 0, totPh = copPh + byokPh;
-  console.log(`\n  AI CREDITS  ${copPh} fase(s) Copilot (premium · consumen AIC) · ${byokPh} fase(s) qwen a 0 AIC (LiteLLM)`);
-  if (byokPh) console.log(`  AHORRO      qwen evitó ~${byokPh} petición(es) premium → ${totPh ? Math.round((byokPh / totPh) * 100) : 0}% del trabajo a 0 AIC  (coste estimado ≈${money(r.cost_usd)} · sin mezcla ≈${money(r.naive_all_premium_usd)})`);
+  console.log(`\n  AI CREDITS  ${copPh} fase(s) Copilot (premium · consumen AIC) · ${byokPh} fase(s) vía LiteLLM a 0 AIC`);
+  if (byokPh) console.log(`  AHORRO      LiteLLM evitó ~${byokPh} petición(es) premium → ${totPh ? Math.round((byokPh / totPh) * 100) : 0}% del trabajo a 0 AIC  (coste estimado ≈${money(r.cost_usd)} · sin mezcla ≈${money(r.naive_all_premium_usd)})`);
   if (r.unpriced) console.log(`  ⚠ COSTE INCOMPLETO  ${r.unpriced} fase(s) con modelo SIN precio conocido, excluidas del total — \`conductor byok login\` trae el precio real de tu proxy`);
   if (r.perProject.length > 1) {
     console.log(`\n  POR PROYECTO`);
-    for (const p of r.perProject) console.log(`    ${trunc(p.id || p.root.split(/[\\/]/).pop(), 24).padEnd(24)} ${p.runs} run(s) (${p.green}✓) · ${p.byok_phases} qwen(0 AIC) / ${p.copilot_phases} Copilot`);
+    for (const p of r.perProject) console.log(`    ${trunc(p.id || p.root.split(/[\\/]/).pop(), 24).padEnd(24)} ${p.runs} run(s) (${p.green}✓) · ${p.byok_phases} LiteLLM(0 AIC) / ${p.copilot_phases} Copilot`);
   }
   console.log('');
 }
@@ -8664,4 +8664,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 0fda70d66e159d5ba22f45d9436e04524d883a90cfcddff886d2b24bc7584822
+// build-inputs-sha256: 7d5c97c858f90cce3d42814fac0fcb68d9b6e624a78758c3472c85468a180058

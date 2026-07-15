@@ -498,7 +498,7 @@ switch (cmd) {
     if (has('--json')) { console.log(JSON.stringify(est, null, 2)); process.exit(0); }
     console.log(`\nconductor estimate · ${est.complexity}  (tokens estimados, preflight SIN API)\n`);
     for (const r of est.phases) console.log(`  ${r.phase.padEnd(10)} in ~${String(r.estIn).padStart(6)}  out ~${String(r.estOut).padStart(6)}`);
-    console.log(`\n  TOTAL ~${est.total} tokens (in ~${est.totalIn} · out ~${est.totalOut}). Con BYOK/qwen ≈ $0; con catálogo premium, × tarifa del modelo.\n`);
+    console.log(`\n  TOTAL ~${est.total} tokens (in ~${est.totalIn} · out ~${est.totalOut}). Con modelos LiteLLM el coste va a tu proxy (precio real en la app); con catálogo premium, AIC.\n`);
     process.exit(0);
   }
   case 'skills': {
@@ -966,19 +966,19 @@ function printStats(r, single) {
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
-    const label = p.provider === 'byok' ? 'byok (qwen-class · $0)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
+    const label = p.provider === 'byok' ? 'LiteLLM (BYOK · tu proxy)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
     console.log(`    ${trunc(label, 24).padEnd(24)} ${String(p.calls).padStart(4)} fase(s) · ↓${k(p.in)} ↑${k(p.out)}`);
   }
   console.log(`\n  POR MODELO`);
   for (const m of r.byModel) console.log(`    ${trunc(m.model, 22).padEnd(22)} ${String(m.calls).padStart(4)} fase(s) · ↓${k(m.in)} ↑${k(m.out)}  [${m.provider}]`);
   const cop = r.byProvider.find((p) => p.provider === 'copilot'); const byk = r.byProvider.find((p) => p.provider === 'byok');
   const copPh = cop ? cop.calls : 0, byokPh = byk ? byk.calls : 0, totPh = copPh + byokPh;
-  console.log(`\n  AI CREDITS  ${copPh} fase(s) Copilot (premium · consumen AIC) · ${byokPh} fase(s) qwen a 0 AIC (LiteLLM)`);
-  if (byokPh) console.log(`  AHORRO      qwen evitó ~${byokPh} petición(es) premium → ${totPh ? Math.round((byokPh / totPh) * 100) : 0}% del trabajo a 0 AIC  (coste estimado ≈${money(r.cost_usd)} · sin mezcla ≈${money(r.naive_all_premium_usd)})`);
+  console.log(`\n  AI CREDITS  ${copPh} fase(s) Copilot (premium · consumen AIC) · ${byokPh} fase(s) vía LiteLLM a 0 AIC`);
+  if (byokPh) console.log(`  AHORRO      LiteLLM evitó ~${byokPh} petición(es) premium → ${totPh ? Math.round((byokPh / totPh) * 100) : 0}% del trabajo a 0 AIC  (coste estimado ≈${money(r.cost_usd)} · sin mezcla ≈${money(r.naive_all_premium_usd)})`);
   if (r.unpriced) console.log(`  ⚠ COSTE INCOMPLETO  ${r.unpriced} fase(s) con modelo SIN precio conocido, excluidas del total — \`conductor byok login\` trae el precio real de tu proxy`);
   if (r.perProject.length > 1) {
     console.log(`\n  POR PROYECTO`);
-    for (const p of r.perProject) console.log(`    ${trunc(p.id || p.root.split(/[\\/]/).pop(), 24).padEnd(24)} ${p.runs} run(s) (${p.green}✓) · ${p.byok_phases} qwen(0 AIC) / ${p.copilot_phases} Copilot`);
+    for (const p of r.perProject) console.log(`    ${trunc(p.id || p.root.split(/[\\/]/).pop(), 24).padEnd(24)} ${p.runs} run(s) (${p.green}✓) · ${p.byok_phases} LiteLLM(0 AIC) / ${p.copilot_phases} Copilot`);
   }
   console.log('');
 }

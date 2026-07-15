@@ -10,11 +10,11 @@ export class FlowScreen extends CElement {
   // EXIGE antes de avanzar (no opinión del LLM): por eso un modelo flojo da peor contenido, no rompe la
   // secuencia.
   private readonly phases = [
-    { ph: 'propose', role: 'planner', prov: 'Copilot/qwen', does: 'Propuesta: Why / What / Impact (lenguaje de dominio, sin nombres de framework).', guard: 'No avanza hasta que existe proposal.md.' },
-    { ph: 'spec', role: 'planner', prov: 'Copilot/qwen', does: 'Spec OpenSpec: requisitos SHALL + escenarios GIVEN/WHEN/THEN, con id REQ-…', guard: 'No avanza sin spec.md con cabecera delta + ≥1 requisito con escenario.' },
-    { ph: 'apply', role: 'coder', prov: 'qwen / Copilot', does: 'Implementa la spec a calidad de producción; comenta @conductor REQ-… en cada fichero.', guard: 'No avanza si el agente no escribió ningún fichero (reintenta).' },
+    { ph: 'propose', role: 'planner', prov: 'Copilot/LiteLLM', does: 'Propuesta: Why / What / Impact (lenguaje de dominio, sin nombres de framework).', guard: 'No avanza hasta que existe proposal.md.' },
+    { ph: 'spec', role: 'planner', prov: 'Copilot/LiteLLM', does: 'Spec OpenSpec: requisitos SHALL + escenarios GIVEN/WHEN/THEN, con id REQ-…', guard: 'No avanza sin spec.md con cabecera delta + ≥1 requisito con escenario.' },
+    { ph: 'apply', role: 'coder', prov: 'LiteLLM / Copilot', does: 'Implementa la spec a calidad de producción; comenta @conductor REQ-… en cada fichero.', guard: 'No avanza si el agente no escribió ningún fichero (reintenta).' },
     { ph: 'test (opcional)', role: 'tester', prov: '0 tokens', does: 'Ejecuta TUS pruebas reales (toggle «test» al lanzar, o checks de conductor.json) — determinista, sin LLM.', guard: 'Si fallan → ciclo fix → re-test; si no converge, escala a ti.' },
-    { ph: 'verify', role: 'reviewer', prov: 'Copilot/qwen', does: 'Revisa por escenario (lentes paralelas: correctness/security/tests) + emite Verdict.', guard: 'GATE determinista (sin LLM) + el Verdict del reviewer: si FAIL → no cierra.' },
+    { ph: 'verify', role: 'reviewer', prov: 'Copilot/LiteLLM', does: 'Revisa por escenario (lentes paralelas: correctness/security/tests) + emite Verdict.', guard: 'GATE determinista (sin LLM) + el Verdict del reviewer: si FAIL → no cierra.' },
   ];
 
   override render(): TemplateResult {
@@ -48,7 +48,7 @@ export class FlowScreen extends CElement {
       <ul class="muted">
         <li><b>Secuencia</b>: el orden de fases lo impone el código (no el prompt). Probado en tests.</li>
         <li><b>Modelo por fase verificable</b>: cada fase loguea modelo+proveedor reales (OTel); badge ✓/⚠ si el proveedor reporta otro.</li>
-        <li><b>Mezcla qwen/Copilot</b>: el Coder (lo más caro en tokens) puede ir a qwen vía LiteLLM (mucho más barato) y el Reviewer a un Copilot capaz — un clic con «Optimizar coste».</li>
+        <li><b>Mezcla LiteLLM/Copilot</b>: el Coder (lo más caro en tokens) puede ir a un modelo económico vía LiteLLM y el Reviewer a un Copilot capaz — un clic con «Optimizar coste».</li>
         <li><b>Pausas de revisión</b>: el tech-lead aprueba, edita la spec, deja nota o cambia el modelo en caliente antes de implementar/verificar (salvo Auto-aprobar).</li>
       </ul>
       <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/">Dashboard</a></p>

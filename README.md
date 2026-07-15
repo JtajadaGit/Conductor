@@ -1,20 +1,29 @@
-# Conductor
+# CONDUCTOR
 
-**Spec-Driven Development verificado para GitHub Copilot — CLI y VS Code**
+**Spec-Driven Development verificado para GitHub Copilot — pipeline conducido por código, gate sin LLM, coste real.**
 
-Conductor convierte la asistencia de IA en un **proceso de ingeniería auditable**: primero la spec, luego el código, y al final **un gate determinista comprueba que lo construido cumple lo especificado** — y lo firma. Funciona con **cualquier modelo** (incluido BYOK gratuito): la secuencia del pipeline la garantiza código, no la buena voluntad del LLM.
+**Versión**: 3.12.0 · **Actualización**: 2026-07-15
+
+---
+
+## Tabla de Contenidos
+
+1. [¿Qué es Conductor?](#1-qué-es-conductor)
+2. [¿Cómo se instala?](#primeros-pasos)
+3. [¿Cómo se utiliza?](#la-app-de-conductor)
+4. [Verificación de la instalación](#verificación-de-la-instalación)
+5. [Coste y modelos](#coste-y-modelos)
+6. [Seguridad](#seguridad)
+7. [El mapa del repo](docs/MAPA.md) · [Integraciones avanzadas](docs/integraciones.md)
+8. [Notas de versión](CHANGELOG.md)
+
+---
+
+## 1. ¿Qué es Conductor?
+
+Conductor convierte la asistencia de IA en un **proceso de ingeniería auditable**: primero la spec, luego el código, y al final **un gate determinista comprueba que lo construido cumple lo especificado** — y lo firma. Funciona con **cualquier modelo** (incluido BYOK): la secuencia del pipeline la garantiza código, no la buena voluntad del LLM.
 
 Una instalación. Cero dependencias. Cero servidores.
-
----
-
-## Contenido
-
-[Por qué Conductor](#por-qué-conductor) | [Cómo funciona](#cómo-funciona) | [Primeros pasos](#primeros-pasos) | [La app](#la-app-de-conductor) | [Coste y modelos](#coste-y-modelos) | [Seguridad](#seguridad) | [Documentación](#documentación)
-
----
-
-## Por qué Conductor
 
 | Sin Conductor | Con Conductor |
 |---|---|
@@ -45,7 +54,7 @@ Pides una feature en una frase. Un **driver determinista** (código, no LLM) rec
 - 🔏 Al cerrar GREEN: `provenance.json` firmado + entrada en el ledger + `dashboard.html`.
 
 ### Atajos desde el chat
-Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) existen como atajos conversacionales, pero todo lo que hacen está también en la app local — que es la superficie recomendada. La garantía dura la da `/sdd-run`.
+Los skills (`/sdd-init`, `/sdd-explain`, `/sdd-instructions`) existen como atajos conversacionales, pero todo lo que hacen está también en la app local — que es la superficie recomendada. Y para quien no quiera la web: **`/sdd-feature <qué construir>`** corre el pipeline completo y devuelve el recibo de PR en el chat (mismo driver, mismo gate; la revisión es post-hoc en lugar de pausas).
 
 ---
 
@@ -69,6 +78,16 @@ Conductor se instala como **un plugin de Copilot** — como cualquier otro que y
 > ¿Prefieres fichero, como en tus otras herramientas? Escribe `~/.conductor/byok.json` con `{"baseUrl": "…", "apiKey": "sk-…"}` — **al primer uso conductor lo sella**: cifra la key y la versión en claro desaparece del disco.
 
 > 🔌 ¿Otro host de agentes, terminal puro o instalación por npm? Existen y están soportados — pero son la excepción, no el camino: **[docs/integraciones.md](docs/integraciones.md)**.
+
+## Verificación de la instalación
+
+Tras instalar, comprueba en menos de un minuto que todo está en su sitio:
+
+1. `/sdd-run` en cualquier repo → debe abrirse `http://127.0.0.1:4750` enfocado en ese repo.
+2. Abre `http://127.0.0.1:4750/demo` → verás un run de muestra completo (pausa del revisor, pipeline, coste) sin gastar un token.
+3. Si configuraste credenciales: el selector de modelos del panel debe listar los modelos de tu proxy (con su precio real).
+
+¿Algo falla? El panel muestra el motivo; y desde una instalación npm, `conductor doctor` diagnostica el entorno completo (proxy corporativo incluido). Log del arranque: `~/.conductor/launcher.log`.
 
 ### 2. Inicializar el proyecto
 ```

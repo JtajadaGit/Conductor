@@ -52,8 +52,8 @@ export interface CostEntry { in: number; out: number; phases: number; }
 export interface Cost { byModel: Record<string, CostEntry>; }
 
 export interface Savings {
-  copilot_phases: number; byok_phases: number; // fases Copilot (consumen AIC) vs qwen/BYOK (0 AIC)
-  byok_in: number; byok_out: number; copilot_in: number; copilot_out: number; // tokens por lado (qwen → LiteLLM)
+  copilot_phases: number; byok_phases: number; // fases Copilot (consumen AIC) vs LiteLLM/BYOK (0 AIC)
+  byok_in: number; byok_out: number; copilot_in: number; copilot_out: number; // tokens por lado (BYOK → LiteLLM)
 }
 export interface Usage { spend: number; budget: number; runDelta: number; }
 export interface GhUsage { plan: string; used: number; entitlement: number; percentUsed: number; reset: string; overage?: boolean; }
@@ -154,7 +154,7 @@ export interface SessionSummary {
   total: number; byCategory: Record<string, number>; models: string[]; agents: string[];
   tools: Record<string, number>; durationMs: number;
   start: { cwd: string | null; branch: string | null; copilotVersion: string | null } | null;
-  reconstructed?: boolean; // true si la traza se reconstruyó desde OTel (qwen/LiteLLM), no del events.jsonl del CLI
+  reconstructed?: boolean; // true si la traza se reconstruyó desde OTel (LiteLLM), no del events.jsonl del CLI
 }
 export interface SessionEvents { total: number; offset: number; limit: number; summary: SessionSummary; events: SessionEvent[]; noTrace?: boolean; }
 
