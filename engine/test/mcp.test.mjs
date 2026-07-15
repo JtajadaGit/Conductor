@@ -30,7 +30,7 @@ await test('mcp: tools/list expone el motor completo', async () => {
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
   const list = await c.rpc('tools/list', {});
   const names = list.result.tools.map((t) => t.name);
-  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift', 'conductor_app'])
+  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift', 'conductor_app', 'conductor_drive', 'conductor_receipt'])
     assert(names.includes(n), `falta ${n}`);
   assert(list.result.tools.every((t) => t.inputSchema?.type === 'object'));
   // conductor_app = la ENTRADA universal (equivale a /sdd-run desde cualquier host MCP): projectRoot opcional
@@ -67,6 +67,22 @@ await test('mcp: STATELESS-tolerante — tools/list y tools/call funcionan SIN i
   const echo = await c.callTool('echo', { text: 'stateless' });
   eq(echo.text, 'stateless', 'tools/call responde sin handshake');
   c.srv.kill();
+});
+
+await test('mcp: conductor_receipt devuelve el recibo de PR de un run (feature completa desde el chat, sin miniweb)', async () => {
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const tmp = join(HERE, '.tmp-mcp-receipt');
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(join(tmp, '.conductor'), { recursive: true });
+  writeFileSync(join(tmp, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'probar recibo por chat', phases: [{ phase: 'apply', model: 'm-x', provider: 'byok', tokens: { in: 10, out: 5 }, files: [{ p: 'src/x.js', k: 'create' }] }] }));
+  const c = client();
+  await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  const r = await c.callTool('conductor_receipt', { changeDir: tmp });
+  assert(r.markdown.includes('verificado con conductor') && r.markdown.includes('src/x.js'), 'recibo markdown completo por MCP');
+  const err = await c.rpc('tools/call', { name: 'conductor_receipt', arguments: { changeDir: join(tmp, 'no-existe') } });
+  assert(err.result?.isError || err.error, 'sin timeline → error claro, no un recibo vacío');
+  c.srv.kill();
+  rmSync(tmp, { recursive: true, force: true });
 });
 
 await test('mcp: ping y errores JSON-RPC', async () => {

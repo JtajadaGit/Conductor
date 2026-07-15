@@ -5,12 +5,21 @@
 // Usage: node engine/build-dist.mjs
 // After running, set marketplace.json > plugins[0].source = "./dist-plugin" to use it.
 
-import { existsSync, mkdirSync, cpSync } from 'fs';
+import { existsSync, mkdirSync, cpSync, rmSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DIST = join(ROOT, 'dist-plugin');
+
+// dist-plugin/ puede ser el CLON permanente del repo de distribución: se vacía en cada build (los chunks
+// hasheados de la UI se acumularían) pero JAMÁS su .git — así "release" = build + commit + tag + push.
+if (existsSync(DIST)) {
+  for (const e of readdirSync(DIST)) {
+    if (e === '.git') continue;
+    rmSync(join(DIST, e), { recursive: true, force: true });
+  }
+}
 
 // Plugin distribution surface — what devs need, nothing more.
 const INCLUDE = [
@@ -20,6 +29,7 @@ const INCLUDE = [
   'package.json', // manifest de la vía npm (npm i -g git+<repo-dist>): bin + files, 0 deps
   'LICENSE',
   'README.md',
+  'CHANGELOG.md', // notas de versión — señal de producto mantenido (formato manual interno)
   'docs/MAPA.md', // el producto en una página (pitch + mapa + uso)
   'docs/integraciones.md', // vías alternativas (npm, hosts MCP, terminal)
   'assets/conductor.mjs',

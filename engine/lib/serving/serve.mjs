@@ -692,6 +692,9 @@ async function _computeAvailableModels(registry) {
     try {
       const base = String(creds.baseUrl).replace(/\/+$/, '');
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
+      // key RECHAZADA por el proxy (rotada/revocada): sin este motivo explícito, el dev veía "byok ✅" (la
+      // key existe y descifra) y un catálogo "observados" mudo — indistinguible de un fallo de red. Caso real.
+      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y re-guárdala (\`conductor byok login\` o el panel).`;
       if (r.ok) {
         const j = await r.json(); const ids = [];
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }

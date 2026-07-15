@@ -55,7 +55,7 @@ await test('packaging: build-dist genera la superficie LIMPIA (dos-repos) — pr
   // el repo instalable ("pro") debe poder ser SOLO esto: da igual si el instalador de plugins clona o filtra.
   execSyncReal(`"${process.execPath}" engine/build-dist.mjs`, { cwd: ROOT, stdio: 'pipe' });
   const dist = join(ROOT, 'dist-plugin');
-  for (const f of ['assets/conductor.mjs', 'assets/ui/index.html', 'plugin.json', 'package.json', '.mcp.json', 'plugin/skills/sdd-run/SKILL.md', 'docs/MAPA.md']) {
+  for (const f of ['assets/conductor.mjs', 'assets/ui/index.html', 'plugin.json', 'package.json', '.mcp.json', 'plugin/skills/sdd-run/SKILL.md', 'docs/MAPA.md', 'CHANGELOG.md']) {
     assert(existsSync(join(dist, f)), `superficie completa: falta ${f}`);
   }
   for (const f of ['engine', 'ui', 'CLAUDE.md', 'task', '.gitattributes']) {

@@ -6754,6 +6754,9 @@ async function _computeAvailableModels(registry) {
     try {
       const base = String(creds.baseUrl).replace(/\/+$/, '');
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
+      // key RECHAZADA por el proxy (rotada/revocada): sin este motivo explícito, el dev veía "byok ✅" (la
+      // key existe y descifra) y un catálogo "observados" mudo — indistinguible de un fallo de red. Caso real.
+      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y re-guárdala (\`conductor byok login\` o el panel).`;
       if (r.ok) {
         const j = await r.json(); const ids = [];
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
@@ -7520,6 +7523,7 @@ const { detectDrift } = __M['drift'];
 const { lintMigrations } = __M['migration'];
 const { assessReadiness } = __M['legacy'];
 const { drive } = __M['drive'];
+const { renderReceipt } = __M['dashboard'];
 const { initConfig } = __M['scaffold'];
 const { assertConfined } = __M['confine'];
 const { count } = __M['report'];
@@ -7590,6 +7594,21 @@ const TOOLS = {
       const changeDir = join(root, 'openspec', 'changes', name);
       const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : name.split('-')[0], srcDir: root, log: (m) => log(m) });
       return { verdict: r.verdict, gate: r.gate || null, phase: r.phase || null, trail: r.trail || [], changeDir };
+    } },
+  // RECIBO EN EL CHAT (feature completa SIN miniweb): tras conductor_drive, el agente presenta el recibo de
+  // PR ahí mismo — qué se pidió, requisitos cubiertos, verificación, modelos y coste. La revisión humana en
+  // este modo es POST-HOC (leer el recibo + verify-report y commitear); las pausas interactivas viven en la
+  // web y en el TTY, no en una llamada MCP única.
+  conductor_receipt: { def: { name: 'conductor_receipt', title: 'PR receipt (markdown) of a verified run', description: 'Return the PR-ready markdown receipt of a change that ran the pipeline (request, covered requirements, files, verification, models, token cost). Call it right after conductor_drive and SHOW the markdown to the user — they review it and commit themselves.', inputSchema: { type: 'object', properties: { changeDir: { type: 'string' } }, required: ['changeDir'] } },
+    run: ({ changeDir }) => {
+      const dir = resolve(changeDir);
+      let tl = null; try { tl = JSON.parse(readFileSync(join(dir, '.conductor', 'timeline.json'), 'utf8')); } catch {}
+      if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) throw new Error('sin timeline todavía — el recibo sale de un run ejecutado (usa conductor_drive primero)');
+      let domain = 'core'; try { domain = JSON.parse(readFileSync(join(dir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+      const rd = (f) => { try { return readFileSync(join(dir, f), 'utf8'); } catch { return ''; } };
+      const md = renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') });
+      if (!md) throw new Error('datos insuficientes para el recibo');
+      return { markdown: md };
     } },
   // ENTRADA UNIVERSAL POR MCP (equivale a /sdd-run): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
   // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
@@ -8645,4 +8664,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 986ba3d787ee4636e3b7d764c41ecb5c5045904c9abc483c1cda5fce8b9efc54
+// build-inputs-sha256: 0fda70d66e159d5ba22f45d9436e04524d883a90cfcddff886d2b24bc7584822

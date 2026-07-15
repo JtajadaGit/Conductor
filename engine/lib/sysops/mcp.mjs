@@ -15,6 +15,7 @@ import { detectDrift } from '../contract/drift.mjs';
 import { lintMigrations } from '../contract/migration.mjs';
 import { assessReadiness } from '../contract/legacy.mjs';
 import { drive } from '../pipeline/drive.mjs';
+import { renderReceipt } from '../serving/dashboard.mjs';
 import { initConfig } from '../analysis/scaffold.mjs';
 import { assertConfined } from './confine.mjs';
 import { count } from '../core/report.mjs';
@@ -86,6 +87,21 @@ const TOOLS = {
       const changeDir = join(root, 'openspec', 'changes', name);
       const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : name.split('-')[0], srcDir: root, log: (m) => log(m) });
       return { verdict: r.verdict, gate: r.gate || null, phase: r.phase || null, trail: r.trail || [], changeDir };
+    } },
+  // RECIBO EN EL CHAT (feature completa SIN miniweb): tras conductor_drive, el agente presenta el recibo de
+  // PR ahí mismo — qué se pidió, requisitos cubiertos, verificación, modelos y coste. La revisión humana en
+  // este modo es POST-HOC (leer el recibo + verify-report y commitear); las pausas interactivas viven en la
+  // web y en el TTY, no en una llamada MCP única.
+  conductor_receipt: { def: { name: 'conductor_receipt', title: 'PR receipt (markdown) of a verified run', description: 'Return the PR-ready markdown receipt of a change that ran the pipeline (request, covered requirements, files, verification, models, token cost). Call it right after conductor_drive and SHOW the markdown to the user — they review it and commit themselves.', inputSchema: { type: 'object', properties: { changeDir: { type: 'string' } }, required: ['changeDir'] } },
+    run: ({ changeDir }) => {
+      const dir = resolve(changeDir);
+      let tl = null; try { tl = JSON.parse(readFileSync(join(dir, '.conductor', 'timeline.json'), 'utf8')); } catch {}
+      if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) throw new Error('sin timeline todavía — el recibo sale de un run ejecutado (usa conductor_drive primero)');
+      let domain = 'core'; try { domain = JSON.parse(readFileSync(join(dir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+      const rd = (f) => { try { return readFileSync(join(dir, f), 'utf8'); } catch { return ''; } };
+      const md = renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') });
+      if (!md) throw new Error('datos insuficientes para el recibo');
+      return { markdown: md };
     } },
   // ENTRADA UNIVERSAL POR MCP (equivale a /sdd-run): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
   // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
