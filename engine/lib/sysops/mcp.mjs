@@ -119,7 +119,7 @@ const TOOLS = {
 export function serve() {
   // ENTRADA ÚNICA `/sdd-run`: el MCP ya NO auto-instala ningún comando `conductor` en el PATH al cargar el plugin
   // (era opaco y fallaba fuera de Windows — en Mac ~/.local/bin no está en PATH; en Linux hasta re-login). El
-  // atajo de terminal es OPCIONAL y explícito (`conductor setup`). Nada se escribe en tu PATH a tus espaldas.
+  // atajo de terminal solo vía instalación npm (crea los shims ella sola). Nada se escribe en tu PATH a tus espaldas.
   const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const failrpc = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });

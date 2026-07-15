@@ -51,38 +51,22 @@ Los skills (`/sdd-init`, `/sdd-status`, `/sdd-explain`, `/sdd-archive`) existen 
 
 ## Primeros pasos
 
-### 1. Instalar conductor
+Conductor se instala como **un plugin de Copilot** — como cualquier otro que ya uses. Una instalación, un arranque:
 
-**Vía npm — recomendada (Windows/Mac/Linux, un comando):**
-```bash
-npm install -g git+<URL-del-repo-interno>#vX.Y.Z
-```
-Instala el comando global `conductor` (npm crea los shims de bash, cmd y PowerShell). Actualizar = el mismo comando con el tag nuevo. Cero dependencias, cero `node_modules` — el motor es un único fichero.
+### 1. Instala el plugin (una vez)
 
-**Vía plugin (si vives en Copilot CLI):**
+**Copilot CLI:**
 ```bash
 /plugin install <URL del repo interno de conductor>
 ```
-Trae las skills `/sdd-*` y el MCP dentro; no necesita el paso 1b.
 
-**VS Code (plugin):** activa `chat.plugins.enabled` y `chat.subagents.allowInvocationsFromSubagents` en settings, luego Command Palette → `Chat: Install Plugin from Source` → URL del repo.
+**VS Code:** activa `chat.plugins.enabled` y `chat.subagents.allowInvocationsFromSubagents` en settings, luego Command Palette → `Chat: Install Plugin from Source` → URL del repo.
 
-> En Windows, si la des/instalación del plugin da `EBUSY`: cierra todas las sesiones de Copilot y reintenta (cada sesión mantiene vivo el MCP del plugin).
+> En Windows, si la des/instalación da `EBUSY`: cierra todas las sesiones de Copilot y reintenta (cada sesión mantiene vivo el MCP del plugin).
 
-### 1b. Conectar tu editor/host MCP (instalación npm)
+**Primera vez**: al abrir el panel, pega la URL de tu proxy y tu key en el formulario — queda **cifrada AES-256-GCM en tu máquina** (jamás en claro, jamás la ve un LLM) y la app te enseña **catálogo y precios reales**.
 
-```bash
-conductor connect --vscode                 # VS Code (mecanismo oficial del editor; fusión no destructiva de fallback)
-conductor connect --to <config-del-host>   # cualquier otro host MCP: detecta el formato, fusiona sin pisar nada, backup, idempotente
-```
-Reinicia el host y pide en su chat: *«abre el panel de conductor en este proyecto»*. (Alternativa manual: `conductor mcp-config` imprime el snippet con la ruta real de TU instalación.)
-
-### 1c. Credenciales BYOK (una vez por máquina)
-
-```bash
-conductor byok login
-```
-La key se teclea **oculta** y queda **cifrada AES-256-GCM** en tu máquina — jamás en claro, jamás en argv, jamás la ve un LLM. También puedes hacerlo desde el panel web. Con ella la app muestra **catálogo y precios reales** de tu proxy. Si tu organización exige límites del proveedor, se capturan de `COPILOT_PROVIDER_MAX_*` (o `--max-output`/`--max-input`).
+> 🔌 ¿Otro host de agentes, terminal puro o instalación por npm? Existen y están soportados — pero son la excepción, no el camino: **[docs/integraciones.md](docs/integraciones.md)**.
 
 ### 2. Inicializar el proyecto
 ```

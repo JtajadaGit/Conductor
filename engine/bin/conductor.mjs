@@ -741,29 +741,8 @@ switch (cmd) {
     console.log(`🌐 conductor: ${url}`);
     break;
   }
-  // instala el comando `conductor` en el PATH del usuario SIN tocar variables de entorno: en Windows un
-  // shim .cmd en WindowsApps (ya está en PATH); en POSIX un script en ~/.local/bin (avisa si no está en PATH).
-  case 'setup': {
-    const engineAbs = resolve(process.argv[1]);
-    // CONDUCTOR_BIN_DIR permite fijar el directorio del shim (tests + usuarios avanzados con su propio bin en PATH).
-    if (process.platform === 'win32') {
-      const dir = process.env.CONDUCTOR_BIN_DIR || join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
-      mkdirSync(dir, { recursive: true });
-      const shim = join(dir, 'conductor.cmd');
-      writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${engineAbs}" %*\r\n`);
-      console.log(`✅ comando instalado: ${shim}\n   Abre una terminal nueva y escribe: conductor`);
-    } else {
-      const dir = process.env.CONDUCTOR_BIN_DIR || join(homedir(), '.local', 'bin');
-      mkdirSync(dir, { recursive: true });
-      const shim = join(dir, 'conductor');
-      writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${engineAbs}" "$@"\n`);
-      try { chmodSync(shim, 0o755); } catch {}
-      const onPath = String(process.env.PATH || '').split(':').includes(dir);
-      const aviso = onPath ? '' : '\n   ⚠ añade ' + dir + ' a tu PATH (en la mayoría de distros basta reabrir la sesión)';
-      console.log('✅ comando instalado: ' + shim + aviso + '\n   Escribe: conductor');
-    }
-    break;
-  }
+  // `setup` (shim manual en PATH) se ELIMINÓ (2026-07-15, anti-Frankenstein): la vía plugin no necesita
+  // comando de terminal y la vía npm crea los shims sola. Doctrina: UN modo de instalación por persona.
   case 'install': {
     // ONBOARDING GUIADO (estilo instalador enterprise): UNA orden tras `npm i -g …` y quedas operativo.
     // Reutiliza los comandos reales como subprocesos (stdio heredado → interactivo de verdad); cada paso es
@@ -885,7 +864,27 @@ switch (cmd) {
 
 function bad(usage) { console.error(`uso: conductor ${usage}`); process.exit(2); }
 function printHelp() {
-  console.log(`conductor ${VERSION} — verificación SDD determinista (0 deps)\n
+  // AYUDA EN DOS NIVELES (anti-Frankenstein): el corto enseña EL BUCLE DIARIO; `help --all` la sala de
+  // máquinas (gates, sellos, ledger, CI…). 35 comandos con la misma jerarquía era el monstruo, no el motor.
+  if (!has('--all')) {
+    console.log(`conductor ${VERSION} — pipeline SDD verificado (0 deps)
+
+  EL BUCLE DIARIO
+    (sin comando)                        abre el panel en este repo (lo arranca si está apagado)
+    drive <changeDir> --request "…" --src .   pipeline completo con pausas en tu consola
+    receipt <changeDir>                  recibo de PR (markdown) del run verificado
+    stats                                tokens, coste REAL y ahorro por proveedor/modelo
+    doctor                               autotest del entorno (proxy, app, bundle)
+
+  PRIMERA VEZ — solo instalación npm (con el plugin de Copilot NO necesitas nada de esto)
+    install                              instalación guiada: credenciales → host → panel
+    byok login                           credenciales del proxy (key oculta, cifrada local)
+    connect --vscode | --to <config>     conecta tu editor/host MCP (fusión no destructiva)
+
+  conductor help --all                   → la sala de máquinas completa (gates, sellos, ledger, CI…)`);
+    process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
+  }
+  console.log(`conductor ${VERSION} — sala de máquinas completa\n
   gate <changeDir> [--src d] [--contract b h] [--format human|json|rdjson|sarif|junit] [--strict]
   contract <base> <head> [--format ...]   # .json=OpenAPI · .sql=esquema BD · .ts=contrato front
   migrate <dir|file.sql>                   # linter de seguridad de migraciones de BD
@@ -911,7 +910,6 @@ function printHelp() {
   eval <changeDir> --src <dir> [--json]        # puntúa la calidad de un cambio del pipeline
   selfcheck [--expect-version v] [--expect-sha h] [--pub key.pem [--sig f]]   # drift + firma del motor
   (sin comando) | app [root]                   # EL GESTO: abre la app (la arranca si está apagada)
-  setup                                        # instala el comando 'conductor' en tu PATH (shim, 3 OS)
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
@@ -919,7 +917,7 @@ function printHelp() {
   connect --vscode [dir] | --to <config>       # conecta conductor a tu host MCP (un comando, fusión no destructiva)
   mcp-config                                   # (alternativa manual) imprime el snippet MCP con la ruta real del motor
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
-  process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
+  process.exit(0);
 }
 function printTrace(t) {
   console.log(`\nconductor trace\n`);

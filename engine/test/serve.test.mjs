@@ -327,19 +327,8 @@ await test('serve(arranque-per-repo): POST /api/focus mueve el FOCO server-side 
   for (const r of [A, B]) rmSync(r, { recursive: true, force: true });
 });
 
-await test('serve(conductor-setup): `conductor setup` instala un shim ejecutable que invoca node + el motor (comando `conductor` en terminal)', () => {
-  const binDir = join(dirname(fileURLToPath(import.meta.url)), '.tmp-setup-bin');
-  rmSync(binDir, { recursive: true, force: true });
-  const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'conductor.mjs');
-  // CONDUCTOR_BIN_DIR redirige el shim a un dir temporal (no toca el WindowsApps/~/.local/bin real)
-  execFileSync(process.execPath, [bin, 'setup'], { env: { ...process.env, CONDUCTOR_BIN_DIR: binDir }, stdio: 'pipe', windowsHide: true });
-  const shim = join(binDir, process.platform === 'win32' ? 'conductor.cmd' : 'conductor');
-  assert(existsSync(shim), 'setup escribió el shim en CONDUCTOR_BIN_DIR');
-  const body = readFileSync(shim, 'utf8');
-  assert(/conductor\.mjs/.test(body), 'el shim invoca el motor conductor.mjs: ' + body.slice(0, 140));
-  assert(body.includes(process.execPath.split(/[\\/]/).pop()), 'el shim invoca node');
-  rmSync(binDir, { recursive: true, force: true });
-});
+// `conductor setup` se ELIMINÓ (2026-07-15, anti-Frankenstein): la vía plugin no necesita comando de
+// terminal y la vía npm crea los shims sola. Su test se retiró con él.
 
 await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-GCM — nunca en claro, ni en argv, ni en el output (el LLM no la ve)', () => {
   const home = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-login');

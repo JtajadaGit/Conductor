@@ -7566,7 +7566,7 @@ const TOOLS = {
 function serve() {
   // ENTRADA ÚNICA `/sdd-run`: el MCP ya NO auto-instala ningún comando `conductor` en el PATH al cargar el plugin
   // (era opaco y fallaba fuera de Windows — en Mac ~/.local/bin no está en PATH; en Linux hasta re-login). El
-  // atajo de terminal es OPCIONAL y explícito (`conductor setup`). Nada se escribe en tu PATH a tus espaldas.
+  // atajo de terminal solo vía instalación npm (crea los shims ella sola). Nada se escribe en tu PATH a tus espaldas.
   const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');
   const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
   const failrpc = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
@@ -8335,29 +8335,8 @@ switch (cmd) {
     console.log(`🌐 conductor: ${url}`);
     break;
   }
-  // instala el comando `conductor` en el PATH del usuario SIN tocar variables de entorno: en Windows un
-  // shim .cmd en WindowsApps (ya está en PATH); en POSIX un script en ~/.local/bin (avisa si no está en PATH).
-  case 'setup': {
-    const engineAbs = resolve(process.argv[1]);
-    // CONDUCTOR_BIN_DIR permite fijar el directorio del shim (tests + usuarios avanzados con su propio bin en PATH).
-    if (process.platform === 'win32') {
-      const dir = process.env.CONDUCTOR_BIN_DIR || join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
-      mkdirSync(dir, { recursive: true });
-      const shim = join(dir, 'conductor.cmd');
-      writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${engineAbs}" %*\r\n`);
-      console.log(`✅ comando instalado: ${shim}\n   Abre una terminal nueva y escribe: conductor`);
-    } else {
-      const dir = process.env.CONDUCTOR_BIN_DIR || join(homedir(), '.local', 'bin');
-      mkdirSync(dir, { recursive: true });
-      const shim = join(dir, 'conductor');
-      writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${engineAbs}" "$@"\n`);
-      try { chmodSync(shim, 0o755); } catch {}
-      const onPath = String(process.env.PATH || '').split(':').includes(dir);
-      const aviso = onPath ? '' : '\n   ⚠ añade ' + dir + ' a tu PATH (en la mayoría de distros basta reabrir la sesión)';
-      console.log('✅ comando instalado: ' + shim + aviso + '\n   Escribe: conductor');
-    }
-    break;
-  }
+  // `setup` (shim manual en PATH) se ELIMINÓ (2026-07-15, anti-Frankenstein): la vía plugin no necesita
+  // comando de terminal y la vía npm crea los shims sola. Doctrina: UN modo de instalación por persona.
   case 'install': {
     // ONBOARDING GUIADO (estilo instalador enterprise): UNA orden tras `npm i -g …` y quedas operativo.
     // Reutiliza los comandos reales como subprocesos (stdio heredado → interactivo de verdad); cada paso es
@@ -8479,7 +8458,27 @@ switch (cmd) {
 
 function bad(usage) { console.error(`uso: conductor ${usage}`); process.exit(2); }
 function printHelp() {
-  console.log(`conductor ${VERSION} — verificación SDD determinista (0 deps)\n
+  // AYUDA EN DOS NIVELES (anti-Frankenstein): el corto enseña EL BUCLE DIARIO; `help --all` la sala de
+  // máquinas (gates, sellos, ledger, CI…). 35 comandos con la misma jerarquía era el monstruo, no el motor.
+  if (!has('--all')) {
+    console.log(`conductor ${VERSION} — pipeline SDD verificado (0 deps)
+
+  EL BUCLE DIARIO
+    (sin comando)                        abre el panel en este repo (lo arranca si está apagado)
+    drive <changeDir> --request "…" --src .   pipeline completo con pausas en tu consola
+    receipt <changeDir>                  recibo de PR (markdown) del run verificado
+    stats                                tokens, coste REAL y ahorro por proveedor/modelo
+    doctor                               autotest del entorno (proxy, app, bundle)
+
+  PRIMERA VEZ — solo instalación npm (con el plugin de Copilot NO necesitas nada de esto)
+    install                              instalación guiada: credenciales → host → panel
+    byok login                           credenciales del proxy (key oculta, cifrada local)
+    connect --vscode | --to <config>     conecta tu editor/host MCP (fusión no destructiva)
+
+  conductor help --all                   → la sala de máquinas completa (gates, sellos, ledger, CI…)`);
+    process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
+  }
+  console.log(`conductor ${VERSION} — sala de máquinas completa\n
   gate <changeDir> [--src d] [--contract b h] [--format human|json|rdjson|sarif|junit] [--strict]
   contract <base> <head> [--format ...]   # .json=OpenAPI · .sql=esquema BD · .ts=contrato front
   migrate <dir|file.sql>                   # linter de seguridad de migraciones de BD
@@ -8505,7 +8504,6 @@ function printHelp() {
   eval <changeDir> --src <dir> [--json]        # puntúa la calidad de un cambio del pipeline
   selfcheck [--expect-version v] [--expect-sha h] [--pub key.pem [--sig f]]   # drift + firma del motor
   (sin comando) | app [root]                   # EL GESTO: abre la app (la arranca si está apagada)
-  setup                                        # instala el comando 'conductor' en tu PATH (shim, 3 OS)
   serve <root>                                 # app única (panel) en :4750
   ping | stop | restart [root]                 # ciclo de vida de la app única (:4750)
   stats [--project <ruta>] [--json]            # uso real qwen+Copilot: tokens, coste y AHORRO por proveedor/modelo
@@ -8513,7 +8511,7 @@ function printHelp() {
   connect --vscode [dir] | --to <config>       # conecta conductor a tu host MCP (un comando, fusión no destructiva)
   mcp-config                                   # (alternativa manual) imprime el snippet MCP con la ruta real del motor
   ci [--gitlab] [-o path]  ·  mcp  ·  doctor  ·  version`);
-  process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
+  process.exit(0);
 }
 function printTrace(t) {
   console.log(`\nconductor trace\n`);
@@ -8567,4 +8565,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 5b626ce85361fb8d9e4c3d062a0ca0dab64375ec1a0a53823af224d91d99bcd7
+// build-inputs-sha256: 5cf18cea5c7f2770034df9375b6715263d6af152e6bf083b0c2c7261d8f528a3

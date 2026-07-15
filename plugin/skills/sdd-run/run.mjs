@@ -133,7 +133,7 @@ const MY_VER = (() => { try { return JSON.parse(readFileSync(resolve(HERE, '..',
 
 // ENTRADA ÚNICA `/sdd-run` (dentro de Copilot, multiplataforma): ya NO auto-instalamos ningún comando de
 // terminal — nada se escribe en tu PATH a tus espaldas (fallaba fuera de Windows y era opaco). El atajo
-// `conductor` en terminal es OPCIONAL y explícito: se instala corriendo `conductor setup` a conciencia.
+// `conductor` en terminal es OPCIONAL: llega solo con la instalación npm (docs/integraciones.md), jamás solo.
 
 const main = async () => {
   if (OPEN_ONLY) {
