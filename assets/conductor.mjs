@@ -195,6 +195,25 @@ function decryptSecret(enc) {
 // SOLO ante blobs DPAPI legacy en un SO no-Windows (ilegibles ahí → hay que re-guardar).
 function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
 
+// SELLADO AL PRIMER USO (hábito-de-fichero sin plaintext en reposo): el dev puede escribir a mano
+// ~/.conductor/byok.json con {"baseUrl","apiKey"} — su gesto de siempre — y al primer toque conductor
+// CIFRA la key y reescribe el fichero (apiKeyEnc, 0600); la key en claro desaparece del disco. Si el
+// cifrado no verifica round-trip, NO se toca nada (mejor plaintext utilizable que credenciales rotas);
+// el aviso de "sin cifrar" ya lo da `byok status`. Devuelve true solo si selló.
+function sealByokFile(home = homeDir()) {
+  try {
+    const p = join(home, 'byok.json');
+    const j = JSON.parse(readFileSync(p, 'utf8'));
+    if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
+    const enc = encryptSecret(j.apiKey);
+    if (!enc || decryptSecret(enc) !== j.apiKey) return false;
+    const { apiKey, ...rest } = j;
+    writeFileSync(p, JSON.stringify({ ...rest, apiKeyEnc: enc }, null, 2), { mode: 0o600 });
+    try { chmodSync(p, 0o600); } catch {}
+    return true;
+  } catch { return false; }
+}
+
 // --- retrocompat: descifrado DPAPI de blobs guardados con la versión anterior (Windows). Ya no se CIFRA así. ---
 function decryptDpapiLegacy(enc) {
   if (process.platform !== 'win32' || !enc) return null;
@@ -211,7 +230,7 @@ function decryptDpapiLegacy(enc) {
   return null;
 }
 
-return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob };
+return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, sealByokFile };
 })();
 
 // ===== lib/core/report.mjs =====
@@ -1861,6 +1880,7 @@ const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 // Modelo sin precio → known:false (0 explícito y MARCADO — el caller puede decir "coste desconocido", nunca
 // un 0 fabricado mudo). Carga perezosa + memoizada; setLivePrices() la refresca tras un fetch en vivo.
 let _live = null; // null = aún no cargado del cache; {} = cargado (con o sin datos)
+let _meta = null; // metadatos POR MODELO del proxy (límites de contexto/output) — misma mecánica lazy
 function setLivePrices(prices) {
   _live = {};
   for (const [id, p] of Object.entries(prices || {})) {
@@ -1868,14 +1888,27 @@ function setLivePrices(prices) {
     if (Number.isFinite(inC) && Number.isFinite(outC) && inC >= 0 && outC >= 0) _live[_normId(id)] = { in: inC, out: outC, tier: 'byok', known: true };
   }
 }
+function setLiveMeta(meta) {
+  _meta = {};
+  for (const [id, m] of Object.entries(meta || {})) {
+    const maxIn = Number(m && m.maxIn) || null, maxOut = Number(m && m.maxOut) || null;
+    if (maxIn || maxOut) _meta[_normId(id)] = { ...(maxIn ? { maxIn } : {}), ...(maxOut ? { maxOut } : {}) };
+  }
+}
+// límites reales del modelo según el catálogo del proxy (cacheados) — null si no expuestos (se DICE, no se inventa)
+function metaOf(model) {
+  if (_meta === null) loadLivePrices();
+  return _meta[_normId(model)] || null;
+}
 function loadLivePrices(force = false) {
   if (_live !== null && !force) return;
-  _live = {};
+  _live = {}; _meta = {};
   try {
     const home = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     const cache = JSON.parse(readFileSync(join(home, 'models-cache.json'), 'utf8'));
     if (cache && cache.byok && cache.byok.prices) setLivePrices(cache.byok.prices);
-  } catch { /* sin cache = sin precios en vivo (la tabla estática sigue cubriendo Copilot) */ }
+    if (cache && cache.byok && cache.byok.meta) setLiveMeta(cache.byok.meta);
+  } catch { /* sin cache = sin precios/límites en vivo (la tabla estática sigue cubriendo Copilot) */ }
 }
 function priceOf(model) {
   if (_live === null) loadLivePrices();
@@ -1928,7 +1961,7 @@ function computeCost(jsonlPath) {
   };
 }
 
-return { setLivePrices, loadLivePrices, priceOf, computeCost, PRICE };
+return { setLivePrices, setLiveMeta, metaOf, loadLivePrices, priceOf, computeCost, PRICE };
 })();
 
 // ===== lib/core/stats.mjs =====
@@ -4383,11 +4416,13 @@ const { detectStack, renderStackHint } = __M['stack'];
 const { buildVerifiedIndex, buildBrownfieldMap } = __M['atlas'];
 const { buildCodeMap, renderCodeMap } = __M['codemap'];
 const { tierModel } = __M['tiers'];
-const { priceOf } = __M['cost'];
+const { priceOf, metaOf } = __M['cost'];
 const { budgetContextFiles, summarizeArtifact } = __M['estimate'];
 const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
-const { decryptSecret } = __M['secret'];
+const { decryptSecret, sealByokFile } = __M['secret'];
+let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
+
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
 
 // redacta secretos del CRUDO del modelo antes de persistirlo/servirlo (defensa en profundidad: aunque el
@@ -4590,6 +4625,8 @@ function byokCreds(env = process.env) {
     const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
     // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
+    // key en claro (fichero escrito a mano por el dev) → SELLAR al primer toque (best-effort, 1 vez/proceso)
+    if (j.apiKey && !_byokSealedD) { _byokSealedD = true; try { sealByokFile(home); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
     // límites del proveedor (algunos proxies corporativos los EXIGEN por env): viajan con las credenciales
     // para que un run lanzado desde el panel/IDE (sin shell configurada) no salga sin límites → truncados.
@@ -4695,6 +4732,13 @@ function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, 
       // límites del proveedor persistidos con las creds (proxies corporativos los exigen; sin ellos, truncados)
       if (c.maxOutputTokens && !env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = String(c.maxOutputTokens);
       if (c.maxPromptTokens && !env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS = String(c.maxPromptTokens);
+    }
+    // límites POR MODELO en vivo (catálogo del proxy, cacheados): si ni el env ni byok.json fijan uno global,
+    // cada fase sale con los límites de SU modelo (contextos distintos por modelo = la realidad del proxy).
+    const mm = metaOf(spec.model);
+    if (mm) {
+      if (mm.maxOut && !env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = String(mm.maxOut);
+      if (mm.maxIn && !env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS = String(mm.maxIn);
     }
     else { try { process.stderr.write(`⚠ byok:${spec.model} pedido SIN credenciales (ni env ni ~/.conductor/byok.json) — la fase irá al CATÁLOGO Business. Arregla con: conductor byok save\n`); } catch {} }
   }
@@ -6035,7 +6079,7 @@ const { PRESET_NAMES } = __M['presets'];
 const { resolvePlan, PHASE_ACTION } = __M['plan'];
 const { loadPolicy } = __M['policy'];
 const { classifyTier } = __M['tiers'];
-const { setLivePrices, priceOf } = __M['cost'];
+const { setLivePrices, setLiveMeta, metaOf, priceOf } = __M['cost'];
 const { renderAiact } = __M['aiact'];
 // UI ÚNICA = Vite (assets/ui), servida por ui-static. Este fallback mínimo solo aparece si la UI no está
 // compilada (sin assets/ui) — ya no hay UI inline legacy. RUN_PAGE/PANEL_PAGE quedan como este aviso.
@@ -6052,7 +6096,7 @@ const { parseEvents, parseOtelSession } = __M['events'];
 const { listCopilotModels } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
-const { decryptSecret, encryptSecret, isPortableBlob } = __M['secret'];
+const { decryptSecret, encryptSecret, isPortableBlob, sealByokFile } = __M['secret'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
   if (!root || !rel) return null;
@@ -6603,12 +6647,15 @@ function byokCredsLocal() {
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
     const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
-    // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
+    // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
+    // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
+    if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
     if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai' };
   } catch {}
   return null;
 }
+let _byokSealed = false;
 // cache de NOMBRES de modelo (los ids NO son secretos; la KEY sí). Hace que el picker muestre qwen
 // SIEMPRE, aunque la app arranque sin credenciales — se siembra al hacer `byok save` o un fetch en vivo.
 const MODELS_CACHE = () => join(CONDUCTOR_HOME(), 'models-cache.json');
@@ -6617,17 +6664,18 @@ function readModelsCache() { return readJson(MODELS_CACHE()); }
 // estable venga la URL del env o del form, con o sin '/' final → sin esto una misma qwen descartaba su cache.
 const normByokUrl = (u) => { const b = String(u || '').replace(/\/+$/, ''); return b ? (b.endsWith('/v1') ? b : b + '/v1') : ''; };
 const byokUrlHash = (u) => createHash('sha256').update(normByokUrl(u)).digest('hex').slice(0, 6);
-function writeModelsCache(byokIds, baseUrl, prices = null) {
+function writeModelsCache(byokIds, baseUrl, prices = null, meta = null) {
   if (!byokIds?.length) return; // nunca sobrescribir la cache con una lista vacía (defensa en profundidad)
   try {
     const cur = readJson(MODELS_CACHE()) || {};
     cur.version = 1;
-    // prices = $/1M por modelo del catálogo del proveedor (solo ids+números, JAMÁS la key). Si el fetch de
-    // precios falló pero el de nombres no, se CONSERVAN los previos del mismo proveedor (mejor el precio de
-    // ayer que un 0 mudo); al cambiar de proveedor (hash distinto) los precios viejos NO se arrastran.
-    const prevPrices = cur.byok && cur.byok.baseUrlHash === byokUrlHash(baseUrl) ? cur.byok.prices : undefined;
-    const effPrices = (prices && Object.keys(prices).length) ? prices : prevPrices;
-    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models', ...(effPrices ? { prices: effPrices } : {}) };
+    // prices/meta = $/1M y límites por modelo del catálogo del proveedor (solo ids+números, JAMÁS la key). Si
+    // el fetch de info falló pero el de nombres no, se CONSERVAN los previos del mismo proveedor; al cambiar
+    // de proveedor (hash distinto) los datos viejos NO se arrastran.
+    const sameProv = cur.byok && cur.byok.baseUrlHash === byokUrlHash(baseUrl);
+    const effPrices = (prices && Object.keys(prices).length) ? prices : (sameProv ? cur.byok.prices : undefined);
+    const effMeta = (meta && Object.keys(meta).length) ? meta : (sameProv ? cur.byok.meta : undefined);
+    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models', ...(effPrices ? { prices: effPrices } : {}), ...(effMeta ? { meta: effMeta } : {}) };
     mkdirSync(CONDUCTOR_HOME(), { recursive: true });
     writeFileSync(MODELS_CACHE(), JSON.stringify(cur, null, 2));
   } catch {}
@@ -6642,14 +6690,19 @@ async function fetchByokPrices(baseUrl, apiKey) {
       const r = await fetch(u, { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
       if (!r.ok) continue;
       const j = await r.json();
-      const out = {};
+      const prices = {}, meta = {};
       for (const m of j.data ?? []) {
         const info = m.model_info || {};
         const id = m.model_name || m.id;
+        if (!id) continue;
         const ic = Number(info.input_cost_per_token), oc = Number(info.output_cost_per_token);
-        if (id && Number.isFinite(ic) && Number.isFinite(oc) && ic >= 0 && oc >= 0) out[id] = { in: +(ic * 1e6).toFixed(4), out: +(oc * 1e6).toFixed(4) };
+        if (Number.isFinite(ic) && Number.isFinite(oc) && ic >= 0 && oc >= 0) prices[id] = { in: +(ic * 1e6).toFixed(4), out: +(oc * 1e6).toFixed(4) };
+        // LÍMITES por modelo (contexto/output reales del proxy) → cada fase sale con los de SU modelo
+        const maxIn = Number(info.max_input_tokens) || Number(info.max_tokens) || null;
+        const maxOut = Number(info.max_output_tokens) || null;
+        if (maxIn || maxOut) meta[id] = { ...(maxIn ? { maxIn } : {}), ...(maxOut ? { maxOut } : {}) };
       }
-      if (Object.keys(out).length) return out;
+      if (Object.keys(prices).length || Object.keys(meta).length) return { prices, meta };
     } catch { /* probar la siguiente forma del endpoint */ }
   }
   return null;
@@ -6706,10 +6759,11 @@ async function _computeAvailableModels(registry) {
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
         if (ids.length) {
           byokSource = 'LiteLLM /v1/models (en vivo)'; live = true;
-          // PRECIO REAL en el mismo ciclo: con modelos clase-premium vía LiteLLM, el "byok=0" era mentira.
-          const livePrices = await fetchByokPrices(base, creds.apiKey);
-          writeModelsCache(ids, creds.baseUrl, livePrices);
-          if (livePrices) setLivePrices(livePrices);
+          // PRECIO + LÍMITES reales en el mismo ciclo: con modelos clase-premium vía LiteLLM, el "byok=0" era mentira.
+          const liveInfo = await fetchByokPrices(base, creds.apiKey);
+          writeModelsCache(ids, creds.baseUrl, liveInfo?.prices, liveInfo?.meta);
+          if (liveInfo?.prices) setLivePrices(liveInfo.prices);
+          if (liveInfo?.meta) setLiveMeta(liveInfo.meta);
         }
       }
     } catch {}
@@ -6721,7 +6775,7 @@ async function _computeAvailableModels(registry) {
     // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve). Sin creds no hay
     // proveedor actual que validar (curHash=null) → se permite como fallback de display (lanzar byok sin creds ya da BLOCKED).
     const curHash = creds ? byokUrlHash(creds.baseUrl) : null;
-    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); }
+    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); if (cache.byok.meta) setLiveMeta(cache.byok.meta); }
   }
   if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
   _models.at = Date.now();
@@ -6751,7 +6805,10 @@ async function _computeAvailableModels(registry) {
   // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
   const prices = {};
   for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  // límites reales por modelo (contexto/output del catálogo del proxy) — para que el picker informe sin inventar
+  const meta = {};
+  for (const id of byokIds) { const m = metaOf(id); if (m) meta[id] = m; }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 
@@ -7648,7 +7705,7 @@ const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
 const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
-const { encryptSecret, decryptSecret } = __M['secret'];
+const { encryptSecret, decryptSecret, sealByokFile } = __M['secret'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
 const { toOtlp } = __M['otlp'];
 // robustez: cualquier error no capturado → mensaje limpio + exit 2 (nunca stack trace al usuario)
@@ -7944,7 +8001,7 @@ switch (cmd) {
       try {
         const base = String(baseUrl).replace(/\/+$/, '');
         const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
-        if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); const prices = await fetchByokPrices(base, apiKey); writeModelsCache(ids, baseUrl, prices); console.log(`  catálogo cacheado: ${ids.length} modelo(s)${prices ? ` · precio REAL de ${Object.keys(prices).length} modelo(s) del proxy (la app deja de asumir 0€)` : ' · el proxy no expone precios a esta key (se mostrarán como "desconocido", nunca 0 inventado)'}`); }
+        if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); const info = await fetchByokPrices(base, apiKey); writeModelsCache(ids, baseUrl, info?.prices, info?.meta); console.log(`  catálogo cacheado: ${ids.length} modelo(s)${info?.prices ? ` · precio REAL de ${Object.keys(info.prices).length} modelo(s)` : ' · el proxy no expone precios a esta key (se mostrará "desconocido", nunca 0 inventado)'}${info?.meta ? ` · límites por modelo de ${Object.keys(info.meta).length}` : ''}`); }
         else console.log(`  (no pude listar modelos ahora: HTTP ${r.status}; la cache se sembrará en el primer uso del panel)`);
       } catch { console.log('  (sin red ahora → la cache de modelos se sembrará en el primer uso del panel)'); }
     };
@@ -7983,14 +8040,37 @@ switch (cmd) {
       await storeByok(baseUrl, apiKey, flag('--type') || process.env.COPILOT_PROVIDER_TYPE || 'openai', flag('--model') || process.env.COPILOT_MODEL || '');
       process.exit(0);
     }
+    if (sub === 'import') {
+      // IMPORTA credenciales de una config de host YA existente (forma openai-compatible: provider.*.options
+      // con baseURL/apiKey, o un {baseUrl,apiKey} plano) — el dev no re-teclea nada. Se guarda CIFRADO como
+      // siempre; su fichero original queda intacto (retirar la key en claro de él es cosa suya, se le avisa).
+      const src = pos[1]; if (!src || !existsSync(src)) bad('byok import <config-json-de-tu-host>');
+      let cfgI; try { cfgI = JSON.parse(readFileSync(src, 'utf8')); } catch (e) { console.error(`✗ JSON inválido: ${e.message}`); process.exit(2); }
+      let found = null;
+      if (cfgI && typeof cfgI === 'object') {
+        if (cfgI.baseUrl && cfgI.apiKey) found = { baseUrl: cfgI.baseUrl, apiKey: cfgI.apiKey };
+        else if (cfgI.provider && typeof cfgI.provider === 'object') {
+          for (const p of Object.values(cfgI.provider)) {
+            const o = p && p.options;
+            if (o && (o.baseURL || o.baseUrl) && o.apiKey && !String(o.apiKey).includes('XXX')) { found = { baseUrl: o.baseURL || o.baseUrl, apiKey: o.apiKey }; break; }
+          }
+        }
+      }
+      if (!found) { console.error('✗ no encontré credenciales utilizables en esa config (busco provider.*.options.{baseURL,apiKey} o {baseUrl,apiKey}; los placeholders tipo sk-XXXX se ignoran)'); process.exit(2); }
+      await storeByok(found.baseUrl, found.apiKey, flag('--type') || 'openai', flag('--model') || '');
+      console.log('  tu fichero original queda INTACTO — considera retirar de él la key en claro (aquí ya está cifrada)');
+      process.exit(0);
+    }
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
+      // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
+      const sealedNow = sealByokFile(home);
       let fileOk = false, enc = false, portable = false; try { const j = JSON.parse(readFileSync(file, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); } catch {}
-      const encTxt = enc ? (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `byok login` si cambiaste de SO') : 'EN CLARO ⚠';
+      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `byok login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
       console.log(`byok por env: ${envOk ? 'SÍ' : 'no'} · byok.json: ${fileOk ? 'SÍ (' + file + ', KEY ' + encTxt + ')' : 'no'} → byok disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor byok login`'}`);
       process.exit(0);
     }
-    bad('byok login  (INTERACTIVO, la key oculta — recomendado) | byok save  (desde el entorno, CI/scripts) | byok status');
+    bad('byok login (interactivo, key oculta) | byok import <config-de-tu-host> (reusa credenciales existentes) | byok save (desde el entorno) | byok status');
   }
   case 'init-config': {
     const dir = pos[0] || join(process.cwd(), 'openspec');
@@ -8565,4 +8645,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 5cf18cea5c7f2770034df9375b6715263d6af152e6bf083b0c2c7261d8f528a3
+// build-inputs-sha256: 986ba3d787ee4636e3b7d764c41ecb5c5045904c9abc483c1cda5fce8b9efc54

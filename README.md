@@ -66,6 +66,8 @@ Conductor se instala como **un plugin de Copilot** — como cualquier otro que y
 
 **Primera vez**: al abrir el panel, pega la URL de tu proxy y tu key en el formulario — queda **cifrada AES-256-GCM en tu máquina** (jamás en claro, jamás la ve un LLM) y la app te enseña **catálogo y precios reales**.
 
+> ¿Prefieres fichero, como en tus otras herramientas? Escribe `~/.conductor/byok.json` con `{"baseUrl": "…", "apiKey": "sk-…"}` — **al primer uso conductor lo sella**: cifra la key y la versión en claro desaparece del disco.
+
 > 🔌 ¿Otro host de agentes, terminal puro o instalación por npm? Existen y están soportados — pero son la excepción, no el camino: **[docs/integraciones.md](docs/integraciones.md)**.
 
 ### 2. Inicializar el proyecto

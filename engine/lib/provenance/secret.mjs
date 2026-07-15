@@ -90,6 +90,25 @@ export function decryptSecret(enc) {
 // SOLO ante blobs DPAPI legacy en un SO no-Windows (ilegibles ahí → hay que re-guardar).
 export function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
 
+// SELLADO AL PRIMER USO (hábito-de-fichero sin plaintext en reposo): el dev puede escribir a mano
+// ~/.conductor/byok.json con {"baseUrl","apiKey"} — su gesto de siempre — y al primer toque conductor
+// CIFRA la key y reescribe el fichero (apiKeyEnc, 0600); la key en claro desaparece del disco. Si el
+// cifrado no verifica round-trip, NO se toca nada (mejor plaintext utilizable que credenciales rotas);
+// el aviso de "sin cifrar" ya lo da `byok status`. Devuelve true solo si selló.
+export function sealByokFile(home = homeDir()) {
+  try {
+    const p = join(home, 'byok.json');
+    const j = JSON.parse(readFileSync(p, 'utf8'));
+    if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
+    const enc = encryptSecret(j.apiKey);
+    if (!enc || decryptSecret(enc) !== j.apiKey) return false;
+    const { apiKey, ...rest } = j;
+    writeFileSync(p, JSON.stringify({ ...rest, apiKeyEnc: enc }, null, 2), { mode: 0o600 });
+    try { chmodSync(p, 0o600); } catch {}
+    return true;
+  } catch { return false; }
+}
+
 // --- retrocompat: descifrado DPAPI de blobs guardados con la versión anterior (Windows). Ya no se CIFRA así. ---
 function decryptDpapiLegacy(enc) {
   if (process.platform !== 'win32' || !enc) return null;

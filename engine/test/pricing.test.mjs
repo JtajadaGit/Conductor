@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { priceOf, setLivePrices, loadLivePrices } from '../lib/core/cost.mjs';
+import { priceOf, setLivePrices, loadLivePrices, metaOf } from '../lib/core/cost.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
 import { fetchByokPrices } from '../lib/serving/serve.mjs';
 
@@ -25,12 +25,14 @@ await test('pricing: setLivePrices manda sobre la tabla; known marca lo conocido
 await test('pricing: loadLivePrices lee la cache de ~/.conductor (sembrada por byok login/panel) — el driver hijo hereda el precio real', () => {
   const home = join(HERE, '.tmp-pricing-home');
   rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
-  writeFileSync(join(home, 'models-cache.json'), JSON.stringify({ version: 1, byok: { models: ['deepseek-v4-pro'], prices: { 'deepseek-v4-pro': { in: 1.1, out: 3.3 } } } }));
+  writeFileSync(join(home, 'models-cache.json'), JSON.stringify({ version: 1, byok: { models: ['deepseek-v4-pro'], prices: { 'deepseek-v4-pro': { in: 1.1, out: 3.3 } }, meta: { 'deepseek-v4-pro': { maxIn: 250000, maxOut: 16384 } } } }));
   const prev = process.env.CONDUCTOR_HOME;
   process.env.CONDUCTOR_HOME = home;
   try {
     loadLivePrices(true);
     eq(priceOf('deepseek-v4-pro'), { in: 1.1, out: 3.3, tier: 'byok', known: true }, 'precio real desde la cache');
+    eq(metaOf('DeepSeek-V4-Pro'), { maxIn: 250000, maxOut: 16384 }, 'límites por modelo desde la cache (id normalizado)');
+    eq(metaOf('sin-meta'), null, 'modelo sin límites conocidos → null, no se inventa');
   } finally {
     if (prev === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = prev;
     loadLivePrices(true); // re-hermetiza el estado del módulo con el HOME de la suite
@@ -45,8 +47,8 @@ await test('pricing: fetchByokPrices lee el endpoint de info del proxy ($/token 
       authSeen = req.headers.authorization;
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ data: [
-        { model_name: 'glm-5.2', model_info: { input_cost_per_token: 0.0000006, output_cost_per_token: 0.0000022 } },
-        { model_name: 'sin-precio', model_info: {} },
+        { model_name: 'glm-5.2', model_info: { input_cost_per_token: 0.0000006, output_cost_per_token: 0.0000022, max_input_tokens: 250000, max_output_tokens: 16384 } },
+        { model_name: 'sin-precio', model_info: { max_input_tokens: 128000 } },
       ] }));
     }
     res.writeHead(404); res.end('{}');
@@ -55,7 +57,8 @@ await test('pricing: fetchByokPrices lee el endpoint de info del proxy ($/token 
   const base = `http://127.0.0.1:${srv.address().port}/v1`;
   try {
     const p = await fetchByokPrices(base, 'k-test');
-    eq(p, { 'glm-5.2': { in: 0.6, out: 2.2 } }, 'conversión $/token → $/1M; el modelo sin datos queda fuera');
+    eq(p.prices, { 'glm-5.2': { in: 0.6, out: 2.2 } }, 'conversión $/token → $/1M; el modelo sin precio queda fuera de prices');
+    eq(p.meta, { 'glm-5.2': { maxIn: 250000, maxOut: 16384 }, 'sin-precio': { maxIn: 128000 } }, 'límites por modelo capturados (aunque no haya precio)');
     eq(authSeen, 'Bearer k-test', 'la key viaja como Bearer (mismo esquema que /v1/models)');
   } finally { await new Promise((r) => srv.close(r)); }
   const none = await fetchByokPrices('http://127.0.0.1:1/v1', 'k'); // puerto muerto → null limpio

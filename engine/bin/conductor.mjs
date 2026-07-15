@@ -52,7 +52,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret, decryptSecret } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret, sealByokFile } from '../lib/provenance/secret.mjs';
 import { homedir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
 import { toOtlp } from '../lib/sysops/otlp.mjs';
@@ -350,7 +350,7 @@ switch (cmd) {
       try {
         const base = String(baseUrl).replace(/\/+$/, '');
         const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
-        if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); const prices = await fetchByokPrices(base, apiKey); writeModelsCache(ids, baseUrl, prices); console.log(`  catálogo cacheado: ${ids.length} modelo(s)${prices ? ` · precio REAL de ${Object.keys(prices).length} modelo(s) del proxy (la app deja de asumir 0€)` : ' · el proxy no expone precios a esta key (se mostrarán como "desconocido", nunca 0 inventado)'}`); }
+        if (r.ok) { const j = await r.json(); const ids = (j.data || []).map((m) => m.id).filter(Boolean); const info = await fetchByokPrices(base, apiKey); writeModelsCache(ids, baseUrl, info?.prices, info?.meta); console.log(`  catálogo cacheado: ${ids.length} modelo(s)${info?.prices ? ` · precio REAL de ${Object.keys(info.prices).length} modelo(s)` : ' · el proxy no expone precios a esta key (se mostrará "desconocido", nunca 0 inventado)'}${info?.meta ? ` · límites por modelo de ${Object.keys(info.meta).length}` : ''}`); }
         else console.log(`  (no pude listar modelos ahora: HTTP ${r.status}; la cache se sembrará en el primer uso del panel)`);
       } catch { console.log('  (sin red ahora → la cache de modelos se sembrará en el primer uso del panel)'); }
     };
@@ -389,14 +389,37 @@ switch (cmd) {
       await storeByok(baseUrl, apiKey, flag('--type') || process.env.COPILOT_PROVIDER_TYPE || 'openai', flag('--model') || process.env.COPILOT_MODEL || '');
       process.exit(0);
     }
+    if (sub === 'import') {
+      // IMPORTA credenciales de una config de host YA existente (forma openai-compatible: provider.*.options
+      // con baseURL/apiKey, o un {baseUrl,apiKey} plano) — el dev no re-teclea nada. Se guarda CIFRADO como
+      // siempre; su fichero original queda intacto (retirar la key en claro de él es cosa suya, se le avisa).
+      const src = pos[1]; if (!src || !existsSync(src)) bad('byok import <config-json-de-tu-host>');
+      let cfgI; try { cfgI = JSON.parse(readFileSync(src, 'utf8')); } catch (e) { console.error(`✗ JSON inválido: ${e.message}`); process.exit(2); }
+      let found = null;
+      if (cfgI && typeof cfgI === 'object') {
+        if (cfgI.baseUrl && cfgI.apiKey) found = { baseUrl: cfgI.baseUrl, apiKey: cfgI.apiKey };
+        else if (cfgI.provider && typeof cfgI.provider === 'object') {
+          for (const p of Object.values(cfgI.provider)) {
+            const o = p && p.options;
+            if (o && (o.baseURL || o.baseUrl) && o.apiKey && !String(o.apiKey).includes('XXX')) { found = { baseUrl: o.baseURL || o.baseUrl, apiKey: o.apiKey }; break; }
+          }
+        }
+      }
+      if (!found) { console.error('✗ no encontré credenciales utilizables en esa config (busco provider.*.options.{baseURL,apiKey} o {baseUrl,apiKey}; los placeholders tipo sk-XXXX se ignoran)'); process.exit(2); }
+      await storeByok(found.baseUrl, found.apiKey, flag('--type') || 'openai', flag('--model') || '');
+      console.log('  tu fichero original queda INTACTO — considera retirar de él la key en claro (aquí ya está cifrada)');
+      process.exit(0);
+    }
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
+      // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
+      const sealedNow = sealByokFile(home);
       let fileOk = false, enc = false, portable = false; try { const j = JSON.parse(readFileSync(file, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); } catch {}
-      const encTxt = enc ? (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `byok login` si cambiaste de SO') : 'EN CLARO ⚠';
+      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `byok login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
       console.log(`byok por env: ${envOk ? 'SÍ' : 'no'} · byok.json: ${fileOk ? 'SÍ (' + file + ', KEY ' + encTxt + ')' : 'no'} → byok disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor byok login`'}`);
       process.exit(0);
     }
-    bad('byok login  (INTERACTIVO, la key oculta — recomendado) | byok save  (desde el entorno, CI/scripts) | byok status');
+    bad('byok login (interactivo, key oculta) | byok import <config-de-tu-host> (reusa credenciales existentes) | byok save (desde el entorno) | byok status');
   }
   case 'init-config': {
     const dir = pos[0] || join(process.cwd(), 'openspec');

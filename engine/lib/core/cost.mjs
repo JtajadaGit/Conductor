@@ -26,6 +26,7 @@ const _own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 // Modelo sin precio → known:false (0 explícito y MARCADO — el caller puede decir "coste desconocido", nunca
 // un 0 fabricado mudo). Carga perezosa + memoizada; setLivePrices() la refresca tras un fetch en vivo.
 let _live = null; // null = aún no cargado del cache; {} = cargado (con o sin datos)
+let _meta = null; // metadatos POR MODELO del proxy (límites de contexto/output) — misma mecánica lazy
 export function setLivePrices(prices) {
   _live = {};
   for (const [id, p] of Object.entries(prices || {})) {
@@ -33,14 +34,27 @@ export function setLivePrices(prices) {
     if (Number.isFinite(inC) && Number.isFinite(outC) && inC >= 0 && outC >= 0) _live[_normId(id)] = { in: inC, out: outC, tier: 'byok', known: true };
   }
 }
+export function setLiveMeta(meta) {
+  _meta = {};
+  for (const [id, m] of Object.entries(meta || {})) {
+    const maxIn = Number(m && m.maxIn) || null, maxOut = Number(m && m.maxOut) || null;
+    if (maxIn || maxOut) _meta[_normId(id)] = { ...(maxIn ? { maxIn } : {}), ...(maxOut ? { maxOut } : {}) };
+  }
+}
+// límites reales del modelo según el catálogo del proxy (cacheados) — null si no expuestos (se DICE, no se inventa)
+export function metaOf(model) {
+  if (_meta === null) loadLivePrices();
+  return _meta[_normId(model)] || null;
+}
 export function loadLivePrices(force = false) {
   if (_live !== null && !force) return;
-  _live = {};
+  _live = {}; _meta = {};
   try {
     const home = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     const cache = JSON.parse(readFileSync(join(home, 'models-cache.json'), 'utf8'));
     if (cache && cache.byok && cache.byok.prices) setLivePrices(cache.byok.prices);
-  } catch { /* sin cache = sin precios en vivo (la tabla estática sigue cubriendo Copilot) */ }
+    if (cache && cache.byok && cache.byok.meta) setLiveMeta(cache.byok.meta);
+  } catch { /* sin cache = sin precios/límites en vivo (la tabla estática sigue cubriendo Copilot) */ }
 }
 export function priceOf(model) {
   if (_live === null) loadLivePrices();

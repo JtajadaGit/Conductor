@@ -16,9 +16,12 @@ const DIST = join(ROOT, 'dist-plugin');
 const INCLUDE = [
   'plugin.json',
   '.mcp.json',
+  '.github/plugin/marketplace.json', // el repo dist ES el marketplace: /plugin marketplace add <url-dist> funciona solo
+  'package.json', // manifest de la vía npm (npm i -g git+<repo-dist>): bin + files, 0 deps
   'LICENSE',
   'README.md',
-  'docs/como-probar.md',
+  'docs/MAPA.md', // el producto en una página (pitch + mapa + uso)
+  'docs/integraciones.md', // vías alternativas (npm, hosts MCP, terminal)
   'assets/conductor.mjs',
   'assets/ui',
   'plugin/skills',

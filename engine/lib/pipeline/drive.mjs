@@ -32,11 +32,12 @@ import { detectStack, renderStackHint } from '../analysis/stack.mjs';
 import { buildVerifiedIndex, buildBrownfieldMap } from '../analysis/atlas.mjs';
 import { buildCodeMap, renderCodeMap } from '../analysis/codemap.mjs';
 import { tierModel } from '../core/tiers.mjs';
-import { priceOf } from '../core/cost.mjs';
+import { priceOf, metaOf } from '../core/cost.mjs';
 import { budgetContextFiles, summarizeArtifact } from '../core/estimate.mjs';
 import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
-import { decryptSecret } from '../provenance/secret.mjs';
+import { decryptSecret, sealByokFile } from '../provenance/secret.mjs';
+let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
 
@@ -240,6 +241,8 @@ export function byokCreds(env = process.env) {
     const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
     // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
+    // key en claro (fichero escrito a mano por el dev) → SELLAR al primer toque (best-effort, 1 vez/proceso)
+    if (j.apiKey && !_byokSealedD) { _byokSealedD = true; try { sealByokFile(home); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
     // límites del proveedor (algunos proxies corporativos los EXIGEN por env): viajan con las credenciales
     // para que un run lanzado desde el panel/IDE (sin shell configurada) no salga sin límites → truncados.
@@ -345,6 +348,13 @@ export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopS
       // límites del proveedor persistidos con las creds (proxies corporativos los exigen; sin ellos, truncados)
       if (c.maxOutputTokens && !env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = String(c.maxOutputTokens);
       if (c.maxPromptTokens && !env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS = String(c.maxPromptTokens);
+    }
+    // límites POR MODELO en vivo (catálogo del proxy, cacheados): si ni el env ni byok.json fijan uno global,
+    // cada fase sale con los límites de SU modelo (contextos distintos por modelo = la realidad del proxy).
+    const mm = metaOf(spec.model);
+    if (mm) {
+      if (mm.maxOut && !env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = String(mm.maxOut);
+      if (mm.maxIn && !env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS = String(mm.maxIn);
     }
     else { try { process.stderr.write(`⚠ byok:${spec.model} pedido SIN credenciales (ni env ni ~/.conductor/byok.json) — la fase irá al CATÁLOGO Business. Arregla con: conductor byok save\n`); } catch {} }
   }

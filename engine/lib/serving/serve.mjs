@@ -16,7 +16,7 @@ import { PRESET_NAMES } from '../pipeline/presets.mjs';
 import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
 import { classifyTier } from '../core/tiers.mjs';
-import { setLivePrices, priceOf } from '../core/cost.mjs';
+import { setLivePrices, setLiveMeta, metaOf, priceOf } from '../core/cost.mjs';
 import { renderAiact } from './aiact.mjs';
 // UI ÚNICA = Vite (assets/ui), servida por ui-static. Este fallback mínimo solo aparece si la UI no está
 // compilada (sin assets/ui) — ya no hay UI inline legacy. RUN_PAGE/PANEL_PAGE quedan como este aviso.
@@ -33,7 +33,7 @@ import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
-import { decryptSecret, encryptSecret, isPortableBlob } from '../provenance/secret.mjs';
+import { decryptSecret, encryptSecret, isPortableBlob, sealByokFile } from '../provenance/secret.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -585,12 +585,15 @@ function byokCredsLocal() {
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
     const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
-    // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
+    // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
+    // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
+    if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
     if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai' };
   } catch {}
   return null;
 }
+let _byokSealed = false;
 // cache de NOMBRES de modelo (los ids NO son secretos; la KEY sí). Hace que el picker muestre qwen
 // SIEMPRE, aunque la app arranque sin credenciales — se siembra al hacer `byok save` o un fetch en vivo.
 const MODELS_CACHE = () => join(CONDUCTOR_HOME(), 'models-cache.json');
@@ -599,17 +602,18 @@ export function readModelsCache() { return readJson(MODELS_CACHE()); }
 // estable venga la URL del env o del form, con o sin '/' final → sin esto una misma qwen descartaba su cache.
 const normByokUrl = (u) => { const b = String(u || '').replace(/\/+$/, ''); return b ? (b.endsWith('/v1') ? b : b + '/v1') : ''; };
 const byokUrlHash = (u) => createHash('sha256').update(normByokUrl(u)).digest('hex').slice(0, 6);
-export function writeModelsCache(byokIds, baseUrl, prices = null) {
+export function writeModelsCache(byokIds, baseUrl, prices = null, meta = null) {
   if (!byokIds?.length) return; // nunca sobrescribir la cache con una lista vacía (defensa en profundidad)
   try {
     const cur = readJson(MODELS_CACHE()) || {};
     cur.version = 1;
-    // prices = $/1M por modelo del catálogo del proveedor (solo ids+números, JAMÁS la key). Si el fetch de
-    // precios falló pero el de nombres no, se CONSERVAN los previos del mismo proveedor (mejor el precio de
-    // ayer que un 0 mudo); al cambiar de proveedor (hash distinto) los precios viejos NO se arrastran.
-    const prevPrices = cur.byok && cur.byok.baseUrlHash === byokUrlHash(baseUrl) ? cur.byok.prices : undefined;
-    const effPrices = (prices && Object.keys(prices).length) ? prices : prevPrices;
-    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models', ...(effPrices ? { prices: effPrices } : {}) };
+    // prices/meta = $/1M y límites por modelo del catálogo del proveedor (solo ids+números, JAMÁS la key). Si
+    // el fetch de info falló pero el de nombres no, se CONSERVAN los previos del mismo proveedor; al cambiar
+    // de proveedor (hash distinto) los datos viejos NO se arrastran.
+    const sameProv = cur.byok && cur.byok.baseUrlHash === byokUrlHash(baseUrl);
+    const effPrices = (prices && Object.keys(prices).length) ? prices : (sameProv ? cur.byok.prices : undefined);
+    const effMeta = (meta && Object.keys(meta).length) ? meta : (sameProv ? cur.byok.meta : undefined);
+    cur.byok = { baseUrlHash: byokUrlHash(baseUrl), models: [...new Set(byokIds || [])].sort(), at: Date.now(), source: 'LiteLLM /v1/models', ...(effPrices ? { prices: effPrices } : {}), ...(effMeta ? { meta: effMeta } : {}) };
     mkdirSync(CONDUCTOR_HOME(), { recursive: true });
     writeFileSync(MODELS_CACHE(), JSON.stringify(cur, null, 2));
   } catch {}
@@ -624,14 +628,19 @@ export async function fetchByokPrices(baseUrl, apiKey) {
       const r = await fetch(u, { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
       if (!r.ok) continue;
       const j = await r.json();
-      const out = {};
+      const prices = {}, meta = {};
       for (const m of j.data ?? []) {
         const info = m.model_info || {};
         const id = m.model_name || m.id;
+        if (!id) continue;
         const ic = Number(info.input_cost_per_token), oc = Number(info.output_cost_per_token);
-        if (id && Number.isFinite(ic) && Number.isFinite(oc) && ic >= 0 && oc >= 0) out[id] = { in: +(ic * 1e6).toFixed(4), out: +(oc * 1e6).toFixed(4) };
+        if (Number.isFinite(ic) && Number.isFinite(oc) && ic >= 0 && oc >= 0) prices[id] = { in: +(ic * 1e6).toFixed(4), out: +(oc * 1e6).toFixed(4) };
+        // LÍMITES por modelo (contexto/output reales del proxy) → cada fase sale con los de SU modelo
+        const maxIn = Number(info.max_input_tokens) || Number(info.max_tokens) || null;
+        const maxOut = Number(info.max_output_tokens) || null;
+        if (maxIn || maxOut) meta[id] = { ...(maxIn ? { maxIn } : {}), ...(maxOut ? { maxOut } : {}) };
       }
-      if (Object.keys(out).length) return out;
+      if (Object.keys(prices).length || Object.keys(meta).length) return { prices, meta };
     } catch { /* probar la siguiente forma del endpoint */ }
   }
   return null;
@@ -688,10 +697,11 @@ async function _computeAvailableModels(registry) {
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
         if (ids.length) {
           byokSource = 'LiteLLM /v1/models (en vivo)'; live = true;
-          // PRECIO REAL en el mismo ciclo: con modelos clase-premium vía LiteLLM, el "byok=0" era mentira.
-          const livePrices = await fetchByokPrices(base, creds.apiKey);
-          writeModelsCache(ids, creds.baseUrl, livePrices);
-          if (livePrices) setLivePrices(livePrices);
+          // PRECIO + LÍMITES reales en el mismo ciclo: con modelos clase-premium vía LiteLLM, el "byok=0" era mentira.
+          const liveInfo = await fetchByokPrices(base, creds.apiKey);
+          writeModelsCache(ids, creds.baseUrl, liveInfo?.prices, liveInfo?.meta);
+          if (liveInfo?.prices) setLivePrices(liveInfo.prices);
+          if (liveInfo?.meta) setLiveMeta(liveInfo.meta);
         }
       }
     } catch {}
@@ -703,7 +713,7 @@ async function _computeAvailableModels(registry) {
     // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve). Sin creds no hay
     // proveedor actual que validar (curHash=null) → se permite como fallback de display (lanzar byok sin creds ya da BLOCKED).
     const curHash = creds ? byokUrlHash(creds.baseUrl) : null;
-    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); }
+    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); if (cache.byok.meta) setLiveMeta(cache.byok.meta); }
   }
   if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
   _models.at = Date.now();
@@ -733,7 +743,10 @@ async function _computeAvailableModels(registry) {
   // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
   const prices = {};
   for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  // límites reales por modelo (contexto/output del catálogo del proxy) — para que el picker informe sin inventar
+  const meta = {};
+  for (const id of byokIds) { const m = metaOf(id); if (m) meta[id] = m; }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 

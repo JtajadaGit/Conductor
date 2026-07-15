@@ -51,6 +51,18 @@ function listTarNames(buf) {
 }
 import { execSync as execSyncReal } from 'node:child_process';
 
+await test('packaging: build-dist genera la superficie LIMPIA (dos-repos) — producto dentro, fábrica y notas FUERA', () => {
+  // el repo instalable ("pro") debe poder ser SOLO esto: da igual si el instalador de plugins clona o filtra.
+  execSyncReal(`"${process.execPath}" engine/build-dist.mjs`, { cwd: ROOT, stdio: 'pipe' });
+  const dist = join(ROOT, 'dist-plugin');
+  for (const f of ['assets/conductor.mjs', 'assets/ui/index.html', 'plugin.json', 'package.json', '.mcp.json', 'plugin/skills/sdd-run/SKILL.md', 'docs/MAPA.md']) {
+    assert(existsSync(join(dist, f)), `superficie completa: falta ${f}`);
+  }
+  for (const f of ['engine', 'ui', 'CLAUDE.md', 'task', '.gitattributes']) {
+    assert(!existsSync(join(dist, f)), `la fábrica/notas JAMÁS en dist: sobra ${f}`);
+  }
+});
+
 await test('packaging: files incluye assets (motor+UI) — sin ellos la instalación arranca sin panel', () => {
   assert(Array.isArray(pj.files) && pj.files.includes('assets'), 'assets empaquetado');
   assert(existsSync(join(ROOT, 'assets', 'ui', 'index.html')), 'la UI compilada existe en el árbol (va dentro del paquete)');
