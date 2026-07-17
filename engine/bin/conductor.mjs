@@ -52,7 +52,8 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret, decryptSecret, sealByokFile, byokFile } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob } from '../lib/provenance/secret.mjs';
+import { PROMPT_KEYS, instructionFor } from '../lib/pipeline/orchestrate.mjs';
 import { homedir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
 import { toOtlp } from '../lib/sysops/otlp.mjs';
@@ -605,7 +606,7 @@ switch (cmd) {
     // valida un openspec/conductor.json de ejemplo contra el CONFIG_SCHEMA REAL (importado de scaffold) →
     // prueba el validador Y el schema vigente. Antes usaba un schema FÓSIL (formato `spec-driven`/x-conductor
     // + agentes sdd-planner/coder/reviewer ELIMINADOS) que ya no representa la config del producto.
-    const good = { models: { planner: 'byok:qwen36-msc1', coder: 'copilot:claude-haiku-4.5' }, pipeline: ['propose', 'spec', 'apply', 'verify'], autoApprove: false };
+    const good = { models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-haiku-4.5' }, pipeline: ['propose', 'spec', 'apply', 'verify'], autoApprove: false };
     const bad1 = { autoApprove: 'sí', pipeline: ['fase-inexistente'], propiedadDesconocida: 1 }; // tipo malo + fase inválida + additionalProperties:false
     const r1 = validate(CONFIG_SCHEMA, good), r2 = validate(CONFIG_SCHEMA, bad1);
     console.log(`\nconductor doctor`);
@@ -619,7 +620,7 @@ switch (cmd) {
     const sdkB = [join(dirname(resolve(process.argv[1])), 'copilot-sdk.mjs'), join(ROOT, '..', 'assets', 'copilot-sdk.mjs')].find((p2) => existsSync(p2));
     console.log(`  runner sdk empaquetado: ${sdkB ? 'disponible (actívalo con "runner":"sdk")' : 'no incluido (spawn)'}`);
     const appUp = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r3) => r3.json()).catch(() => null);
-    console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con /sdd-run o `conductor serve`)'}`);
+    console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con `conductor` en tu repo)'}`);
     // PROXY CORPORATIVO: el fetch de Node IGNORA HTTP(S)_PROXY por defecto → si el LiteLLM va detrás del proxy,
     // el catálogo/BYOK fallan en silencio donde el navegador sí llega. Aviso accionable (Node ≥24: NODE_USE_ENV_PROXY).
     const proxyEnv = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
@@ -651,6 +652,31 @@ switch (cmd) {
         console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);
       } else { console.log('  bundle vs lib/: (no comprobable fuera del repo)'); }
     } catch { console.log('  bundle vs lib/: (no comprobable)'); }
+    // ── DOCTOR v2 (plan expertise 2026-07-17): el mundo nuevo — credenciales, prompts, hosts ──
+    // credenciales LiteLLM: existe / sellada / motivo (reutiliza la resolución central byokFile)
+    try {
+      const homeD = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+      const fD = byokFile(homeD);
+      let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
+      if (!jD) console.log('  credenciales LiteLLM: AUSENTES → crea ~/.conductor/litellm.json {"baseUrl","apiKey"} (o `conductor litellm login`)');
+      else if (jD.apiKey) console.log(`  credenciales LiteLLM: EN CLARO en ${fD} — se sellarán (cifrado) al primer uso`);
+      else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
+      else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
+    } catch { console.log('  credenciales LiteLLM: (no comprobable)'); }
+    // prompts del pipeline: ¿los 10 .md resueltos desde fichero o corriendo con el fallback embebido?
+    try {
+      const fromFile = PROMPT_KEYS.filter((k) => { try { return typeof instructionFor(k) === 'string' && instructionFor(k).length > 40; } catch { return false; } });
+      console.log(`  prompts del pipeline: ${fromFile.length}/${PROMPT_KEYS.length} fases con instrucción resuelta (prompts/<fase>.md, editable; fallback embebido si faltan)`);
+    } catch { console.log('  prompts del pipeline: (no comprobable)'); }
+    // hosts conectados: comando global /conductor (Claude/OpenCode) + MCP en la config de Copilot CLI
+    try {
+      const homeU2 = process.env.CONDUCTOR_USERHOME || homedir();
+      const hosts = [];
+      if (existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
+      if (existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
+      try { if (readFileSync(join(homeU2, '.copilot', 'mcp-config.json'), 'utf8').includes('conductor')) hosts.push('Copilot CLI (MCP)'); } catch {}
+      console.log(`  hosts conectados: ${hosts.length ? hosts.join(' · ') : 'ninguno → `conductor setup` los conecta (comando /conductor + MCP)'}`);
+    } catch { console.log('  hosts conectados: (no comprobable)'); }
     console.log('');
     process.exit(r1.valid && !r2.valid ? 0 : 1);
   }

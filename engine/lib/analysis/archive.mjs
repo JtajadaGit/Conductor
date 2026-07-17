@@ -3,12 +3,13 @@
 // Cubre la brecha vs herramientas de referencia (índice de conocimiento) acotada a la identidad de conductor.
 import { readdirSync, readFileSync, existsSync, statSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join, basename, resolve, relative } from 'node:path';
+import { plumbPath } from '../core/plumb.mjs';
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const changesDir = (root) => join(root, 'openspec', 'changes');
 
 function changeInfo(dir, name) {
-  const tl = readJson(join(dir, '.conductor', 'timeline.json'));
+  const tl = readJson(plumbPath(dir, 'timeline.json'));
   let mtime = 0; try { mtime = statSync(dir).mtimeMs; } catch {}
   return { name, verdict: tl?.verdict || '—', request: tl?.request || '', phases: (tl?.phases || []).length, mtime };
 }
@@ -109,7 +110,7 @@ export function archiveChange(changeDir, archiveBaseDir, date, { allowNonGreen =
   // CÓDIGO conduce esa promoción: no se archiva un change que no cerró GREEN, salvo override EXPLÍCITO del experto
   // (auditable). Así CUALQUIER llamador (HTTP, MCP, CLI) queda gateado, no solo el boundary HTTP. Verdict = timeline.
   if (!allowNonGreen) {
-    let verdict = null; try { verdict = JSON.parse(readFileSync(join(src, '.conductor', 'timeline.json'), 'utf8'))?.verdict ?? null; } catch {}
+    let verdict = null; try { verdict = JSON.parse(readFileSync(plumbPath(src, 'timeline.json'), 'utf8'))?.verdict ?? null; } catch {}
     if (verdict !== 'GREEN') { const e = new Error(`no se archiva un change sin veredicto GREEN (actual: ${verdict || 'desconocido'}) — corrígelo, o archiva con override explícito`); e.code = 'NOT_GREEN'; throw e; }
   }
   mkdirSync(archiveBaseDir, { recursive: true });

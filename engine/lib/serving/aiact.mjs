@@ -11,13 +11,14 @@ import { readFileSync, existsSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { THEME } from '../core/theme.mjs';
+import { plumbPath } from '../core/plumb.mjs';
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const sha = (p) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch { return null; } };
 const E = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
 export function aiactData(changeDir) {
-  const tl = readJson(join(changeDir, '.conductor', 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
+  const tl = readJson(plumbPath(changeDir, 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
   if (!tl) throw new Error('sin timeline — el change no tiene runs registrados');
   const prov = readJson(join(changeDir, 'provenance.json'));
   const specPath = (() => {

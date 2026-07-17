@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { priceOf } from './cost.mjs';
+import { plumbPath } from './plumb.mjs';
 
 const NAIVE = 'claude-opus-4-8'; // mismo baseline que cost.mjs: "qué costaría si TODO fuera el tope premium"
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
@@ -52,7 +53,7 @@ export function aggregateStats(projects) {
   for (const proj of list) {
     let pRuns = 0, pGreen = 0, pFailed = 0, pPhases = 0, pIn = 0, pOut = 0, pCost = 0, pNaive = 0, pByok = 0, pCop = 0;
     for (const ch of changeDirsOf(proj.root)) {
-      const tl = readJson(join(ch.dir, '.conductor', 'timeline.json'));
+      const tl = readJson(plumbPath(ch.dir, 'timeline.json'));
       if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) continue;
       runs++; pRuns++;
       const v = String(tl.verdict || '').toUpperCase();
@@ -71,7 +72,7 @@ export function aggregateStats(projects) {
         phasesTotal++; pPhases++;
         // M7/L23: coerción + clamp ≥0 — un tokens.in string ("lots") concatenaba → NaN en TODOS los proyectos
         const i = Math.max(0, Number(ph.tokens?.in) || 0), o = Math.max(0, Number(ph.tokens?.out) || 0);
-        const m = ph.model || ph.modelReported || '(sin modelo)';
+        const m = ph.model || ph.modelReported || '(modelo de la sesión)'; // fase sin modelo explícito = corrió con el de la sesión del host
         const prov = providerOf(ph);
         const c = costOf(m, i, o), nc = costOf(NAIVE, i, o);
         if (!priceOf(m).known) unpriced++; // HONESTIDAD: fase con modelo sin precio conocido → el total la excluye y se declara

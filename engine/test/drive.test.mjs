@@ -376,7 +376,11 @@ await test('drive(Path X): captura por git status cuando el proyecto es repo (ba
 await test('drive(Path X): captura aunque el agente escriba con RETARDO (settle anti-flush-lag)', async () => {
   fresh();
   const lateApply = (a) => {
-    if (a.phase === 'apply' || a.phase === 'fix') { setTimeout(() => w(join(TMP, 'src', 'counter.js'), '// @conductor REQ-COUNTER\nexport let c=0;'), 300); return Promise.resolve({ code: 0 }); }
+    if (a.phase === 'apply' || a.phase === 'fix') {
+      // código Y test con retardo (desde strictTests default, código sin test ya no cierra GREEN — a propósito)
+      setTimeout(() => { w(join(TMP, 'src', 'counter.js'), '// @conductor REQ-COUNTER\nexport let c=0;'); w(join(TMP, 'src', 'counter.test.js'), '// @conductor REQ-COUNTER\nimport "./counter.js";'); }, 300);
+      return Promise.resolve({ code: 0 });
+    }
     return goodAgent(a);
   };
   const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'late'), request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: lateApply });

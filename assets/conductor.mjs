@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // conductor.mjs — BUNDLE single-file (generado por build.mjs). 0 deps, 0 rutas externas.
-import { homedir, tmpdir } from 'node:os';
 import { join, relative, resolve, basename, extname, dirname, isAbsolute, normalize } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, rmSync, readdirSync, statSync, lstatSync, openSync, readSync, closeSync, renameSync, appendFileSync, unlinkSync, realpathSync } from 'node:fs';
 import { randomBytes, createCipheriv, createDecipheriv, createHash, createHmac, sign as edSign, verify as edVerify, generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:crypto';
 import { execFileSync, spawn, execSync, execFile } from 'node:child_process';
@@ -11,6 +11,22 @@ import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 
 const __M = {};
+
+// ===== lib/core/plumb.mjs =====
+__M['plumb'] = (function(){
+// conductor/lib/core/plumb.mjs — COSTURA de la fontanería runtime (plan expertise 2026-07-17, fase 1/2).
+// HOY: identidad — la fontanería de un run vive en <change>/.conductor/ como siempre (cero cambio de
+// comportamiento; la prueba del refactor es que NINGÚN test se toca).
+// MAÑANA (fase 2 aprobada por Jorge): cambiar SOLO estas dos funciones moverá TODO el estado runtime a
+// ~/.conductor/state/<projId>/<change>/ (fidelidad OpenSpec: el change queda con artefactos del estándar
+// + provenance) con fallback al legado y GC al archivar. Todos los join(<change>, '.conductor', …) del
+// motor pasan por aquí — el flip será una función, no 66 sitios.
+
+const plumbPath = (changeDir, ...rest) => join(changeDir, '.conductor', ...rest);
+const plumbDir = (changeDir) => plumbPath(changeDir);
+
+return { plumbPath, plumbDir };
+})();
 
 // ===== lib/core/theme.mjs =====
 __M['theme'] = (function(){
@@ -1186,10 +1202,17 @@ function buildTrace(changeDir, srcDir) {
 
   const F = [];
   for (const m of matrix) {
-    // Sólo se avisa por falta de CÓDIGO o TEST (cobertura real). La "task" es informativa (no existe en
-    // complejidad simple). La trazabilidad es SEÑAL no bloqueante (warning), nunca error.
-    const missing = [!m.cov.code && 'code', !m.cov.test && 'test'].filter(Boolean);
-    if (missing.length) F.push({ rule: 'trace.coverage-gap', severity: 'warning', message: `${m.id} sin ${missing.join('/')} (trazabilidad opcional)`, file: 'spec.md' });
+    // Dos reglas SEPARADAS (incidente real 2026-07-16: el coder agotó el timeout dejando código sin su
+    // test y el run cerró GREEN):
+    //  · trace.coverage-gap — falta CÓDIGO (o todo): señal (warning); solo strictTrace la eleva.
+    //  · trace.test-gap    — hay código pero NINGÚN test lo cubre: la mitad peligrosa; el llamador
+    //    (runGate) la eleva a error POR DEFECTO (strictTests, opt-out) — "hecho sin test" no es hecho.
+    // La "task" sigue siendo informativa (no existe en complejidad simple).
+    if (m.cov.code && !m.cov.test) F.push({ rule: 'trace.test-gap', severity: 'warning', message: `${m.id} tiene código pero NINGÚN test lo cubre (marca @conductor ${m.id} en su test)`, file: 'spec.md' });
+    else {
+      const missing = [!m.cov.code && 'code', !m.cov.test && 'test'].filter(Boolean);
+      if (missing.length) F.push({ rule: 'trace.coverage-gap', severity: 'warning', message: `${m.id} sin ${missing.join('/')} (trazabilidad opcional)`, file: 'spec.md' });
+    }
   }
   for (const t of orphanTasks) F.push({ rule: 'trace.orphan-task', severity: 'warning', message: `tarea sin requisito: ${t.id || ''} ${t.desc}`.trim(), file: 'tasks.md' });
   return { matrix, orphanTasks, gaps: gaps.map((g) => g.id), findings: F };
@@ -1987,6 +2010,7 @@ __M['stats'] = (function(){
 
 
 const { priceOf } = __M['cost'];
+const { plumbPath } = __M['plumb'];
 const NAIVE = 'claude-opus-4-8'; // mismo baseline que cost.mjs: "qué costaría si TODO fuera el tope premium"
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const costOf = (m, i, o) => { const p = priceOf(m); return (i * p.in + o * p.out) / 1e6; };
@@ -2033,7 +2057,7 @@ function aggregateStats(projects) {
   for (const proj of list) {
     let pRuns = 0, pGreen = 0, pFailed = 0, pPhases = 0, pIn = 0, pOut = 0, pCost = 0, pNaive = 0, pByok = 0, pCop = 0;
     for (const ch of changeDirsOf(proj.root)) {
-      const tl = readJson(join(ch.dir, '.conductor', 'timeline.json'));
+      const tl = readJson(plumbPath(ch.dir, 'timeline.json'));
       if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) continue;
       runs++; pRuns++;
       const v = String(tl.verdict || '').toUpperCase();
@@ -2052,7 +2076,7 @@ function aggregateStats(projects) {
         phasesTotal++; pPhases++;
         // M7/L23: coerción + clamp ≥0 — un tokens.in string ("lots") concatenaba → NaN en TODOS los proyectos
         const i = Math.max(0, Number(ph.tokens?.in) || 0), o = Math.max(0, Number(ph.tokens?.out) || 0);
-        const m = ph.model || ph.modelReported || '(sin modelo)';
+        const m = ph.model || ph.modelReported || '(modelo de la sesión)'; // fase sin modelo explícito = corrió con el de la sesión del host
         const prov = providerOf(ph);
         const c = costOf(m, i, o), nc = costOf(NAIVE, i, o);
         if (!priceOf(m).known) unpriced++; // HONESTIDAD: fase con modelo sin precio conocido → el total la excluye y se declara
@@ -2241,6 +2265,10 @@ __M['skills'] = (function(){
 
 
 
+// RUTA ESTÁNDAR (decisión 2026-07-17, "la gente usa estándar Copilot"): `.github/skills` — el MISMO sitio
+// del estándar Agent Skills que Copilot ya entiende; cero carpetas inventadas en el proyecto del usuario.
+const githubSkillsDir = (projectRoot) => join(projectRoot, '.github', 'skills');
+// LEGADO (se sigue leyendo, nunca se crea): .conductor/skills — el invento pre-estándar.
 const skillsDir = (projectRoot) => join(projectRoot, '.conductor', 'skills');
 // catálogo GLOBAL del usuario (transversal a proyectos): ~/.conductor/skills (override por CONDUCTOR_HOME en tests).
 const globalSkillsDir = () => join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'skills');
@@ -2285,13 +2313,15 @@ function loadFromDir(dir, scope) {
   return [...byName.values()];
 }
 
-// Carga los patrones del PROYECTO (default). Con includeGlobal, añade los del catálogo GLOBAL del usuario
-// (~/.conductor/skills) por DEBAJO en precedencia: un patrón del proyecto con el mismo nombre GANA (dedup
-// project>user). Cada patrón lleva scope ('project'|'user') y path (ruta exacta) — base del REGISTRY.
+// Carga los patrones del PROYECTO (default). Precedencia (el más específico gana en dedup por nombre):
+//   `.github/skills` (ESTÁNDAR) > `.conductor/skills` (legado) > ~/.conductor/skills (global, con includeGlobal).
+// TRAMPA evitada: la skill `conductor` de .github/skills es el COMANDO /conductor que escribe `conductor init`
+// (bootstrap del chat) — NO es un patrón de equipo y jamás debe auto-inyectarse en los prompts de las fases.
 function loadSkills(projectRoot, { includeGlobal = false } = {}) {
   const byName = new Map();
   if (includeGlobal) for (const s of loadFromDir(globalSkillsDir(), 'user')) byName.set(s.name, s);
   for (const s of loadFromDir(skillsDir(projectRoot), 'project')) byName.set(s.name, s);
+  for (const s of loadFromDir(githubSkillsDir(projectRoot), 'project')) { if (s.name !== 'conductor') byName.set(s.name, s); }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -2319,7 +2349,7 @@ function buildSkillsIndex(projectRoot) {
   return skills;
 }
 
-function hasSkills(projectRoot) { return existsSync(skillsDir(projectRoot)); }
+function hasSkills(projectRoot) { return existsSync(githubSkillsDir(projectRoot)) || existsSync(skillsDir(projectRoot)); }
 
 // REGISTRY.md (#72, técnica del registro-índice): tabla Skill | Trigger | Scope | Path con los patrones del
 // PROYECTO + los GLOBALES del usuario (dedup project>user). Es un ÍNDICE (rutas exactas), separado del
@@ -2331,8 +2361,10 @@ function buildRegistry(projectRoot) {
   const rel = (p) => String(p).replace(/\\/g, '/');
   const lines = ['# Skill Registry (índice — generado por conductor; 1×/sesión)', '', '| Skill | Trigger | Scope | Path |', '|---|---|---|---|'];
   for (const s of skills) lines.push(`| ${s.name} | ${s.match.length ? s.match.join(', ') : 'global'} | ${s.scope || 'project'} | ${rel(s.path || '')} |`);
-  if (!skills.length) lines.push('| _(sin patrones)_ | | | crea .conductor/skills/<nombre>/SKILL.md |');
-  try { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'REGISTRY.md'), lines.join('\n') + '\n'); } catch {}
+  if (!skills.length) lines.push('| _(sin patrones)_ | | | crea .github/skills/<nombre>/SKILL.md |');
+  // REGLA "proyecto limpio": el REGISTRY solo se REESCRIBE donde el dir legado ya existe (write-only, nadie
+  // lo lee en runtime — el driver usa el array devuelto). En proyectos frescos NO se crea ninguna carpeta.
+  if (existsSync(dir)) { try { writeFileSync(join(dir, 'REGISTRY.md'), lines.join('\n') + '\n'); } catch {} }
   return skills;
 }
 
@@ -2423,11 +2455,12 @@ __M['archive'] = (function(){
 // Cubre la brecha vs herramientas de referencia (índice de conocimiento) acotada a la identidad de conductor.
 
 
+const { plumbPath } = __M['plumb'];
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const changesDir = (root) => join(root, 'openspec', 'changes');
 
 function changeInfo(dir, name) {
-  const tl = readJson(join(dir, '.conductor', 'timeline.json'));
+  const tl = readJson(plumbPath(dir, 'timeline.json'));
   let mtime = 0; try { mtime = statSync(dir).mtimeMs; } catch {}
   return { name, verdict: tl?.verdict || '—', request: tl?.request || '', phases: (tl?.phases || []).length, mtime };
 }
@@ -2528,7 +2561,7 @@ function archiveChange(changeDir, archiveBaseDir, date, { allowNonGreen = false 
   // CÓDIGO conduce esa promoción: no se archiva un change que no cerró GREEN, salvo override EXPLÍCITO del experto
   // (auditable). Así CUALQUIER llamador (HTTP, MCP, CLI) queda gateado, no solo el boundary HTTP. Verdict = timeline.
   if (!allowNonGreen) {
-    let verdict = null; try { verdict = JSON.parse(readFileSync(join(src, '.conductor', 'timeline.json'), 'utf8'))?.verdict ?? null; } catch {}
+    let verdict = null; try { verdict = JSON.parse(readFileSync(plumbPath(src, 'timeline.json'), 'utf8'))?.verdict ?? null; } catch {}
     if (verdict !== 'GREEN') { const e = new Error(`no se archiva un change sin veredicto GREEN (actual: ${verdict || 'desconocido'}) — corrígelo, o archiva con override explícito`); e.code = 'NOT_GREEN'; throw e; }
   }
   mkdirSync(archiveBaseDir, { recursive: true });
@@ -3343,10 +3376,12 @@ __M['presets'] = (function(){
 // experto manda (cualquier knob explícito en conductor.json gana sobre el del preset). Sin dependencias.
 
 const PRESETS = {
-  'quick-fix': { label: 'Arreglo rápido', complexity: 'simple', strict: { trace: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
-  'visual': { label: 'Retoque visual', complexity: 'simple', strict: { trace: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
-  'feature': { label: 'Funcionalidad', complexity: 'medium', strict: { trace: true, id: true, clarify: false }, specFreeze: false, pauseAt: ['apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
-  'migration': { label: 'Gran migración', complexity: 'complex', strict: { trace: true, id: true, clarify: true, semanticDelta: true }, specFreeze: true, pauseAt: ['spec', 'apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  // strict.tests = ¿"código sin test" bloquea? DEFAULT ON del motor; los presets laxos (arreglo/retoque) lo
+  // apagan a propósito — un typo o un ajuste de CSS no exigen test nuevo.
+  'quick-fix': { label: 'Arreglo rápido', complexity: 'simple', strict: { trace: false, tests: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  'visual': { label: 'Retoque visual', complexity: 'simple', strict: { trace: false, tests: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  'feature': { label: 'Funcionalidad', complexity: 'medium', strict: { trace: true, tests: true, id: true, clarify: false }, specFreeze: false, pauseAt: ['apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  'migration': { label: 'Gran migración', complexity: 'complex', strict: { trace: true, tests: true, id: true, clarify: true, semanticDelta: true }, specFreeze: true, pauseAt: ['spec', 'apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
 };
 
 const DEFAULT_PRESET = 'feature';
@@ -3462,6 +3497,7 @@ const { checkCoherence, readSpec } = __M['coherence'];
 const { checkArtifacts } = __M['artifacts'];
 const { buildTrace } = __M['trace'];
 const { loadPolicy, enforce, DEFAULT_POLICY } = __M['policy'];
+const { plumbPath } = __M['plumb'];
 const PHASES = {
   micro: ['apply'], // "No SDD": 1 sola llamada LLM, sin spec POR DECISIÓN del usuario — máximo ahorro
   simple: ['propose', 'spec', 'apply', 'verify'],
@@ -3499,10 +3535,10 @@ const DEFAULT_INSTRUCTION = {
 
 // fontanería interna → subcarpeta oculta .conductor/ (no invita a editar ni ensucia el change).
 // Compat: si solo existe el fichero legacy en la raíz del change, se lee ese.
-const stateFile = (dir) => join(dir, '.conductor', 'state.json');
+const stateFile = (dir) => plumbPath(dir, 'state.json');
 const statePath = (dir) => (existsSync(stateFile(dir)) ? stateFile(dir) : join(dir, '.conductor-run.json'));
 const loadState = (dir) => JSON.parse(readFileSync(statePath(dir), 'utf8'));
-const saveState = (dir, s) => { mkdirSync(join(dir, '.conductor'), { recursive: true }); writeFileSync(stateFile(dir), JSON.stringify(s, null, 2)); };
+const saveState = (dir, s) => { mkdirSync(plumbPath(dir), { recursive: true }); writeFileSync(stateFile(dir), JSON.stringify(s, null, 2)); };
 
 // instrucción del apply en modo micro: sin spec que leer, diff mínimo, cero ceremonia
 DEFAULT_INSTRUCTION['micro-apply'] = 'CODER. MICRO MODE — tiny task, no spec by user choice. Implement the request directly at production quality with the SMALLEST possible diff, following the project conventions. TOOLS: create NEW files with the `create` tool and modify EXISTING files with the `edit` tool — do NOT `view`/`edit` paths that do not exist yet; write immediately. Shell ONLY to create directories. FORBIDDEN: running the project\'s tests, build, lint or dev server. Zero narration.';
@@ -3666,7 +3702,11 @@ function runGate(dir, srcDir, strict = {}) {
   const F = [...checkCoherence(dir, cohOpts), ...checkArtifacts(dir)];
   if (trace) {
     for (const f of trace.findings) {
-      if (strict.trace && f.rule === 'trace.coverage-gap') f.severity = 'error'; // trazabilidad contractual
+      // strict.trace (contractual) eleva AMBOS huecos; strict.tests (DEFAULT ON, opt-out strictTests:false)
+      // eleva SOLO el "código sin test" — cura del incidente real 2026-07-16 (GREEN con el test sin escribir
+      // porque el coder agotó el timeout). "Hecho sin test" no es hecho, salvo que el preset laxo lo permita.
+      if (strict.trace && (f.rule === 'trace.coverage-gap' || f.rule === 'trace.test-gap')) f.severity = 'error';
+      else if (strict.tests !== false && f.rule === 'trace.test-gap') f.severity = 'error';
       F.push(f);
     }
   }
@@ -4014,6 +4054,7 @@ const CONFIG_SCHEMA = {
     $schema: { type: 'string' },
     preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
     strictTrace: { type: 'boolean', description: 'Trazabilidad CONTRACTUAL: un requisito sin código/test BLOQUEA el GREEN (no warning). Lo fija el preset; ponlo aquí para forzarlo.' },
+    strictTests: { type: 'boolean', description: 'Un requisito CON código pero SIN test BLOQUEA el GREEN. DEFAULT true ("hecho sin test" no es hecho); ponlo a false para relajarlo (los presets arreglo/retoque ya lo relajan).' },
     strictId: { type: 'boolean', description: 'Exige id estable "<!-- id: REQ-... -->" en cada requisito (error si falta). Lo fija el preset.' },
     models: {
       type: 'object',
@@ -4056,6 +4097,7 @@ const CONFIG_SCHEMA = {
       ],
     },
     strictTrace: { type: 'boolean', description: 'Trazabilidad REQ↔código↔test BLOQUEANTE (un hueco tumba el GREEN). Lo activan los presets feature/migration; aquí lo fuerzas fuera de preset.' },
+    strictTests: { type: 'boolean', description: 'Código sin test = BLOQUEA (default true). false para relajar (presets arreglo/retoque lo relajan solos).' },
     strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
@@ -4191,12 +4233,13 @@ __M['aiact'] = (function(){
 
 
 const { THEME } = __M['theme'];
+const { plumbPath } = __M['plumb'];
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const sha = (p) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch { return null; } };
 const E = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
 function aiactData(changeDir) {
-  const tl = readJson(join(changeDir, '.conductor', 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
+  const tl = readJson(plumbPath(changeDir, 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
   if (!tl) throw new Error('sin timeline — el change no tiene runs registrados');
   const prov = readJson(join(changeDir, 'provenance.json'));
   const specPath = (() => {
@@ -4483,6 +4526,7 @@ const { budgetContextFiles, summarizeArtifact } = __M['estimate'];
 const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
 const { decryptSecret, sealByokFile, byokFile } = __M['secret'];
+const { plumbPath } = __M['plumb'];
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -4775,7 +4819,7 @@ function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_ARGS, a
 // vieron, sin poder de veto (solo el gate sin-LLM decide el verdict). Sin fichero o sin graves → [].
 function postApplyFindings(changeDir) {
   try {
-    const txt = readFileSync(join(changeDir, '.conductor', 'post-apply-review.md'), 'utf8');
+    const txt = readFileSync(plumbPath(changeDir, 'post-apply-review.md'), 'utf8');
     return txt.split('\n')
       .filter((l) => /confirmed/i.test(l) && /(error|critical|breaking)/i.test(l))
       .slice(0, 20)
@@ -4986,11 +5030,11 @@ function evalPrecondition(pc, projectRoot, changeDir) {
 // rama o staging del usuario. rollbackTo() restaura ese árbol y borra los archivos creados después.
 function gitCheckpoint(projectRoot, changeDir, phase, model) {
   try {
-    const idx = resolve(changeDir, '.conductor', 'ckpt-index'); // ABSOLUTO: git resuelve GIT_INDEX_FILE relativo contra el repo
+    const idx = resolve(plumbPath(changeDir, 'ckpt-index')); // ABSOLUTO: git resuelve GIT_INDEX_FILE relativo contra el repo
     const env = { ...process.env, GIT_INDEX_FILE: idx };
     execSync('git add -A', { cwd: projectRoot, stdio: 'ignore', timeout: 30000, windowsHide: true, env });
     const tree = execSync('git write-tree', { cwd: projectRoot, encoding: 'utf8', timeout: 15000, windowsHide: true, env }).trim();
-    const f = join(changeDir, '.conductor', 'checkpoints.json');
+    const f = plumbPath(changeDir, 'checkpoints.json');
     let arr = []; try { arr = JSON.parse(readFileSync(f, 'utf8')); } catch {}
     // metadata de autoría/entorno (Ola 1): quién + con qué modelo, auditable junto al árbol del checkpoint
     let author = ''; try { author = execSync('git config user.email', { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch {}
@@ -5007,28 +5051,39 @@ function gitCheckpoint(projectRoot, changeDir, phase, model) {
 function captureBaseTree(projectRoot, changeDir) {
   try {
     if (!existsSync(join(projectRoot, '.git'))) return;
-    const idx = resolve(changeDir, '.conductor', 'base-index');
-    mkdirSync(join(changeDir, '.conductor'), { recursive: true });
+    const idx = resolve(plumbPath(changeDir, 'base-index'));
+    mkdirSync(plumbPath(changeDir), { recursive: true });
     const env = { ...process.env, GIT_INDEX_FILE: idx };
     execSync('git add -A', { cwd: projectRoot, stdio: 'ignore', timeout: 30000, windowsHide: true, env });
     const tree = execSync('git write-tree', { cwd: projectRoot, encoding: 'utf8', timeout: 15000, windowsHide: true, env }).trim();
-    if (/^[0-9a-f]{6,64}$/i.test(tree)) writeFileSync(join(changeDir, '.conductor', 'base-tree'), tree);
+    if (/^[0-9a-f]{6,64}$/i.test(tree)) writeFileSync(plumbPath(changeDir, 'base-tree'), tree);
     try { rmSync(idx, { force: true }); } catch {}
   } catch {}
 }
+// RETRY-DELTA (puro, testeable): el mensaje del reintento según el PROGRESO REAL del intento anterior.
+// Con ficheros parciales (p.ej. timeout tras escribir la fuente pero no el test): completa, no re-crees —
+// ahorra re-pagar la implementación entera. Sin nada escrito: el empujón contundente de siempre.
+function retryHint(files = [], doneTasks = []) {
+  const done = doneTasks.length ? `\n\nTASKS ALREADY DONE (do NOT re-implement — completed in the previous attempt):\n${doneTasks.map((l) => `  ${l}`).join('\n')}` : '';
+  if (files.length) {
+    return `\n\n⚠ EL INTENTO ANTERIOR quedó a medias pero SÍ dejó ${files.length} fichero(s) escritos:\n${files.map((f) => `  ${f.p}`).join('\n')}\nNO los re-crees ni los reescribas desde cero. COMPLETA solo lo que falta (típicamente el TEST del código ya escrito y las tareas sin marcar): \`edit\` sobre lo existente, \`create\` solo para lo nuevo. Ve directo, sin explorar.${done}`;
+  }
+  return `\n\n⚠ EL INTENTO ANTERIOR NO ESCRIBIÓ NINGÚN FICHERO. No leas, no explores, no uses \`view\`. Usa el tool \`create\` AHORA para escribir el fichero de código y su test, y para.${done}`;
+}
+
 function rollbackTo(projectRoot, changeDir, phase) {
-  const arr = JSON.parse(readFileSync(join(changeDir, '.conductor', 'checkpoints.json'), 'utf8'));
+  const arr = JSON.parse(readFileSync(plumbPath(changeDir, 'checkpoints.json'), 'utf8'));
   const ck = [...arr].reverse().find((c) => c.phase === phase);
   if (!ck) throw new Error('sin checkpoint para la fase ' + phase);
   // los archivos tocados se leen ANTES de tocar nada (lección: un checkout total restauraba la
   // fontanería .conductor al pasado y el timeline "perdía" la fase a deshacer)
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const i = tl.phases.findIndex((p2) => p2.phase === phase);
   const touched = [];
   for (const ph of tl.phases.slice(Math.max(0, i))) for (const fl of ph.files || []) {
     touched.push(typeof fl === 'string' ? { p: fl, k: 'create' } : fl);
   }
-  const idx = resolve(changeDir, '.conductor', 'ckpt-rb-index');
+  const idx = resolve(plumbPath(changeDir, 'ckpt-rb-index'));
   const env = { ...process.env, GIT_INDEX_FILE: idx };
   if (!/^[0-9a-f]{6,64}$/i.test(String(ck.tree))) throw new Error('checkpoint corrupto');
   execFileSync('git', ['read-tree', ck.tree], { cwd: projectRoot, stdio: 'ignore', timeout: 15000, windowsHide: true, env });
@@ -5056,7 +5111,7 @@ function rollbackTo(projectRoot, changeDir, phase) {
 // LOCK de instancia única por change: si un modelo de sesión lanza el pipeline dos veces (visto en
 // runtime: dos drivers pisándose el mismo change), el segundo se NIEGA. Lock = pid + heartbeat (el
 // writeTimeline lo refresca); roto si el proceso murió o lleva >15 min sin latir.
-const lockPath = (dir) => join(dir, '.conductor', 'lock.json');
+const lockPath = (dir) => plumbPath(dir, 'lock.json');
 // L1: candado EN-PROCESO (determinista, sin TOCTOU) — activeRun() excluye el propio pid, así que dos drive()
 // concurrentes en el MISMO proceso (p.ej. el MCP que no awaitea) no se veían y se pisaban. Este Set los caza.
 const _inProcLocks = new Set();
@@ -5069,7 +5124,7 @@ function activeRun(changeDir) {
       // Un run con verdict TERMINAL ya NO toca src/ → no cuenta como "activo" aunque su proceso siga saliendo:
       // el verdict se escribe ANTES de liberar el lock y de que el hijo muera. Sin esto, un run recién GREEN
       // bloqueaba (busyProject) lanzar otro en el mismo repo durante la ventana de salida — carrera real.
-      try { const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8')); if (tl && tl.verdict && tl.verdict !== 'running') return null; } catch {}
+      try { const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8')); if (tl && tl.verdict && tl.verdict !== 'running') return null; } catch {}
       return l;
     }
   } catch {}
@@ -5091,10 +5146,10 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // registro del run a disco (visibilidad developer): la mini-web enseña este log en vivo
   const log = (m) => {
     logOut(m);
-    try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, '.conductor', 'log.txt'), `[${new Date().toISOString().slice(11, 19)}] ${m}\n`, { flag: 'a' }); } catch {}
+    try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(plumbPath(changeDir, 'log.txt'), `[${new Date().toISOString().slice(11, 19)}] ${m}\n`, { flag: 'a' }); } catch {}
   };
   // toma el lock de instancia única (se refresca en cada writeTimeline; se libera en TODAS las salidas)
-  const takeLock = () => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(lockPath(changeDir), JSON.stringify({ pid: process.pid, startedAt: Date.now(), request, url: serveUrl })); } catch {} };
+  const takeLock = () => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(lockPath(changeDir), JSON.stringify({ pid: process.pid, startedAt: Date.now(), request, url: serveUrl })); } catch {} };
   const releaseLock = () => {
     _inProcLocks.delete(lockKey); // el lock EN-PROCESO siempre se libera
     // el lock EN DISCO solo se borra si es NUESTRO (pid propio). Con el early-out por verdict terminal, un
@@ -5122,7 +5177,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // REGISTRY (#72): genera el índice Skill|Trigger|Scope|Path (proyecto + globales del usuario, dedup
   // project>user) 1×/sesión. Recuperación perezosa: el índice da RUTAS; el contenido se lee on-demand.
   let registrySkills = []; try { registrySkills = buildRegistry(projectRoot); } catch {}
-  if (registrySkills.length) log(`📒 skill-registry: ${registrySkills.length} patrón(es) indexado(s) en .conductor/skills/REGISTRY.md (proyecto+global)`);
+  if (registrySkills.length) log(`📒 patrones de equipo: ${registrySkills.length} descubierto(s) (.github/skills del proyecto + globales del usuario)`);
   const stack = detectStack(projectRoot); // stack detectado → hint de verificación contextual en el prompt
   // CIERRE DEL BUCLE SDD (apuesta token-first): índice COMPACTO del historial VERIFICADO (capacidades de la spec viva
   // + cambios recientes) → se realimenta a las fases de planificación para que construyan SOBRE lo ya verificado y
@@ -5173,7 +5228,8 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     const base = (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : resolvePhases(complexity, null);
     effPipeline = base.includes('test') ? base : [...base, 'test'];
   }
-  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
+  // tests: DEFAULT ON (código sin test = error; cura del incidente 2026-07-16) — opt-out cfg.strictTests:false o preset laxo
+  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, tests: cfg.strictTests ?? preset?.strict?.tests ?? true, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
   // RunState robusto (auditoría P2-9): persistimos los modelos del LANZAMIENTO (env CONDUCTOR_MODEL_* o
@@ -5203,7 +5259,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // RESUME: si hay un run a medias del MISMO request (abortado por timeout/corte), reanuda donde se
   // quedó — avanza por las fases cuyo artefacto YA existe sin volver a llamar al modelo (no re-paga tokens).
   let step = null, resumed = false;
-  const stateF = existsSync(join(changeDir, '.conductor', 'state.json')) ? join(changeDir, '.conductor', 'state.json') : join(changeDir, '.conductor-run.json');
+  const stateF = existsSync(plumbPath(changeDir, 'state.json')) ? plumbPath(changeDir, 'state.json') : join(changeDir, '.conductor-run.json');
   if (existsSync(stateF)) {
     try {
       const st = JSON.parse(readSafe(stateF));
@@ -5231,7 +5287,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
           // solo por estas, NO por mera existencia del artefacto (que el agente de otra fase pudo pre-escribir
           // con su tool write sin scope de ruta → saltaba planificación en el resume, hallazgo P2).
           let prevDone = new Set();
-          try { prevDone = new Set((JSON.parse(readSafe(join(changeDir, '.conductor', 'timeline.json')))?.phases || []).filter((p) => p?.ok).map((p) => p.phase)); } catch {}
+          try { prevDone = new Set((JSON.parse(readSafe(plumbPath(changeDir, 'timeline.json')))?.phases || []).filter((p) => p?.ok).map((p) => p.phase)); } catch {}
           step = next({ changeDir, srcDir: projectRoot, strict: strictGate });
           while (step && !step.done && step.advanced !== false && step.phase !== 'verify' && step.phase !== 'fix'
                  && prevDone.has(step.phase)
@@ -5252,7 +5308,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // sin esto la web del run reanudado mostraba "todo pendiente" con el orden descolocado (visto en runtime).
   if (resumed) {
     try {
-      const prev = JSON.parse(readSafe(join(changeDir, '.conductor', 'timeline.json')));
+      const prev = JSON.parse(readSafe(plumbPath(changeDir, 'timeline.json')));
       for (const ph of prev?.phases ?? []) {
         if (ph?.ok) timeline.push({ ...ph, resumed: true });
       }
@@ -5281,10 +5337,10 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   if (!resumed) captureBaseTree(projectRoot, changeDir);
   // `reason` (2º arg, solo en verdicts terminales): el porqué humano del BLOCKED/ABORTED/STOPPED — la UI lo
   // pinta bajo la pill; sin esto el run moría con una pill muda y el motivo solo vivía en el return/log.
-  const writeTimeline = (verdict, reason) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  const writeTimeline = (verdict, reason) => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
-  const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
+  const writeReportData = (gates, trace) => { try { writeFileSync(plumbPath(changeDir, 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
   // modo micro = sin spec POR DECISIÓN del usuario → gate proporcional: el report sintetizado debe
   // existir, estar "done" y listar ficheros. Sin coherencia spec↔tasks ni traza REQ (no aplican).
   const isMicro = complexity === 'micro';
@@ -5413,7 +5469,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         }
         testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
-      try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
+      try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
       timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: failed.length === 0, ...(failed.length ? { failureKind: 'tests-fail' } : {}) });
       currentInfo = null; writeTimeline('running');
       log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
@@ -5542,7 +5598,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     const t0 = Date.now();
     if (isCode) { const _ck = gitCheckpoint(projectRoot, changeDir, phase, mspec.model || null); if (!_ck && existsSync(join(projectRoot, '.git'))) log(`⚠ checkpoint NO creado para "${phase}" — el rollback de esta fase no estará disponible (¿index.lock ocupado / git bloqueado?)`); } // P1: rollback "antes de <fase>" + metadata de autoría/modelo
     const baseline = isCode ? captureBaseline(projectRoot) : null; // UNA vez por fase (acumulativo)
-    const otelFile = join(changeDir, '.conductor', 'otel', `${phase}.jsonl`);
+    const otelFile = plumbPath(changeDir, 'otel', `${phase}.jsonl`);
     try { mkdirSync(dirname(otelFile), { recursive: true }); } catch {}
     // el tool `write` de Copilot NO crea directorios padre → el driver pre-crea el del artefacto
     // (imprescindible para las fases con allowlist 'write', que no tienen shell para mkdir)
@@ -5559,18 +5615,18 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         // P2: lentes en PARALELO (correctitud/seguridad/tests...) — N one-shots baratos, merge determinista
         log(`   🔍 ${lenses.length} lentes en paralelo: ${lenses.join(', ')}`);
         const results = await Promise.all(lenses.map((ln) => {
-          const lp = join(changeDir, '.conductor', `lens-${ln}.md`);
+          const lp = plumbPath(changeDir, `lens-${ln}.md`);
           // el prompt de la lente lleva UNA sola ruta (la suya): se SUSTITUYE la del report — dos rutas
           // en el prompt confunden a los modelos (verificado en el e2e con agente debil)
           const lensPrompt = prompt.split(step.write_to_abs).join(lp) + `
 
 LENS - review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.`;
-          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: join(changeDir, '.conductor', 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then((rr) => ({ ln, lp, rr }));
+          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: plumbPath(changeDir, 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then((rr) => ({ ln, lp, rr }));
         }));
         if (stopSignal?.requested) return stopped();
         // merge determinista → verify-report.md por secciones (el gate lee el merged)
         lensTok = { in: 0, out: 0, model: null };
-        for (const x of results) { const t = readTokens(join(changeDir, '.conductor', 'otel', `verify-${x.ln}.jsonl`)); if (t) { lensTok.in += t.in; lensTok.out += t.out; lensTok.model = lensTok.model || t.model; } }
+        for (const x of results) { const t = readTokens(plumbPath(changeDir, 'otel', `verify-${x.ln}.jsonl`)); if (t) { lensTok.in += t.in; lensTok.out += t.out; lensTok.model = lensTok.model || t.model; } }
         if (!lensTok.in && !lensTok.out) lensTok = null;
         const sections = results.filter((x) => existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}
 
@@ -5608,16 +5664,15 @@ ${readSafe(x.lp).trim()}`);
         // No cambia el state machine; solo enriquece el prompt de retry con contexto real de progreso.
         let usePrompt;
         if (isCode && attempt > 1) {
-          let doneHint = '';
+          let doneTasks = [];
           if (phase === 'apply') {
-            const tp = join(changeDir, 'tasks.md');
-            try {
-              const tm = readSafe(tp);
-              const done = (tm.match(/^\s*- \[x\] .+/gim) || []).map((l) => l.trim());
-              if (done.length) doneHint = `\n\nTASKS ALREADY DONE (do NOT re-implement — they were completed in the previous attempt):\n${done.map((l) => `  ${l}`).join('\n')}`;
-            } catch {}
+            try { doneTasks = (readSafe(join(changeDir, 'tasks.md')).match(/^\s*- \[x\] .+/gim) || []).map((l) => l.trim()); } catch {}
           }
-          usePrompt = prompt + `\n\n⚠ EL INTENTO ANTERIOR NO ESCRIBIÓ NINGÚN FICHERO. No leas, no explores, no uses \`view\`. Usa el tool \`create\` AHORA para escribir el fichero de código y su test, y para.${doneHint}`;
+          // RETRY-DELTA (token-first, plan expertise 2026-07-17): recomputar el progreso AHORA — un timeout
+          // puede haber dejado ficheros escritos (el caso real: fuente sí, test no). El mensaje viejo ("no
+          // escribiste NADA") era FALSO en ese caso y provocaba re-pagar la implementación entera.
+          const partial = captureChanged(projectRoot, baseline);
+          usePrompt = prompt + retryHint(partial, doneTasks);
         } else if (isCode && attempt === 1 && phase === 'apply' && resumed) {
           // APPLY-PARTIAL-RESUME (R-A5 FASE 3 — resume): en el 1er intento de un resume, inyectamos las tareas
           // ya completadas en el run interrumpido para que el modelo NO repita trabajo ya hecho.
@@ -5650,6 +5705,8 @@ ${readSafe(x.lp).trim()}`);
         let files = captureChanged(projectRoot, baseline);
         if (!files.length) { await settle(1500); files = captureChanged(projectRoot, baseline); } // flush lag del FS
         if (files.length) {
+          // log HONESTO del caso timeout-con-progreso (antes: "timeout" seguido de "✅ apply" sin explicación)
+          if (r?.err) log(`   ⚠ el intento acabó con error pero dejó ${files.length} fichero(s) — se acepta el progreso y continúa (el gate decide)`);
           capturedFiles = files;
           // el DRIVER sintetiza el apply-report (determinista) a partir de lo que el agente escribió,
           // y cierra las tareas para que el gate de coherencia cuadre.
@@ -5697,7 +5754,7 @@ ${readSafe(x.lp).trim()}`);
     // en memoria y lo tiraba; el SDK lo devuelve en r.out — aquí queda guardado para enseñarlo en la web.
     let hasRaw = false;
     if (cfg.rawCapture !== false && rawOut && rawOut.trim()) {
-      try { const rd = join(changeDir, '.conductor', 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
+      try { const rd = plumbPath(changeDir, 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
     }
     timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
@@ -5711,7 +5768,7 @@ ${readSafe(x.lp).trim()}`);
     // --allow-all-tools y podría reescribir la spec para que su código trace). Opt-in porque "fix edita la
     // spec" es un flujo legítimo en modo laxo; en preset estricto/migración esa mutación es un evento auditable.
     if (phase === 'spec' && specFreezeOn) {
-      const fp = join(changeDir, '.conductor', 'spec-freeze.json');
+      const fp = plumbPath(changeDir, 'spec-freeze.json');
       if (!existsSync(fp)) { try { const sha = hashSpecs(changeDir); if (sha) { writeFileSync(fp, JSON.stringify({ sha, at: new Date().toISOString() })); log(`🔒 spec congelada (sha ${sha.slice(0, 12)}…) — mutarla tras este punto se detecta en verify`); } } catch {} }
     }
 
@@ -5770,14 +5827,14 @@ ${readSafe(x.lp).trim()}`);
       if (applyLenses.length) {
         log(`   🔍 post-apply-review: ${applyLenses.length} lente(s) — re-lectura limpia de la spec`);
         const rev = await Promise.all(applyLenses.map((ln) => {
-          const lp = join(changeDir, '.conductor', `post-apply-${ln}.md`);
+          const lp = plumbPath(changeDir, `post-apply-${ln}.md`);
           const pp = `REVIEWER. The APPLY phase is DONE. Re-read the spec (specs/${domain}/spec.md) WITHOUT memory of the proposal/design, and assess whether the written code SATISFIES every requirement and scenario. Do NOT run tests. Review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.\nArtifacts under ${changeDir}: specs/${domain}/spec.md (the requirements), apply-report.md (what was implemented).`;
-          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: join(changeDir, '.conductor', 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then(() => ({ ln, lp })).catch(() => null);
+          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: plumbPath(changeDir, 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then(() => ({ ln, lp })).catch(() => null);
         }));
         if (stopSignal?.requested) return stopped();
         const sections = rev.filter((x) => x && existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}\n\n${readSafe(x.lp).trim()}`);
         if (sections.length) {
-          writeFileSync(join(changeDir, '.conductor', 'post-apply-review.md'), `# Post-Apply Review (${sections.length}/${applyLenses.length} lentes)\n\n> Revisor FRESCO (sin la propuesta) — valida que el código responda los requisitos. INFORMATIVO: el gate determinista decide el GREEN.\n\n${sections.join('\n\n')}\n`);
+          writeFileSync(plumbPath(changeDir, 'post-apply-review.md'), `# Post-Apply Review (${sections.length}/${applyLenses.length} lentes)\n\n> Revisor FRESCO (sin la propuesta) — valida que el código responda los requisitos. INFORMATIVO: el gate determinista decide el GREEN.\n\n${sections.join('\n\n')}\n`);
           timeline.push({ phase: 'post-apply-review', role: 'reviewer', ok: true, lenses: applyLenses, ms: Date.now() - t0 });
           log(`   ✅ post-apply-review → .conductor/post-apply-review.md`);
         }
@@ -5800,7 +5857,7 @@ ${readSafe(x.lp).trim()}`);
   // que el GREEN firmado prueba CONTRA QUÉ spec se obtuvo (mutar la spec tras aprobarla es un evento, no un no-op).
   if (step.verdict === 'GREEN' && specFreezeOn) {
     try {
-      const fp = join(changeDir, '.conductor', 'spec-freeze.json');
+      const fp = plumbPath(changeDir, 'spec-freeze.json');
       const frozen = existsSync(fp) ? JSON.parse(readSafe(fp)).sha : null;
       const now = hashSpecs(changeDir);
       if (frozen && now && frozen !== now) {
@@ -5913,7 +5970,7 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
 })();
 
 // ===== lib/pipeline/sdk-runner.mjs =====
@@ -6182,6 +6239,7 @@ const { listCopilotModels } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, isPortableBlob, sealByokFile, byokFile } = __M['secret'];
+const { plumbPath } = __M['plumb'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
   if (!root || !rel) return null;
@@ -6203,7 +6261,7 @@ function fileDiff(srcDir, rel, changeDir) {
   // MISMO baseline que el changeset: si el run capturó base-tree, diffea contra él → el diff muestra SOLO lo que tocó
   // este run (coherente con el +X/−Y de la fila), no la suciedad previa. Sin base-tree → HEAD (compat). quotePath=false: rutas no-ASCII crudas.
   let base = 'HEAD';
-  if (changeDir) try { const t = readFileSync(join(changeDir, '.conductor', 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
+  if (changeDir) try { const t = readFileSync(plumbPath(changeDir, 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
   try {
     const d = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', base, '--', rel], { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true });
     if (d.trim()) return d.slice(0, 30000);
@@ -6225,7 +6283,7 @@ function gitChangedFiles(srcDir, changeDir) {
     // BASELINE del run: diffea contra el árbol capturado AL ARRANCAR (.conductor/base-tree) → SOLO los cambios de ESTE
     // run, nunca lo que ya estaba sin commitear. Sin baseline (runs viejos / sin git al arrancar) → HEAD (como antes).
     let base = 'HEAD';
-    try { const t = readFileSync(join(changeDir, '.conductor', 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
+    try { const t = readFileSync(plumbPath(changeDir, 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
     // índice EFÍMERO en tmpdir (no dentro del change: un slug válido pero inexistente no debe materializar .conductor/).
     // Clave por hash del changeDir → runs simultáneos de distintos changes no colisionan.
     const idx = join(tmpdir(), 'conductor-chg-' + createHash('sha1').update(String(changeDir)).digest('hex').slice(0, 16) + '.idx');
@@ -6418,8 +6476,8 @@ function modelOptions(srcDir, tl) {
 }
 
 function runState(changeDir, srcDir, { alive = null } = {}) {
-  const tl = readJson(join(changeDir, '.conductor', 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
-  const st = readJson(join(changeDir, '.conductor', 'state.json')) ?? readJson(join(changeDir, '.conductor-run.json'));
+  const tl = readJson(plumbPath(changeDir, 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
+  const st = readJson(plumbPath(changeDir, 'state.json')) ?? readJson(join(changeDir, '.conductor-run.json'));
   const cur = tl?.current ?? null;
   const isCode = cur && (cur.phase === 'apply' || cur.phase === 'fix');
   // CONSUMO por modelo/proveedor (lo que importa): tokens y coste de cada modelo usado en el run,
@@ -6461,7 +6519,7 @@ function runState(changeDir, srcDir, { alive = null } = {}) {
     cost: { byModel },
     savings,
     live: isCode ? liveFiles(srcDir, cur) : [],
-    logTail: (readHead(join(changeDir, '.conductor', 'log.txt'), 1e6) || '').split('\n').filter(Boolean).slice(-30).map((l) => scrubSecrets(l, process.env, scrubExtra())),
+    logTail: (readHead(plumbPath(changeDir, 'log.txt'), 1e6) || '').split('\n').filter(Boolean).slice(-30).map((l) => scrubSecrets(l, process.env, scrubExtra())),
     modelOptions: modelOptions(srcDir, tl),
     verifyExcerpt: scrubSecrets(readHead(join(changeDir, 'verify-report.md')), process.env, scrubExtra()),
     verdict: tl?.verdict && tl.verdict !== 'running' ? tl.verdict : (st?.status === 'done' ? st.verdict : (alive === false && tl ? 'INTERRUMPIDO' : null)),
@@ -6549,7 +6607,7 @@ function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1' }) {
       // CRUDO del modelo por fase ("lo que verías sin conductor") — fichero whitelisteado en .conductor/raw/
       const u = new URL(req.url, 'http://x');
       const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-      let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
+      let body = null; try { if (ph) body = scrubSecrets(readFileSync(plumbPath(changeDir, 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/state')) {
@@ -6586,7 +6644,7 @@ function listChanges(root) {
   try { names = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'archive').map((e) => e.name); } catch {}
   return names.map((name) => {
     const ch = join(dir, name);
-    const tl = readJson(join(ch, '.conductor', 'timeline.json')) ?? readJson(join(ch, 'run-timeline.json'));
+    const tl = readJson(plumbPath(ch, 'timeline.json')) ?? readJson(join(ch, 'run-timeline.json'));
     const lock = activeRun(ch);
     let mtime = 0; try { mtime = statSync(ch).mtimeMs; } catch {}
     let tin = 0, tout = 0;
@@ -6632,7 +6690,7 @@ function createProjectServer({ root, engine, spawnRun = defaultSpawnRun, port = 
       const b = await readBody(req);
       if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(b.name || ''))) return json(400, { ok: false });
       const ch = join(root, 'openspec', 'changes', b.name);
-      const tl = readJson(join(ch, '.conductor', 'timeline.json'));
+      const tl = readJson(plumbPath(ch, 'timeline.json'));
       if (!tl?.request) return json(404, { ok: false, error: 'sin timeline/request que reanudar' });
       if (activeRun(ch)) return json(409, { ok: false, error: 'ya hay un run en curso' });
       const r = spawnRun({ engine, root, name: b.name, request: tl.request, complexity: tl.complexity, domain: tl.domain, models: tl.models });
@@ -6839,7 +6897,7 @@ async function _computeAvailableModels(registry) {
   const obsByok = new Set(), obsCop = new Set();
   for (const p of registry.values()) {
     for (const c of listChanges(p.root)) {
-      const tl = readJson(join(p.root, 'openspec', 'changes', c.name, '.conductor', 'timeline.json'));
+      const tl = readJson(plumbPath(join(p.root, 'openspec', 'changes', c.name), 'timeline.json'));
       for (const ph of tl?.phases ?? []) {
         const m = ph.modelReported || ph.model; if (!m) continue;
         (ph.provider === 'byok' ? obsByok : obsCop).add(m);
@@ -6950,6 +7008,31 @@ function checkByokModels(models, byokList, hasCreds) {
   const missing = [...new Set(specs.filter((m) => !set.has(m)))];
   if (missing.length) return { ok: false, error: `modelo(s) BYOK no disponible(s): ${missing.join(', ')}. Disponibles: ${byokList.slice(0, 20).join(', ')}` };
   return { ok: true };
+}
+
+// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo que pidió Jorge —
+// "defaults en el repo, la web los cambia". Merge CONSERVADOR en openspec/conductor.json: solo la sección
+// models, clave a clave (roles y fases válidas), '' = borrar esa clave (volver a "Recomendado"); jamás pisa
+// otras claves del fichero; si el JSON del usuario está roto, NO se toca. Puro y exportado (testeable).
+function mergeModelsDefault(openspecDir, models) {
+  const ALLOWED = new Set(['planner', 'coder', 'reviewer', ...KNOWN_PHASES]);
+  if (!models || typeof models !== 'object' || Array.isArray(models)) return { ok: false, error: 'models (objeto) requerido' };
+  const clean = {};
+  for (const [k, v] of Object.entries(models)) {
+    if (!ALLOWED.has(k)) continue;
+    if (v === '' || v === null) { clean[k] = null; continue; } // limpiar → esa clave vuelve al recomendado
+    if (typeof v === 'string' && v.trim()) clean[k] = v.trim();
+  }
+  if (!Object.keys(clean).length) return { ok: false, error: 'sin claves válidas (planner/coder/reviewer o una fase del pipeline)' };
+  initConfig(openspecDir); // idempotente: crea conductor.json+schema si faltan, jamás pisa
+  const p = join(openspecDir, 'conductor.json');
+  let cfg = {};
+  try { cfg = JSON.parse(readFileSync(p, 'utf8')) || {}; } catch { return { ok: false, error: 'openspec/conductor.json tiene JSON inválido — no lo toco; arréglalo a mano' }; }
+  const merged = { ...(cfg.models || {}) };
+  for (const [k, v] of Object.entries(clean)) { if (v === null) delete merged[k]; else merged[k] = v; }
+  if (Object.keys(merged).length) cfg.models = merged; else delete cfg.models;
+  writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+  return { ok: true, models: cfg.models || {} };
 }
 
 // board/búsqueda AGREGADOS sobre varios proyectos (coherente con la lista de runs multi-proyecto del panel).
@@ -7082,7 +7165,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   // o su reserva sin limpiar. notTerminal() combina ambas capas: cubre reservas (child:null, sin timeline aún) Y
   // runs vivos (child!==null, timeline='running'), y EXCLUYE los terminados → sin falso "busyProject" tras un GREEN
   // (bug real del e2e), y sin el hueco TOCTOU de solo-reservas (un run lanzado cuyo hijo aún no escribió el lock).
-  const notTerminal = (root, name) => { try { const v = readJson(join(root, 'openspec', 'changes', name, '.conductor', 'timeline.json'))?.verdict; return !v || v === 'running'; } catch { return true; } };
+  const notTerminal = (root, name) => { try { const v = readJson(plumbPath(join(root, 'openspec', 'changes', name), 'timeline.json'))?.verdict; return !v || v === 'running'; } catch { return true; } };
   const projectActiveRunOther = (proj, exceptName) => {
     const pref = proj.id + '/';
     for (const [k, r] of runs) if (r && !r.exited && k.startsWith(pref)) { const nm = k.slice(pref.length); if (nm !== exceptName && notTerminal(proj.root, nm)) return nm; }
@@ -7109,7 +7192,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
     // ANTI-race del guardrail working-tree: marca el timeline como 'running' SÍNCRONO antes de spawnear. Sin esto,
     // durante el arranque de un RESUME el timeline aún muestra el verdict TERMINAL del run anterior → notTerminal()/
     // activeRun lo darían por "no activo" y dejarían arrancar un 2º driver sobre el MISMO src/. El driver lo reescribe.
-    try { const tp = join(proj.root, 'openspec', 'changes', name, '.conductor', 'timeline.json'); const tl = readJson(tp); if (tl && tl.verdict && tl.verdict !== 'running') writeFileSync(tp, JSON.stringify({ ...tl, verdict: 'running' }, null, 2)); } catch {}
+    try { const tp = plumbPath(join(proj.root, 'openspec', 'changes', name), 'timeline.json'); const tl = readJson(tp); if (tl && tl.verdict && tl.verdict !== 'running') writeFileSync(tp, JSON.stringify({ ...tl, verdict: 'running' }, null, 2)); } catch {}
     const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
@@ -7216,6 +7299,19 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const pid = u.searchParams.get('projectId');
         const scope = pid ? [projOf(pid)].filter(Boolean) : [...registry.values()];
         return json(200, { archive: aggregateArchive(scope) });
+      }
+      // B5: persistir la mezcla de modelos elegida como DEFAULT del proyecto (openspec/conductor.json).
+      // Mismo gate de validación que el launch (checkByokModels) para no guardar modelos fantasma.
+      if (req.method === 'POST' && u.pathname === '/api/models-default') {
+        const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
+        const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
+        if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
+        const av = await availableModels(registry);
+        const mv = checkByokModels(b.models, av.byok, av.byokCreds);
+        if (!mv.ok) return json(400, { ok: false, error: mv.error });
+        const r = mergeModelsDefault(join(proj.root, 'openspec'), b.models);
+        return json(r.ok ? 200 : 400, r);
       }
       if (u.pathname === '/api/search') {
         const pid = u.searchParams.get('projectId');
@@ -7360,7 +7456,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto desconocido' });
         const ch = join(proj.root, 'openspec', 'changes', b.name);
-        const tl = readJson(join(ch, '.conductor', 'timeline.json'));
+        const tl = readJson(plumbPath(ch, 'timeline.json'));
         if (!tl?.request) return json(404, { ok: false, error: 'sin timeline que reanudar' });
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso' });
@@ -7375,8 +7471,8 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const proj = projOf(mArt2[1]);
         if (!proj) { res.writeHead(404); return res.end('proyecto desconocido'); }
         const ch2 = join(proj.root, 'openspec', 'changes', mArt2[2]);
-        const tl2 = readJson(join(ch2, '.conductor', 'timeline.json'));
-        const rj = readJson(join(ch2, '.conductor', 'report.json'));
+        const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
+        const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = safeRead(ch2, 'dashboard.html', 1e6);
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
@@ -7384,8 +7480,8 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       if (mArt) {
         // SIEMPRE FRESCO: re-render con el estilo/datos actuales (el archivo en disco queda para offline/CI)
         const ch2 = join(root, 'openspec', 'changes', mArt[1]);
-        const tl2 = readJson(join(ch2, '.conductor', 'timeline.json'));
-        const rj = readJson(join(ch2, '.conductor', 'report.json'));
+        const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
+        const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = safeRead(ch2, 'dashboard.html', 1e6);
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
@@ -7426,7 +7522,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'resume') {
-          const tl2 = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          const tl2 = readJson(plumbPath(changeDir, 'timeline.json'));
           if (!tl2?.request) return json(404, { ok: false });
           if (activeRun(changeDir) || (reg && !reg.exited)) return json(409, { ok: false, error: 'ya en curso' });
           const otherSR = projectActiveRunOther(proj,name); // GUARDRAIL working-tree: no reanudar si otro cambio del repo corre
@@ -7441,9 +7537,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         }
         if (action === 'receipt' && req.method === 'GET') {
           // RECIBO DE PR (dev-first): markdown listo para pegar en la descripción del PR. Determinista, del disco.
-          const tlR = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          const tlR = readJson(plumbPath(changeDir, 'timeline.json'));
           if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) return json(404, { ok: false, error: 'sin timeline todavía — el recibo sale de un run ejecutado' });
-          let domainR = 'core'; try { domainR = JSON.parse(readFileSync(join(changeDir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+          let domainR = 'core'; try { domainR = JSON.parse(readFileSync(plumbPath(changeDir, 'state.json'), 'utf8')).domain || 'core'; } catch {}
           const mdR = renderReceipt({ name, timeline: tlR, spec: safeRead(changeDir, `specs/${domainR}/spec.md`, 60000) || '', proposal: safeRead(changeDir, 'proposal.md', 30000) || '', verify: safeRead(changeDir, 'verify-report.md', 30000) || '' });
           if (!mdR) return json(404, { ok: false, error: 'sin datos suficientes para el recibo' });
           return json(200, { ok: true, markdown: mdR });
@@ -7460,7 +7556,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         if (action === 'raw') {
           // CRUDO del modelo por fase ("lo que verías sin conductor"): fichero whitelisteado en .conductor/raw/
           const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-          let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
+          let body = null; try { if (ph) body = scrubSecrets(readFileSync(plumbPath(changeDir, 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'artifact') {
@@ -7498,7 +7594,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           const opts = { categories: cats, limit: Math.min(500, +(u.searchParams.get('limit') || 250) || 250), offset: Math.max(0, +(u.searchParams.get('offset') || 0) || 0), q: u.searchParams.get('q') || '' };
           // 1) traza nativa del CLI (events.jsonl); 2) si no la hay (p.ej. qwen vía LiteLLM), se RECONSTRUYE
           // desde los spans OTel (.conductor/otel/) → el visor funciona también con qwen. Ambas confinadas.
-          const r2 = parseEvents(join(changeDir, '.conductor', 'events.jsonl'), opts) || parseOtelSession(join(changeDir, '.conductor', 'otel'), opts);
+          const r2 = parseEvents(plumbPath(changeDir, 'events.jsonl'), opts) || parseOtelSession(plumbPath(changeDir, 'otel'), opts);
           // "sin traza" es un run VÁLIDO pero VACÍO, no un 404 (recurso inexistente): devolver 404 hacía que el
           // navegador logueara "Failed to load resource" en consola en un caso normal. 200 + shape vacío + flag
           // noTrace → el visor pinta su estado vacío por la vía de datos, sin ruido de consola. REST correcto.
@@ -7514,7 +7610,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           // archive app-native: promueve delta specs (ADDED, aditivo-seguro) + mueve el change a archive/ (renameSync).
           // Pre-vuelo: GREEN y NO en curso. El merge no-aditivo (MODIFIED/REMOVED/RENAMED) se deja a /sdd-archive.
           if (reg && !reg.exited) return json(409, { ok: false, error: 'run en curso — pausa o detén antes de archivar' });
-          const tlA = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          const tlA = readJson(plumbPath(changeDir, 'timeline.json'));
           if (tlA?.verdict !== 'GREEN') return json(409, { ok: false, error: 'solo se archiva un change con veredicto GREEN' });
           try {
             const { promoted, needsManualMerge } = promoteSpec(changeDir, join(proj.root, 'openspec', 'specs'));
@@ -7554,7 +7650,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   });
 }
 
-return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, byokDeclaredModels, readModelsCache, writeModelsCache, fetchByokPrices, isCopilotFamily, checkByokModels, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
+return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, byokDeclaredModels, readModelsCache, writeModelsCache, fetchByokPrices, isCopilotFamily, checkByokModels, mergeModelsDefault, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
 })();
 
 // ===== lib/sysops/ci.mjs =====
@@ -7643,6 +7739,7 @@ const { renderReceipt } = __M['dashboard'];
 const { initConfig } = __M['scaffold'];
 const { assertConfined } = __M['confine'];
 const { count } = __M['report'];
+const { plumbPath } = __M['plumb'];
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
 
 // walk de TEXTO acotado (para el evidence-gate de migración legacy): lee ficheros de código/datos, salta deps y
@@ -7692,9 +7789,9 @@ async function appUp(root) {
 }
 function makeReceipt(dir) {
   try {
-    const tl = JSON.parse(readFileSync(join(dir, '.conductor', 'timeline.json'), 'utf8'));
+    const tl = JSON.parse(readFileSync(plumbPath(dir, 'timeline.json'), 'utf8'));
     if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) return null;
-    let domain = 'core'; try { domain = JSON.parse(readFileSync(join(dir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+    let domain = 'core'; try { domain = JSON.parse(readFileSync(plumbPath(dir, 'state.json'), 'utf8')).domain || 'core'; } catch {}
     const rd = (f) => { try { return readFileSync(join(dir, f), 'utf8'); } catch { return ''; } };
     return renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') }) || null;
   } catch { return null; }
@@ -7709,9 +7806,15 @@ function pauseBundle(changeDir, pending) {
   if (pending?.before === 'fix') { const v = artClip(changeDir, 'verify-report.md'); if (v) arts['verify-report.md'] = v; }
   return arts;
 }
-async function pollRun(url, apiBase, changeDir, { timeoutMs = 30 * 60000 } = {}) {
+// ANTI-TIMEOUT DE HOSTS (bug latente cazado en el plan de expertise): muchos hosts MATAN una tool-call
+// larga (1-5 min). Cada llamada devuelve en ≤~85s SIEMPRE — si ni pausa ni veredicto, retorna
+// status:"working" y el BUCLE lo lleva el agente (re-llama conductor_continue {action:"wait"}).
+// Presupuesto configurable por CONDUCTOR_MCP_WAIT_MS (los tests lo bajan; un host paciente puede subirlo).
+// Exportado para testearlo determinista contra un servidor fake.
+async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
+  const budget = Number(timeoutMs) || Number(process.env.CONDUCTOR_MCP_WAIT_MS) || 85000;
   const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
+  while (Date.now() - t0 < budget) {
     let st = null;
     try { const r = await fetch(url + apiBase + '/state', { signal: AbortSignal.timeout(8000) }); st = r.ok ? await r.json() : null; } catch {}
     if (st) {
@@ -7732,7 +7835,7 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs = 30 * 60000 } = {})
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  return { status: 'running', note: 'el run sigue trabajando — llama conductor_continue {action:"wait"} para seguir esperando (o abre la web)' };
+  return { status: 'working', note: 'la fase sigue trabajando (normal: duran minutos)', next: 'Llama conductor_continue {action:"wait"} AHORA para seguir esperando — repite hasta status paused/done. No narres cada espera.' };
 }
 
 const TOOLS = {
@@ -7762,7 +7865,7 @@ const TOOLS = {
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.
   conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', description: 'Create openspec/conductor.json (only if missing) and openspec/conductor.schema.json (editor autocomplete/validation) in the given openspec dir.', inputSchema: { type: 'object', properties: { openspecDir: { type: 'string', description: 'absolute path of the project openspec/ dir' } }, required: ['openspecDir'] } },
     run: ({ openspecDir }) => initConfig(openspecDir) },
-  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline (deterministic driver)', description: 'Run the ENTIRE SDD pipeline deterministically end-to-end. The SERVER drives every phase (propose→spec→…→apply→verify) in order, calling the BYOK model itself for each artifact and running the deterministic gate at verify. Phases CANNOT be skipped regardless of model quality. Call this ONCE with the feature request; it returns the final verdict. The server reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' } }, required: ['request', 'projectRoot'] } },
+  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'HEADLESS/CI ONLY: runs the ENTIRE SDD pipeline in ONE blocking call (minutes — many chat hosts will kill it) with no review pauses. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName, complexity, domain }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
@@ -7809,7 +7912,7 @@ const TOOLS = {
       return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
-  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature and WAIT until the first review pause (or the final verdict). Returns the pause artifacts (proposal/spec/report, trimmed) for you to SHOW the user verbatim; when they reply, call conductor_continue with their decision, and repeat until done. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
+  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~90s with a status: "working" = phase still running → IMMEDIATELY call conductor_continue {action:"wait"} and repeat (do not narrate each wait); "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
@@ -7822,7 +7925,7 @@ const TOOLS = {
       const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name));
       return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
     } },
-  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) and wait for the next one', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" just keeps waiting (no decision). Waits until the NEXT pause or the final verdict and returns it — same contract as conductor_feature.', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~90s with "working" (→ call again with action:"wait", silently), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
     run: async ({ projectRoot, changeName, note, model, action }) => {
       const root = resolve(projectRoot || process.cwd());
       const name = slug(changeName);
@@ -7870,7 +7973,7 @@ function serve() {
   rl.on('line', (line) => { const s = line.trim(); if (!s) return; let m; try { m = JSON.parse(s); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); } handle(m).catch((e) => log('err', e.message)); });
 }
 
-return { serve };
+return { pollRun, serve };
 })();
 
 // ===== CLI =====
@@ -7927,7 +8030,8 @@ const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
 const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
-const { encryptSecret, decryptSecret, sealByokFile, byokFile } = __M['secret'];
+const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob } = __M['secret'];
+const { PROMPT_KEYS, instructionFor } = __M['orchestrate'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
 const { toOtlp } = __M['otlp'];
 // robustez: cualquier error no capturado → mensaje limpio + exit 2 (nunca stack trace al usuario)
@@ -8478,7 +8582,7 @@ switch (cmd) {
     // valida un openspec/conductor.json de ejemplo contra el CONFIG_SCHEMA REAL (importado de scaffold) →
     // prueba el validador Y el schema vigente. Antes usaba un schema FÓSIL (formato `spec-driven`/x-conductor
     // + agentes sdd-planner/coder/reviewer ELIMINADOS) que ya no representa la config del producto.
-    const good = { models: { planner: 'byok:qwen36-msc1', coder: 'copilot:claude-haiku-4.5' }, pipeline: ['propose', 'spec', 'apply', 'verify'], autoApprove: false };
+    const good = { models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-haiku-4.5' }, pipeline: ['propose', 'spec', 'apply', 'verify'], autoApprove: false };
     const bad1 = { autoApprove: 'sí', pipeline: ['fase-inexistente'], propiedadDesconocida: 1 }; // tipo malo + fase inválida + additionalProperties:false
     const r1 = validate(CONFIG_SCHEMA, good), r2 = validate(CONFIG_SCHEMA, bad1);
     console.log(`\nconductor doctor`);
@@ -8492,7 +8596,7 @@ switch (cmd) {
     const sdkB = [join(dirname(resolve(process.argv[1])), 'copilot-sdk.mjs'), join(ROOT, '..', 'assets', 'copilot-sdk.mjs')].find((p2) => existsSync(p2));
     console.log(`  runner sdk empaquetado: ${sdkB ? 'disponible (actívalo con "runner":"sdk")' : 'no incluido (spawn)'}`);
     const appUp = await fetch('http://127.0.0.1:4750/api/ping', { signal: AbortSignal.timeout(700) }).then((r3) => r3.json()).catch(() => null);
-    console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con /sdd-run o `conductor serve`)'}`);
+    console.log(`  app conductor (:4750): ${appUp?.ok ? 'EN MARCHA (' + appUp.root + ')' : 'apagada (se levanta sola con `conductor` en tu repo)'}`);
     // PROXY CORPORATIVO: el fetch de Node IGNORA HTTP(S)_PROXY por defecto → si el LiteLLM va detrás del proxy,
     // el catálogo/BYOK fallan en silencio donde el navegador sí llega. Aviso accionable (Node ≥24: NODE_USE_ENV_PROXY).
     const proxyEnv = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
@@ -8524,6 +8628,31 @@ switch (cmd) {
         console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);
       } else { console.log('  bundle vs lib/: (no comprobable fuera del repo)'); }
     } catch { console.log('  bundle vs lib/: (no comprobable)'); }
+    // ── DOCTOR v2 (plan expertise 2026-07-17): el mundo nuevo — credenciales, prompts, hosts ──
+    // credenciales LiteLLM: existe / sellada / motivo (reutiliza la resolución central byokFile)
+    try {
+      const homeD = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
+      const fD = byokFile(homeD);
+      let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
+      if (!jD) console.log('  credenciales LiteLLM: AUSENTES → crea ~/.conductor/litellm.json {"baseUrl","apiKey"} (o `conductor litellm login`)');
+      else if (jD.apiKey) console.log(`  credenciales LiteLLM: EN CLARO en ${fD} — se sellarán (cifrado) al primer uso`);
+      else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
+      else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
+    } catch { console.log('  credenciales LiteLLM: (no comprobable)'); }
+    // prompts del pipeline: ¿los 10 .md resueltos desde fichero o corriendo con el fallback embebido?
+    try {
+      const fromFile = PROMPT_KEYS.filter((k) => { try { return typeof instructionFor(k) === 'string' && instructionFor(k).length > 40; } catch { return false; } });
+      console.log(`  prompts del pipeline: ${fromFile.length}/${PROMPT_KEYS.length} fases con instrucción resuelta (prompts/<fase>.md, editable; fallback embebido si faltan)`);
+    } catch { console.log('  prompts del pipeline: (no comprobable)'); }
+    // hosts conectados: comando global /conductor (Claude/OpenCode) + MCP en la config de Copilot CLI
+    try {
+      const homeU2 = process.env.CONDUCTOR_USERHOME || homedir();
+      const hosts = [];
+      if (existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
+      if (existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
+      try { if (readFileSync(join(homeU2, '.copilot', 'mcp-config.json'), 'utf8').includes('conductor')) hosts.push('Copilot CLI (MCP)'); } catch {}
+      console.log(`  hosts conectados: ${hosts.length ? hosts.join(' · ') : 'ninguno → `conductor setup` los conecta (comando /conductor + MCP)'}`);
+    } catch { console.log('  hosts conectados: (no comprobable)'); }
     console.log('');
     process.exit(r1.valid && !r2.valid ? 0 : 1);
   }
@@ -8960,4 +9089,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 23c625c6527d76fc1a76fc67007581c99e4a97feb55ae5a69491087742600d8b
+// build-inputs-sha256: a2dc0b5f3b3d208b0f16a7f62853b41f91ae48aa4e510035e74d05ecf60c5f3c

@@ -37,6 +37,7 @@ import { budgetContextFiles, summarizeArtifact } from '../core/estimate.mjs';
 import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
 import { decryptSecret, sealByokFile, byokFile } from '../provenance/secret.mjs';
+import { plumbPath } from '../core/plumb.mjs';
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -329,7 +330,7 @@ export function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_
 // vieron, sin poder de veto (solo el gate sin-LLM decide el verdict). Sin fichero o sin graves → [].
 export function postApplyFindings(changeDir) {
   try {
-    const txt = readFileSync(join(changeDir, '.conductor', 'post-apply-review.md'), 'utf8');
+    const txt = readFileSync(plumbPath(changeDir, 'post-apply-review.md'), 'utf8');
     return txt.split('\n')
       .filter((l) => /confirmed/i.test(l) && /(error|critical|breaking)/i.test(l))
       .slice(0, 20)
@@ -540,11 +541,11 @@ export function evalPrecondition(pc, projectRoot, changeDir) {
 // rama o staging del usuario. rollbackTo() restaura ese árbol y borra los archivos creados después.
 function gitCheckpoint(projectRoot, changeDir, phase, model) {
   try {
-    const idx = resolve(changeDir, '.conductor', 'ckpt-index'); // ABSOLUTO: git resuelve GIT_INDEX_FILE relativo contra el repo
+    const idx = resolve(plumbPath(changeDir, 'ckpt-index')); // ABSOLUTO: git resuelve GIT_INDEX_FILE relativo contra el repo
     const env = { ...process.env, GIT_INDEX_FILE: idx };
     execSync('git add -A', { cwd: projectRoot, stdio: 'ignore', timeout: 30000, windowsHide: true, env });
     const tree = execSync('git write-tree', { cwd: projectRoot, encoding: 'utf8', timeout: 15000, windowsHide: true, env }).trim();
-    const f = join(changeDir, '.conductor', 'checkpoints.json');
+    const f = plumbPath(changeDir, 'checkpoints.json');
     let arr = []; try { arr = JSON.parse(readFileSync(f, 'utf8')); } catch {}
     // metadata de autoría/entorno (Ola 1): quién + con qué modelo, auditable junto al árbol del checkpoint
     let author = ''; try { author = execSync('git config user.email', { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch {}
@@ -561,28 +562,39 @@ function gitCheckpoint(projectRoot, changeDir, phase, model) {
 function captureBaseTree(projectRoot, changeDir) {
   try {
     if (!existsSync(join(projectRoot, '.git'))) return;
-    const idx = resolve(changeDir, '.conductor', 'base-index');
-    mkdirSync(join(changeDir, '.conductor'), { recursive: true });
+    const idx = resolve(plumbPath(changeDir, 'base-index'));
+    mkdirSync(plumbPath(changeDir), { recursive: true });
     const env = { ...process.env, GIT_INDEX_FILE: idx };
     execSync('git add -A', { cwd: projectRoot, stdio: 'ignore', timeout: 30000, windowsHide: true, env });
     const tree = execSync('git write-tree', { cwd: projectRoot, encoding: 'utf8', timeout: 15000, windowsHide: true, env }).trim();
-    if (/^[0-9a-f]{6,64}$/i.test(tree)) writeFileSync(join(changeDir, '.conductor', 'base-tree'), tree);
+    if (/^[0-9a-f]{6,64}$/i.test(tree)) writeFileSync(plumbPath(changeDir, 'base-tree'), tree);
     try { rmSync(idx, { force: true }); } catch {}
   } catch {}
 }
+// RETRY-DELTA (puro, testeable): el mensaje del reintento según el PROGRESO REAL del intento anterior.
+// Con ficheros parciales (p.ej. timeout tras escribir la fuente pero no el test): completa, no re-crees —
+// ahorra re-pagar la implementación entera. Sin nada escrito: el empujón contundente de siempre.
+export function retryHint(files = [], doneTasks = []) {
+  const done = doneTasks.length ? `\n\nTASKS ALREADY DONE (do NOT re-implement — completed in the previous attempt):\n${doneTasks.map((l) => `  ${l}`).join('\n')}` : '';
+  if (files.length) {
+    return `\n\n⚠ EL INTENTO ANTERIOR quedó a medias pero SÍ dejó ${files.length} fichero(s) escritos:\n${files.map((f) => `  ${f.p}`).join('\n')}\nNO los re-crees ni los reescribas desde cero. COMPLETA solo lo que falta (típicamente el TEST del código ya escrito y las tareas sin marcar): \`edit\` sobre lo existente, \`create\` solo para lo nuevo. Ve directo, sin explorar.${done}`;
+  }
+  return `\n\n⚠ EL INTENTO ANTERIOR NO ESCRIBIÓ NINGÚN FICHERO. No leas, no explores, no uses \`view\`. Usa el tool \`create\` AHORA para escribir el fichero de código y su test, y para.${done}`;
+}
+
 export function rollbackTo(projectRoot, changeDir, phase) {
-  const arr = JSON.parse(readFileSync(join(changeDir, '.conductor', 'checkpoints.json'), 'utf8'));
+  const arr = JSON.parse(readFileSync(plumbPath(changeDir, 'checkpoints.json'), 'utf8'));
   const ck = [...arr].reverse().find((c) => c.phase === phase);
   if (!ck) throw new Error('sin checkpoint para la fase ' + phase);
   // los archivos tocados se leen ANTES de tocar nada (lección: un checkout total restauraba la
   // fontanería .conductor al pasado y el timeline "perdía" la fase a deshacer)
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const i = tl.phases.findIndex((p2) => p2.phase === phase);
   const touched = [];
   for (const ph of tl.phases.slice(Math.max(0, i))) for (const fl of ph.files || []) {
     touched.push(typeof fl === 'string' ? { p: fl, k: 'create' } : fl);
   }
-  const idx = resolve(changeDir, '.conductor', 'ckpt-rb-index');
+  const idx = resolve(plumbPath(changeDir, 'ckpt-rb-index'));
   const env = { ...process.env, GIT_INDEX_FILE: idx };
   if (!/^[0-9a-f]{6,64}$/i.test(String(ck.tree))) throw new Error('checkpoint corrupto');
   execFileSync('git', ['read-tree', ck.tree], { cwd: projectRoot, stdio: 'ignore', timeout: 15000, windowsHide: true, env });
@@ -610,7 +622,7 @@ export function rollbackTo(projectRoot, changeDir, phase) {
 // LOCK de instancia única por change: si un modelo de sesión lanza el pipeline dos veces (visto en
 // runtime: dos drivers pisándose el mismo change), el segundo se NIEGA. Lock = pid + heartbeat (el
 // writeTimeline lo refresca); roto si el proceso murió o lleva >15 min sin latir.
-const lockPath = (dir) => join(dir, '.conductor', 'lock.json');
+const lockPath = (dir) => plumbPath(dir, 'lock.json');
 // L1: candado EN-PROCESO (determinista, sin TOCTOU) — activeRun() excluye el propio pid, así que dos drive()
 // concurrentes en el MISMO proceso (p.ej. el MCP que no awaitea) no se veían y se pisaban. Este Set los caza.
 const _inProcLocks = new Set();
@@ -623,7 +635,7 @@ export function activeRun(changeDir) {
       // Un run con verdict TERMINAL ya NO toca src/ → no cuenta como "activo" aunque su proceso siga saliendo:
       // el verdict se escribe ANTES de liberar el lock y de que el hijo muera. Sin esto, un run recién GREEN
       // bloqueaba (busyProject) lanzar otro en el mismo repo durante la ventana de salida — carrera real.
-      try { const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8')); if (tl && tl.verdict && tl.verdict !== 'running') return null; } catch {}
+      try { const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8')); if (tl && tl.verdict && tl.verdict !== 'running') return null; } catch {}
       return l;
     }
   } catch {}
@@ -645,10 +657,10 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // registro del run a disco (visibilidad developer): la mini-web enseña este log en vivo
   const log = (m) => {
     logOut(m);
-    try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, '.conductor', 'log.txt'), `[${new Date().toISOString().slice(11, 19)}] ${m}\n`, { flag: 'a' }); } catch {}
+    try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(plumbPath(changeDir, 'log.txt'), `[${new Date().toISOString().slice(11, 19)}] ${m}\n`, { flag: 'a' }); } catch {}
   };
   // toma el lock de instancia única (se refresca en cada writeTimeline; se libera en TODAS las salidas)
-  const takeLock = () => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(lockPath(changeDir), JSON.stringify({ pid: process.pid, startedAt: Date.now(), request, url: serveUrl })); } catch {} };
+  const takeLock = () => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(lockPath(changeDir), JSON.stringify({ pid: process.pid, startedAt: Date.now(), request, url: serveUrl })); } catch {} };
   const releaseLock = () => {
     _inProcLocks.delete(lockKey); // el lock EN-PROCESO siempre se libera
     // el lock EN DISCO solo se borra si es NUESTRO (pid propio). Con el early-out por verdict terminal, un
@@ -676,7 +688,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // REGISTRY (#72): genera el índice Skill|Trigger|Scope|Path (proyecto + globales del usuario, dedup
   // project>user) 1×/sesión. Recuperación perezosa: el índice da RUTAS; el contenido se lee on-demand.
   let registrySkills = []; try { registrySkills = buildRegistry(projectRoot); } catch {}
-  if (registrySkills.length) log(`📒 skill-registry: ${registrySkills.length} patrón(es) indexado(s) en .conductor/skills/REGISTRY.md (proyecto+global)`);
+  if (registrySkills.length) log(`📒 patrones de equipo: ${registrySkills.length} descubierto(s) (.github/skills del proyecto + globales del usuario)`);
   const stack = detectStack(projectRoot); // stack detectado → hint de verificación contextual en el prompt
   // CIERRE DEL BUCLE SDD (apuesta token-first): índice COMPACTO del historial VERIFICADO (capacidades de la spec viva
   // + cambios recientes) → se realimenta a las fases de planificación para que construyan SOBRE lo ya verificado y
@@ -727,7 +739,8 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     const base = (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : resolvePhases(complexity, null);
     effPipeline = base.includes('test') ? base : [...base, 'test'];
   }
-  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
+  // tests: DEFAULT ON (código sin test = error; cura del incidente 2026-07-16) — opt-out cfg.strictTests:false o preset laxo
+  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, tests: cfg.strictTests ?? preset?.strict?.tests ?? true, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
   // RunState robusto (auditoría P2-9): persistimos los modelos del LANZAMIENTO (env CONDUCTOR_MODEL_* o
@@ -757,7 +770,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // RESUME: si hay un run a medias del MISMO request (abortado por timeout/corte), reanuda donde se
   // quedó — avanza por las fases cuyo artefacto YA existe sin volver a llamar al modelo (no re-paga tokens).
   let step = null, resumed = false;
-  const stateF = existsSync(join(changeDir, '.conductor', 'state.json')) ? join(changeDir, '.conductor', 'state.json') : join(changeDir, '.conductor-run.json');
+  const stateF = existsSync(plumbPath(changeDir, 'state.json')) ? plumbPath(changeDir, 'state.json') : join(changeDir, '.conductor-run.json');
   if (existsSync(stateF)) {
     try {
       const st = JSON.parse(readSafe(stateF));
@@ -785,7 +798,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
           // solo por estas, NO por mera existencia del artefacto (que el agente de otra fase pudo pre-escribir
           // con su tool write sin scope de ruta → saltaba planificación en el resume, hallazgo P2).
           let prevDone = new Set();
-          try { prevDone = new Set((JSON.parse(readSafe(join(changeDir, '.conductor', 'timeline.json')))?.phases || []).filter((p) => p?.ok).map((p) => p.phase)); } catch {}
+          try { prevDone = new Set((JSON.parse(readSafe(plumbPath(changeDir, 'timeline.json')))?.phases || []).filter((p) => p?.ok).map((p) => p.phase)); } catch {}
           step = next({ changeDir, srcDir: projectRoot, strict: strictGate });
           while (step && !step.done && step.advanced !== false && step.phase !== 'verify' && step.phase !== 'fix'
                  && prevDone.has(step.phase)
@@ -806,7 +819,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // sin esto la web del run reanudado mostraba "todo pendiente" con el orden descolocado (visto en runtime).
   if (resumed) {
     try {
-      const prev = JSON.parse(readSafe(join(changeDir, '.conductor', 'timeline.json')));
+      const prev = JSON.parse(readSafe(plumbPath(changeDir, 'timeline.json')));
       for (const ph of prev?.phases ?? []) {
         if (ph?.ok) timeline.push({ ...ph, resumed: true });
       }
@@ -835,10 +848,10 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   if (!resumed) captureBaseTree(projectRoot, changeDir);
   // `reason` (2º arg, solo en verdicts terminales): el porqué humano del BLOCKED/ABORTED/STOPPED — la UI lo
   // pinta bajo la pill; sin esto el run moría con una pill muda y el motivo solo vivía en el return/log.
-  const writeTimeline = (verdict, reason) => { try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  const writeTimeline = (verdict, reason) => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
-  const writeReportData = (gates, trace) => { try { writeFileSync(join(changeDir, '.conductor', 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
+  const writeReportData = (gates, trace) => { try { writeFileSync(plumbPath(changeDir, 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
   // modo micro = sin spec POR DECISIÓN del usuario → gate proporcional: el report sintetizado debe
   // existir, estar "done" y listar ficheros. Sin coherencia spec↔tasks ni traza REQ (no aplican).
   const isMicro = complexity === 'micro';
@@ -967,7 +980,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         }
         testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
-      try { mkdirSync(join(changeDir, '.conductor'), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
+      try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
       timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: failed.length === 0, ...(failed.length ? { failureKind: 'tests-fail' } : {}) });
       currentInfo = null; writeTimeline('running');
       log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
@@ -1096,7 +1109,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     const t0 = Date.now();
     if (isCode) { const _ck = gitCheckpoint(projectRoot, changeDir, phase, mspec.model || null); if (!_ck && existsSync(join(projectRoot, '.git'))) log(`⚠ checkpoint NO creado para "${phase}" — el rollback de esta fase no estará disponible (¿index.lock ocupado / git bloqueado?)`); } // P1: rollback "antes de <fase>" + metadata de autoría/modelo
     const baseline = isCode ? captureBaseline(projectRoot) : null; // UNA vez por fase (acumulativo)
-    const otelFile = join(changeDir, '.conductor', 'otel', `${phase}.jsonl`);
+    const otelFile = plumbPath(changeDir, 'otel', `${phase}.jsonl`);
     try { mkdirSync(dirname(otelFile), { recursive: true }); } catch {}
     // el tool `write` de Copilot NO crea directorios padre → el driver pre-crea el del artefacto
     // (imprescindible para las fases con allowlist 'write', que no tienen shell para mkdir)
@@ -1113,18 +1126,18 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         // P2: lentes en PARALELO (correctitud/seguridad/tests...) — N one-shots baratos, merge determinista
         log(`   🔍 ${lenses.length} lentes en paralelo: ${lenses.join(', ')}`);
         const results = await Promise.all(lenses.map((ln) => {
-          const lp = join(changeDir, '.conductor', `lens-${ln}.md`);
+          const lp = plumbPath(changeDir, `lens-${ln}.md`);
           // el prompt de la lente lleva UNA sola ruta (la suya): se SUSTITUYE la del report — dos rutas
           // en el prompt confunden a los modelos (verificado en el e2e con agente debil)
           const lensPrompt = prompt.split(step.write_to_abs).join(lp) + `
 
 LENS - review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.`;
-          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: join(changeDir, '.conductor', 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then((rr) => ({ ln, lp, rr }));
+          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: plumbPath(changeDir, 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then((rr) => ({ ln, lp, rr }));
         }));
         if (stopSignal?.requested) return stopped();
         // merge determinista → verify-report.md por secciones (el gate lee el merged)
         lensTok = { in: 0, out: 0, model: null };
-        for (const x of results) { const t = readTokens(join(changeDir, '.conductor', 'otel', `verify-${x.ln}.jsonl`)); if (t) { lensTok.in += t.in; lensTok.out += t.out; lensTok.model = lensTok.model || t.model; } }
+        for (const x of results) { const t = readTokens(plumbPath(changeDir, 'otel', `verify-${x.ln}.jsonl`)); if (t) { lensTok.in += t.in; lensTok.out += t.out; lensTok.model = lensTok.model || t.model; } }
         if (!lensTok.in && !lensTok.out) lensTok = null;
         const sections = results.filter((x) => existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}
 
@@ -1162,16 +1175,15 @@ ${readSafe(x.lp).trim()}`);
         // No cambia el state machine; solo enriquece el prompt de retry con contexto real de progreso.
         let usePrompt;
         if (isCode && attempt > 1) {
-          let doneHint = '';
+          let doneTasks = [];
           if (phase === 'apply') {
-            const tp = join(changeDir, 'tasks.md');
-            try {
-              const tm = readSafe(tp);
-              const done = (tm.match(/^\s*- \[x\] .+/gim) || []).map((l) => l.trim());
-              if (done.length) doneHint = `\n\nTASKS ALREADY DONE (do NOT re-implement — they were completed in the previous attempt):\n${done.map((l) => `  ${l}`).join('\n')}`;
-            } catch {}
+            try { doneTasks = (readSafe(join(changeDir, 'tasks.md')).match(/^\s*- \[x\] .+/gim) || []).map((l) => l.trim()); } catch {}
           }
-          usePrompt = prompt + `\n\n⚠ EL INTENTO ANTERIOR NO ESCRIBIÓ NINGÚN FICHERO. No leas, no explores, no uses \`view\`. Usa el tool \`create\` AHORA para escribir el fichero de código y su test, y para.${doneHint}`;
+          // RETRY-DELTA (token-first, plan expertise 2026-07-17): recomputar el progreso AHORA — un timeout
+          // puede haber dejado ficheros escritos (el caso real: fuente sí, test no). El mensaje viejo ("no
+          // escribiste NADA") era FALSO en ese caso y provocaba re-pagar la implementación entera.
+          const partial = captureChanged(projectRoot, baseline);
+          usePrompt = prompt + retryHint(partial, doneTasks);
         } else if (isCode && attempt === 1 && phase === 'apply' && resumed) {
           // APPLY-PARTIAL-RESUME (R-A5 FASE 3 — resume): en el 1er intento de un resume, inyectamos las tareas
           // ya completadas en el run interrumpido para que el modelo NO repita trabajo ya hecho.
@@ -1204,6 +1216,8 @@ ${readSafe(x.lp).trim()}`);
         let files = captureChanged(projectRoot, baseline);
         if (!files.length) { await settle(1500); files = captureChanged(projectRoot, baseline); } // flush lag del FS
         if (files.length) {
+          // log HONESTO del caso timeout-con-progreso (antes: "timeout" seguido de "✅ apply" sin explicación)
+          if (r?.err) log(`   ⚠ el intento acabó con error pero dejó ${files.length} fichero(s) — se acepta el progreso y continúa (el gate decide)`);
           capturedFiles = files;
           // el DRIVER sintetiza el apply-report (determinista) a partir de lo que el agente escribió,
           // y cierra las tareas para que el gate de coherencia cuadre.
@@ -1251,7 +1265,7 @@ ${readSafe(x.lp).trim()}`);
     // en memoria y lo tiraba; el SDK lo devuelve en r.out — aquí queda guardado para enseñarlo en la web.
     let hasRaw = false;
     if (cfg.rawCapture !== false && rawOut && rawOut.trim()) {
-      try { const rd = join(changeDir, '.conductor', 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
+      try { const rd = plumbPath(changeDir, 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
     }
     timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
@@ -1265,7 +1279,7 @@ ${readSafe(x.lp).trim()}`);
     // --allow-all-tools y podría reescribir la spec para que su código trace). Opt-in porque "fix edita la
     // spec" es un flujo legítimo en modo laxo; en preset estricto/migración esa mutación es un evento auditable.
     if (phase === 'spec' && specFreezeOn) {
-      const fp = join(changeDir, '.conductor', 'spec-freeze.json');
+      const fp = plumbPath(changeDir, 'spec-freeze.json');
       if (!existsSync(fp)) { try { const sha = hashSpecs(changeDir); if (sha) { writeFileSync(fp, JSON.stringify({ sha, at: new Date().toISOString() })); log(`🔒 spec congelada (sha ${sha.slice(0, 12)}…) — mutarla tras este punto se detecta en verify`); } } catch {} }
     }
 
@@ -1324,14 +1338,14 @@ ${readSafe(x.lp).trim()}`);
       if (applyLenses.length) {
         log(`   🔍 post-apply-review: ${applyLenses.length} lente(s) — re-lectura limpia de la spec`);
         const rev = await Promise.all(applyLenses.map((ln) => {
-          const lp = join(changeDir, '.conductor', `post-apply-${ln}.md`);
+          const lp = plumbPath(changeDir, `post-apply-${ln}.md`);
           const pp = `REVIEWER. The APPLY phase is DONE. Re-read the spec (specs/${domain}/spec.md) WITHOUT memory of the proposal/design, and assess whether the written code SATISFIES every requirement and scenario. Do NOT run tests. Review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.\nArtifacts under ${changeDir}: specs/${domain}/spec.md (the requirements), apply-report.md (what was implemented).`;
-          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: join(changeDir, '.conductor', 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then(() => ({ ln, lp })).catch(() => null);
+          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: plumbPath(changeDir, 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then(() => ({ ln, lp })).catch(() => null);
         }));
         if (stopSignal?.requested) return stopped();
         const sections = rev.filter((x) => x && existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}\n\n${readSafe(x.lp).trim()}`);
         if (sections.length) {
-          writeFileSync(join(changeDir, '.conductor', 'post-apply-review.md'), `# Post-Apply Review (${sections.length}/${applyLenses.length} lentes)\n\n> Revisor FRESCO (sin la propuesta) — valida que el código responda los requisitos. INFORMATIVO: el gate determinista decide el GREEN.\n\n${sections.join('\n\n')}\n`);
+          writeFileSync(plumbPath(changeDir, 'post-apply-review.md'), `# Post-Apply Review (${sections.length}/${applyLenses.length} lentes)\n\n> Revisor FRESCO (sin la propuesta) — valida que el código responda los requisitos. INFORMATIVO: el gate determinista decide el GREEN.\n\n${sections.join('\n\n')}\n`);
           timeline.push({ phase: 'post-apply-review', role: 'reviewer', ok: true, lenses: applyLenses, ms: Date.now() - t0 });
           log(`   ✅ post-apply-review → .conductor/post-apply-review.md`);
         }
@@ -1354,7 +1368,7 @@ ${readSafe(x.lp).trim()}`);
   // que el GREEN firmado prueba CONTRA QUÉ spec se obtuvo (mutar la spec tras aprobarla es un evento, no un no-op).
   if (step.verdict === 'GREEN' && specFreezeOn) {
     try {
-      const fp = join(changeDir, '.conductor', 'spec-freeze.json');
+      const fp = plumbPath(changeDir, 'spec-freeze.json');
       const frozen = existsSync(fp) ? JSON.parse(readSafe(fp)).sha : null;
       const now = hashSpecs(changeDir);
       if (frozen && now && frozen !== now) {

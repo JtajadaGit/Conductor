@@ -8,6 +8,10 @@ import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+// RUTA ESTÁNDAR (decisión 2026-07-17, "la gente usa estándar Copilot"): `.github/skills` — el MISMO sitio
+// del estándar Agent Skills que Copilot ya entiende; cero carpetas inventadas en el proyecto del usuario.
+const githubSkillsDir = (projectRoot) => join(projectRoot, '.github', 'skills');
+// LEGADO (se sigue leyendo, nunca se crea): .conductor/skills — el invento pre-estándar.
 const skillsDir = (projectRoot) => join(projectRoot, '.conductor', 'skills');
 // catálogo GLOBAL del usuario (transversal a proyectos): ~/.conductor/skills (override por CONDUCTOR_HOME en tests).
 const globalSkillsDir = () => join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'skills');
@@ -52,13 +56,15 @@ function loadFromDir(dir, scope) {
   return [...byName.values()];
 }
 
-// Carga los patrones del PROYECTO (default). Con includeGlobal, añade los del catálogo GLOBAL del usuario
-// (~/.conductor/skills) por DEBAJO en precedencia: un patrón del proyecto con el mismo nombre GANA (dedup
-// project>user). Cada patrón lleva scope ('project'|'user') y path (ruta exacta) — base del REGISTRY.
+// Carga los patrones del PROYECTO (default). Precedencia (el más específico gana en dedup por nombre):
+//   `.github/skills` (ESTÁNDAR) > `.conductor/skills` (legado) > ~/.conductor/skills (global, con includeGlobal).
+// TRAMPA evitada: la skill `conductor` de .github/skills es el COMANDO /conductor que escribe `conductor init`
+// (bootstrap del chat) — NO es un patrón de equipo y jamás debe auto-inyectarse en los prompts de las fases.
 export function loadSkills(projectRoot, { includeGlobal = false } = {}) {
   const byName = new Map();
   if (includeGlobal) for (const s of loadFromDir(globalSkillsDir(), 'user')) byName.set(s.name, s);
   for (const s of loadFromDir(skillsDir(projectRoot), 'project')) byName.set(s.name, s);
+  for (const s of loadFromDir(githubSkillsDir(projectRoot), 'project')) { if (s.name !== 'conductor') byName.set(s.name, s); }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -86,7 +92,7 @@ export function buildSkillsIndex(projectRoot) {
   return skills;
 }
 
-export function hasSkills(projectRoot) { return existsSync(skillsDir(projectRoot)); }
+export function hasSkills(projectRoot) { return existsSync(githubSkillsDir(projectRoot)) || existsSync(skillsDir(projectRoot)); }
 
 // REGISTRY.md (#72, técnica del registro-índice): tabla Skill | Trigger | Scope | Path con los patrones del
 // PROYECTO + los GLOBALES del usuario (dedup project>user). Es un ÍNDICE (rutas exactas), separado del
@@ -98,7 +104,9 @@ export function buildRegistry(projectRoot) {
   const rel = (p) => String(p).replace(/\\/g, '/');
   const lines = ['# Skill Registry (índice — generado por conductor; 1×/sesión)', '', '| Skill | Trigger | Scope | Path |', '|---|---|---|---|'];
   for (const s of skills) lines.push(`| ${s.name} | ${s.match.length ? s.match.join(', ') : 'global'} | ${s.scope || 'project'} | ${rel(s.path || '')} |`);
-  if (!skills.length) lines.push('| _(sin patrones)_ | | | crea .conductor/skills/<nombre>/SKILL.md |');
-  try { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'REGISTRY.md'), lines.join('\n') + '\n'); } catch {}
+  if (!skills.length) lines.push('| _(sin patrones)_ | | | crea .github/skills/<nombre>/SKILL.md |');
+  // REGLA "proyecto limpio": el REGISTRY solo se REESCRIBE donde el dir legado ya existe (write-only, nadie
+  // lo lee en runtime — el driver usa el array devuelto). En proyectos frescos NO se crea ninguna carpeta.
+  if (existsSync(dir)) { try { writeFileSync(join(dir, 'REGISTRY.md'), lines.join('\n') + '\n'); } catch {} }
   return skills;
 }

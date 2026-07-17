@@ -34,6 +34,7 @@ import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, isPortableBlob, sealByokFile, byokFile } from '../provenance/secret.mjs';
+import { plumbPath } from '../core/plumb.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -56,7 +57,7 @@ function fileDiff(srcDir, rel, changeDir) {
   // MISMO baseline que el changeset: si el run capturó base-tree, diffea contra él → el diff muestra SOLO lo que tocó
   // este run (coherente con el +X/−Y de la fila), no la suciedad previa. Sin base-tree → HEAD (compat). quotePath=false: rutas no-ASCII crudas.
   let base = 'HEAD';
-  if (changeDir) try { const t = readFileSync(join(changeDir, '.conductor', 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
+  if (changeDir) try { const t = readFileSync(plumbPath(changeDir, 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
   try {
     const d = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', base, '--', rel], { cwd: srcDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true });
     if (d.trim()) return d.slice(0, 30000);
@@ -78,7 +79,7 @@ function gitChangedFiles(srcDir, changeDir) {
     // BASELINE del run: diffea contra el árbol capturado AL ARRANCAR (.conductor/base-tree) → SOLO los cambios de ESTE
     // run, nunca lo que ya estaba sin commitear. Sin baseline (runs viejos / sin git al arrancar) → HEAD (como antes).
     let base = 'HEAD';
-    try { const t = readFileSync(join(changeDir, '.conductor', 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
+    try { const t = readFileSync(plumbPath(changeDir, 'base-tree'), 'utf8').trim(); if (/^[0-9a-f]{6,64}$/i.test(t)) base = t; } catch {}
     // índice EFÍMERO en tmpdir (no dentro del change: un slug válido pero inexistente no debe materializar .conductor/).
     // Clave por hash del changeDir → runs simultáneos de distintos changes no colisionan.
     const idx = join(tmpdir(), 'conductor-chg-' + createHash('sha1').update(String(changeDir)).digest('hex').slice(0, 16) + '.idx');
@@ -271,8 +272,8 @@ function modelOptions(srcDir, tl) {
 }
 
 export function runState(changeDir, srcDir, { alive = null } = {}) {
-  const tl = readJson(join(changeDir, '.conductor', 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
-  const st = readJson(join(changeDir, '.conductor', 'state.json')) ?? readJson(join(changeDir, '.conductor-run.json'));
+  const tl = readJson(plumbPath(changeDir, 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
+  const st = readJson(plumbPath(changeDir, 'state.json')) ?? readJson(join(changeDir, '.conductor-run.json'));
   const cur = tl?.current ?? null;
   const isCode = cur && (cur.phase === 'apply' || cur.phase === 'fix');
   // CONSUMO por modelo/proveedor (lo que importa): tokens y coste de cada modelo usado en el run,
@@ -314,7 +315,7 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     cost: { byModel },
     savings,
     live: isCode ? liveFiles(srcDir, cur) : [],
-    logTail: (readHead(join(changeDir, '.conductor', 'log.txt'), 1e6) || '').split('\n').filter(Boolean).slice(-30).map((l) => scrubSecrets(l, process.env, scrubExtra())),
+    logTail: (readHead(plumbPath(changeDir, 'log.txt'), 1e6) || '').split('\n').filter(Boolean).slice(-30).map((l) => scrubSecrets(l, process.env, scrubExtra())),
     modelOptions: modelOptions(srcDir, tl),
     verifyExcerpt: scrubSecrets(readHead(join(changeDir, 'verify-report.md')), process.env, scrubExtra()),
     verdict: tl?.verdict && tl.verdict !== 'running' ? tl.verdict : (st?.status === 'done' ? st.verdict : (alive === false && tl ? 'INTERRUMPIDO' : null)),
@@ -402,7 +403,7 @@ export function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1
       // CRUDO del modelo por fase ("lo que verías sin conductor") — fichero whitelisteado en .conductor/raw/
       const u = new URL(req.url, 'http://x');
       const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-      let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
+      let body = null; try { if (ph) body = scrubSecrets(readFileSync(plumbPath(changeDir, 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else if (req.url?.startsWith('/api/state')) {
@@ -439,7 +440,7 @@ export function listChanges(root) {
   try { names = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'archive').map((e) => e.name); } catch {}
   return names.map((name) => {
     const ch = join(dir, name);
-    const tl = readJson(join(ch, '.conductor', 'timeline.json')) ?? readJson(join(ch, 'run-timeline.json'));
+    const tl = readJson(plumbPath(ch, 'timeline.json')) ?? readJson(join(ch, 'run-timeline.json'));
     const lock = activeRun(ch);
     let mtime = 0; try { mtime = statSync(ch).mtimeMs; } catch {}
     let tin = 0, tout = 0;
@@ -485,7 +486,7 @@ export function createProjectServer({ root, engine, spawnRun = defaultSpawnRun, 
       const b = await readBody(req);
       if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(String(b.name || ''))) return json(400, { ok: false });
       const ch = join(root, 'openspec', 'changes', b.name);
-      const tl = readJson(join(ch, '.conductor', 'timeline.json'));
+      const tl = readJson(plumbPath(ch, 'timeline.json'));
       if (!tl?.request) return json(404, { ok: false, error: 'sin timeline/request que reanudar' });
       if (activeRun(ch)) return json(409, { ok: false, error: 'ya hay un run en curso' });
       const r = spawnRun({ engine, root, name: b.name, request: tl.request, complexity: tl.complexity, domain: tl.domain, models: tl.models });
@@ -692,7 +693,7 @@ async function _computeAvailableModels(registry) {
   const obsByok = new Set(), obsCop = new Set();
   for (const p of registry.values()) {
     for (const c of listChanges(p.root)) {
-      const tl = readJson(join(p.root, 'openspec', 'changes', c.name, '.conductor', 'timeline.json'));
+      const tl = readJson(plumbPath(join(p.root, 'openspec', 'changes', c.name), 'timeline.json'));
       for (const ph of tl?.phases ?? []) {
         const m = ph.modelReported || ph.model; if (!m) continue;
         (ph.provider === 'byok' ? obsByok : obsCop).add(m);
@@ -803,6 +804,31 @@ export function checkByokModels(models, byokList, hasCreds) {
   const missing = [...new Set(specs.filter((m) => !set.has(m)))];
   if (missing.length) return { ok: false, error: `modelo(s) BYOK no disponible(s): ${missing.join(', ')}. Disponibles: ${byokList.slice(0, 20).join(', ')}` };
   return { ok: true };
+}
+
+// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo que pidió Jorge —
+// "defaults en el repo, la web los cambia". Merge CONSERVADOR en openspec/conductor.json: solo la sección
+// models, clave a clave (roles y fases válidas), '' = borrar esa clave (volver a "Recomendado"); jamás pisa
+// otras claves del fichero; si el JSON del usuario está roto, NO se toca. Puro y exportado (testeable).
+export function mergeModelsDefault(openspecDir, models) {
+  const ALLOWED = new Set(['planner', 'coder', 'reviewer', ...KNOWN_PHASES]);
+  if (!models || typeof models !== 'object' || Array.isArray(models)) return { ok: false, error: 'models (objeto) requerido' };
+  const clean = {};
+  for (const [k, v] of Object.entries(models)) {
+    if (!ALLOWED.has(k)) continue;
+    if (v === '' || v === null) { clean[k] = null; continue; } // limpiar → esa clave vuelve al recomendado
+    if (typeof v === 'string' && v.trim()) clean[k] = v.trim();
+  }
+  if (!Object.keys(clean).length) return { ok: false, error: 'sin claves válidas (planner/coder/reviewer o una fase del pipeline)' };
+  initConfig(openspecDir); // idempotente: crea conductor.json+schema si faltan, jamás pisa
+  const p = join(openspecDir, 'conductor.json');
+  let cfg = {};
+  try { cfg = JSON.parse(readFileSync(p, 'utf8')) || {}; } catch { return { ok: false, error: 'openspec/conductor.json tiene JSON inválido — no lo toco; arréglalo a mano' }; }
+  const merged = { ...(cfg.models || {}) };
+  for (const [k, v] of Object.entries(clean)) { if (v === null) delete merged[k]; else merged[k] = v; }
+  if (Object.keys(merged).length) cfg.models = merged; else delete cfg.models;
+  writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
+  return { ok: true, models: cfg.models || {} };
 }
 
 // board/búsqueda AGREGADOS sobre varios proyectos (coherente con la lista de runs multi-proyecto del panel).
@@ -935,7 +961,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // o su reserva sin limpiar. notTerminal() combina ambas capas: cubre reservas (child:null, sin timeline aún) Y
   // runs vivos (child!==null, timeline='running'), y EXCLUYE los terminados → sin falso "busyProject" tras un GREEN
   // (bug real del e2e), y sin el hueco TOCTOU de solo-reservas (un run lanzado cuyo hijo aún no escribió el lock).
-  const notTerminal = (root, name) => { try { const v = readJson(join(root, 'openspec', 'changes', name, '.conductor', 'timeline.json'))?.verdict; return !v || v === 'running'; } catch { return true; } };
+  const notTerminal = (root, name) => { try { const v = readJson(plumbPath(join(root, 'openspec', 'changes', name), 'timeline.json'))?.verdict; return !v || v === 'running'; } catch { return true; } };
   const projectActiveRunOther = (proj, exceptName) => {
     const pref = proj.id + '/';
     for (const [k, r] of runs) if (r && !r.exited && k.startsWith(pref)) { const nm = k.slice(pref.length); if (nm !== exceptName && notTerminal(proj.root, nm)) return nm; }
@@ -962,7 +988,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
     // ANTI-race del guardrail working-tree: marca el timeline como 'running' SÍNCRONO antes de spawnear. Sin esto,
     // durante el arranque de un RESUME el timeline aún muestra el verdict TERMINAL del run anterior → notTerminal()/
     // activeRun lo darían por "no activo" y dejarían arrancar un 2º driver sobre el MISMO src/. El driver lo reescribe.
-    try { const tp = join(proj.root, 'openspec', 'changes', name, '.conductor', 'timeline.json'); const tl = readJson(tp); if (tl && tl.verdict && tl.verdict !== 'running') writeFileSync(tp, JSON.stringify({ ...tl, verdict: 'running' }, null, 2)); } catch {}
+    try { const tp = plumbPath(join(proj.root, 'openspec', 'changes', name), 'timeline.json'); const tl = readJson(tp); if (tl && tl.verdict && tl.verdict !== 'running') writeFileSync(tp, JSON.stringify({ ...tl, verdict: 'running' }, null, 2)); } catch {}
     const child = spawnRun({ engine, root: proj.root, name, request, complexity, domain, models, auto, preset, pipeline, runTests });
     const reg = { child, pending: null, stopRequested: false, exited: false };
     child.on?.('message', (m) => { if (m && m.t === 'pause') reg.pending = { before: m.before, role: m.role, findings: m.findings }; });
@@ -1069,6 +1095,19 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const pid = u.searchParams.get('projectId');
         const scope = pid ? [projOf(pid)].filter(Boolean) : [...registry.values()];
         return json(200, { archive: aggregateArchive(scope) });
+      }
+      // B5: persistir la mezcla de modelos elegida como DEFAULT del proyecto (openspec/conductor.json).
+      // Mismo gate de validación que el launch (checkByokModels) para no guardar modelos fantasma.
+      if (req.method === 'POST' && u.pathname === '/api/models-default') {
+        const b = await readBody(req);
+        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
+        const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
+        if (!proj) return json(400, { ok: false, error: 'proyecto no válido' });
+        const av = await availableModels(registry);
+        const mv = checkByokModels(b.models, av.byok, av.byokCreds);
+        if (!mv.ok) return json(400, { ok: false, error: mv.error });
+        const r = mergeModelsDefault(join(proj.root, 'openspec'), b.models);
+        return json(r.ok ? 200 : 400, r);
       }
       if (u.pathname === '/api/search') {
         const pid = u.searchParams.get('projectId');
@@ -1213,7 +1252,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const proj = b.projectId ? projOf(b.projectId) : DEFAULT;
         if (!proj) return json(400, { ok: false, error: 'proyecto desconocido' });
         const ch = join(proj.root, 'openspec', 'changes', b.name);
-        const tl = readJson(join(ch, '.conductor', 'timeline.json'));
+        const tl = readJson(plumbPath(ch, 'timeline.json'));
         if (!tl?.request) return json(404, { ok: false, error: 'sin timeline que reanudar' });
         const k = runKey(proj.id, b.name);
         if (activeRun(ch) || (runs.get(k) && !runs.get(k).exited)) return json(409, { ok: false, error: 'ya hay un run en curso' });
@@ -1228,8 +1267,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const proj = projOf(mArt2[1]);
         if (!proj) { res.writeHead(404); return res.end('proyecto desconocido'); }
         const ch2 = join(proj.root, 'openspec', 'changes', mArt2[2]);
-        const tl2 = readJson(join(ch2, '.conductor', 'timeline.json'));
-        const rj = readJson(join(ch2, '.conductor', 'report.json'));
+        const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
+        const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = safeRead(ch2, 'dashboard.html', 1e6);
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
@@ -1237,8 +1276,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       if (mArt) {
         // SIEMPRE FRESCO: re-render con el estilo/datos actuales (el archivo en disco queda para offline/CI)
         const ch2 = join(root, 'openspec', 'changes', mArt[1]);
-        const tl2 = readJson(join(ch2, '.conductor', 'timeline.json'));
-        const rj = readJson(join(ch2, '.conductor', 'report.json'));
+        const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
+        const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = safeRead(ch2, 'dashboard.html', 1e6);
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
@@ -1279,7 +1318,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           return json(200, { ok: true });
         }
         if (req.method === 'POST' && action === 'resume') {
-          const tl2 = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          const tl2 = readJson(plumbPath(changeDir, 'timeline.json'));
           if (!tl2?.request) return json(404, { ok: false });
           if (activeRun(changeDir) || (reg && !reg.exited)) return json(409, { ok: false, error: 'ya en curso' });
           const otherSR = projectActiveRunOther(proj,name); // GUARDRAIL working-tree: no reanudar si otro cambio del repo corre
@@ -1294,9 +1333,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         }
         if (action === 'receipt' && req.method === 'GET') {
           // RECIBO DE PR (dev-first): markdown listo para pegar en la descripción del PR. Determinista, del disco.
-          const tlR = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          const tlR = readJson(plumbPath(changeDir, 'timeline.json'));
           if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) return json(404, { ok: false, error: 'sin timeline todavía — el recibo sale de un run ejecutado' });
-          let domainR = 'core'; try { domainR = JSON.parse(readFileSync(join(changeDir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+          let domainR = 'core'; try { domainR = JSON.parse(readFileSync(plumbPath(changeDir, 'state.json'), 'utf8')).domain || 'core'; } catch {}
           const mdR = renderReceipt({ name, timeline: tlR, spec: safeRead(changeDir, `specs/${domainR}/spec.md`, 60000) || '', proposal: safeRead(changeDir, 'proposal.md', 30000) || '', verify: safeRead(changeDir, 'verify-report.md', 30000) || '' });
           if (!mdR) return json(404, { ok: false, error: 'sin datos suficientes para el recibo' });
           return json(200, { ok: true, markdown: mdR });
@@ -1313,7 +1352,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         if (action === 'raw') {
           // CRUDO del modelo por fase ("lo que verías sin conductor"): fichero whitelisteado en .conductor/raw/
           const ph = (u.searchParams.get('phase') || '').replace(/[^a-z]/g, '');
-          let body = null; try { if (ph) body = scrubSecrets(readFileSync(join(changeDir, '.conductor', 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
+          let body = null; try { if (ph) body = scrubSecrets(readFileSync(plumbPath(changeDir, 'raw', ph + '.txt'), 'utf8'), process.env, scrubExtra()); } catch {}
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
         if (action === 'artifact') {
@@ -1351,7 +1390,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const opts = { categories: cats, limit: Math.min(500, +(u.searchParams.get('limit') || 250) || 250), offset: Math.max(0, +(u.searchParams.get('offset') || 0) || 0), q: u.searchParams.get('q') || '' };
           // 1) traza nativa del CLI (events.jsonl); 2) si no la hay (p.ej. qwen vía LiteLLM), se RECONSTRUYE
           // desde los spans OTel (.conductor/otel/) → el visor funciona también con qwen. Ambas confinadas.
-          const r2 = parseEvents(join(changeDir, '.conductor', 'events.jsonl'), opts) || parseOtelSession(join(changeDir, '.conductor', 'otel'), opts);
+          const r2 = parseEvents(plumbPath(changeDir, 'events.jsonl'), opts) || parseOtelSession(plumbPath(changeDir, 'otel'), opts);
           // "sin traza" es un run VÁLIDO pero VACÍO, no un 404 (recurso inexistente): devolver 404 hacía que el
           // navegador logueara "Failed to load resource" en consola en un caso normal. 200 + shape vacío + flag
           // noTrace → el visor pinta su estado vacío por la vía de datos, sin ruido de consola. REST correcto.
@@ -1367,7 +1406,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           // archive app-native: promueve delta specs (ADDED, aditivo-seguro) + mueve el change a archive/ (renameSync).
           // Pre-vuelo: GREEN y NO en curso. El merge no-aditivo (MODIFIED/REMOVED/RENAMED) se deja a /sdd-archive.
           if (reg && !reg.exited) return json(409, { ok: false, error: 'run en curso — pausa o detén antes de archivar' });
-          const tlA = readJson(join(changeDir, '.conductor', 'timeline.json'));
+          const tlA = readJson(plumbPath(changeDir, 'timeline.json'));
           if (tlA?.verdict !== 'GREEN') return json(409, { ok: false, error: 'solo se archiva un change con veredicto GREEN' });
           try {
             const { promoted, needsManualMerge } = promoteSpec(changeDir, join(proj.root, 'openspec', 'specs'));

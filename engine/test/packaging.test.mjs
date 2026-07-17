@@ -66,6 +66,13 @@ await test('packaging: build-dist genera la superficie LIMPIA — producto dentr
   }
 });
 
+await test('packaging: `conductor doctor` corre, sale 0 e incluye los checks v2 (credenciales · prompts · hosts)', () => {
+  const out = execSyncReal(`"${process.execPath}" engine/bin/conductor.mjs doctor`, { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
+  assert(out.includes('credenciales LiteLLM'), 'check de credenciales presente');
+  assert(out.includes('prompts del pipeline'), 'check de prompts presente');
+  assert(out.includes('hosts conectados'), 'check de hosts presente');
+});
+
 await test('packaging: files empaqueta assets (motor+UI) + prompts (el alma editable) + hooks (guardián)', () => {
   assert(Array.isArray(pj.files) && pj.files.includes('assets') && pj.files.includes('prompts') && pj.files.includes('hooks'), 'files completo');
   assert(existsSync(join(ROOT, 'assets', 'ui', 'index.html')), 'la UI compilada existe en el árbol (va dentro del paquete)');

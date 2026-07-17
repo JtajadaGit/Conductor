@@ -5,10 +5,12 @@
 // experto manda (cualquier knob explícito en conductor.json gana sobre el del preset). Sin dependencias.
 
 export const PRESETS = {
-  'quick-fix': { label: 'Arreglo rápido', complexity: 'simple', strict: { trace: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
-  'visual': { label: 'Retoque visual', complexity: 'simple', strict: { trace: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
-  'feature': { label: 'Funcionalidad', complexity: 'medium', strict: { trace: true, id: true, clarify: false }, specFreeze: false, pauseAt: ['apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
-  'migration': { label: 'Gran migración', complexity: 'complex', strict: { trace: true, id: true, clarify: true, semanticDelta: true }, specFreeze: true, pauseAt: ['spec', 'apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  // strict.tests = ¿"código sin test" bloquea? DEFAULT ON del motor; los presets laxos (arreglo/retoque) lo
+  // apagan a propósito — un typo o un ajuste de CSS no exigen test nuevo.
+  'quick-fix': { label: 'Arreglo rápido', complexity: 'simple', strict: { trace: false, tests: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  'visual': { label: 'Retoque visual', complexity: 'simple', strict: { trace: false, tests: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  'feature': { label: 'Funcionalidad', complexity: 'medium', strict: { trace: true, tests: true, id: true, clarify: false }, specFreeze: false, pauseAt: ['apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
+  'migration': { label: 'Gran migración', complexity: 'complex', strict: { trace: true, tests: true, id: true, clarify: true, semanticDelta: true }, specFreeze: true, pauseAt: ['spec', 'apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
 };
 
 export const DEFAULT_PRESET = 'feature';

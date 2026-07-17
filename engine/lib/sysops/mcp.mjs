@@ -19,6 +19,7 @@ import { renderReceipt } from '../serving/dashboard.mjs';
 import { initConfig } from '../analysis/scaffold.mjs';
 import { assertConfined } from './confine.mjs';
 import { count } from '../core/report.mjs';
+import { plumbPath } from '../core/plumb.mjs';
 
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
 
@@ -69,9 +70,9 @@ async function appUp(root) {
 }
 function makeReceipt(dir) {
   try {
-    const tl = JSON.parse(readFileSync(join(dir, '.conductor', 'timeline.json'), 'utf8'));
+    const tl = JSON.parse(readFileSync(plumbPath(dir, 'timeline.json'), 'utf8'));
     if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) return null;
-    let domain = 'core'; try { domain = JSON.parse(readFileSync(join(dir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+    let domain = 'core'; try { domain = JSON.parse(readFileSync(plumbPath(dir, 'state.json'), 'utf8')).domain || 'core'; } catch {}
     const rd = (f) => { try { return readFileSync(join(dir, f), 'utf8'); } catch { return ''; } };
     return renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') }) || null;
   } catch { return null; }
@@ -86,9 +87,15 @@ function pauseBundle(changeDir, pending) {
   if (pending?.before === 'fix') { const v = artClip(changeDir, 'verify-report.md'); if (v) arts['verify-report.md'] = v; }
   return arts;
 }
-async function pollRun(url, apiBase, changeDir, { timeoutMs = 30 * 60000 } = {}) {
+// ANTI-TIMEOUT DE HOSTS (bug latente cazado en el plan de expertise): muchos hosts MATAN una tool-call
+// larga (1-5 min). Cada llamada devuelve en ≤~85s SIEMPRE — si ni pausa ni veredicto, retorna
+// status:"working" y el BUCLE lo lleva el agente (re-llama conductor_continue {action:"wait"}).
+// Presupuesto configurable por CONDUCTOR_MCP_WAIT_MS (los tests lo bajan; un host paciente puede subirlo).
+// Exportado para testearlo determinista contra un servidor fake.
+export async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
+  const budget = Number(timeoutMs) || Number(process.env.CONDUCTOR_MCP_WAIT_MS) || 85000;
   const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
+  while (Date.now() - t0 < budget) {
     let st = null;
     try { const r = await fetch(url + apiBase + '/state', { signal: AbortSignal.timeout(8000) }); st = r.ok ? await r.json() : null; } catch {}
     if (st) {
@@ -109,7 +116,7 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs = 30 * 60000 } = {})
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  return { status: 'running', note: 'el run sigue trabajando — llama conductor_continue {action:"wait"} para seguir esperando (o abre la web)' };
+  return { status: 'working', note: 'la fase sigue trabajando (normal: duran minutos)', next: 'Llama conductor_continue {action:"wait"} AHORA para seguir esperando — repite hasta status paused/done. No narres cada espera.' };
 }
 
 const TOOLS = {
@@ -139,7 +146,7 @@ const TOOLS = {
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.
   conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', description: 'Create openspec/conductor.json (only if missing) and openspec/conductor.schema.json (editor autocomplete/validation) in the given openspec dir.', inputSchema: { type: 'object', properties: { openspecDir: { type: 'string', description: 'absolute path of the project openspec/ dir' } }, required: ['openspecDir'] } },
     run: ({ openspecDir }) => initConfig(openspecDir) },
-  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline (deterministic driver)', description: 'Run the ENTIRE SDD pipeline deterministically end-to-end. The SERVER drives every phase (propose→spec→…→apply→verify) in order, calling the BYOK model itself for each artifact and running the deterministic gate at verify. Phases CANNOT be skipped regardless of model quality. Call this ONCE with the feature request; it returns the final verdict. The server reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' } }, required: ['request', 'projectRoot'] } },
+  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'HEADLESS/CI ONLY: runs the ENTIRE SDD pipeline in ONE blocking call (minutes — many chat hosts will kill it) with no review pauses. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName, complexity, domain }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
@@ -186,7 +193,7 @@ const TOOLS = {
       return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
-  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature and WAIT until the first review pause (or the final verdict). Returns the pause artifacts (proposal/spec/report, trimmed) for you to SHOW the user verbatim; when they reply, call conductor_continue with their decision, and repeat until done. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
+  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~90s with a status: "working" = phase still running → IMMEDIATELY call conductor_continue {action:"wait"} and repeat (do not narrate each wait); "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
@@ -199,7 +206,7 @@ const TOOLS = {
       const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name));
       return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
     } },
-  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) and wait for the next one', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" just keeps waiting (no decision). Waits until the NEXT pause or the final verdict and returns it — same contract as conductor_feature.', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~90s with "working" (→ call again with action:"wait", silently), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
     run: async ({ projectRoot, changeName, note, model, action }) => {
       const root = resolve(projectRoot || process.cwd());
       const name = slug(changeName);

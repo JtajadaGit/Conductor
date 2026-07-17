@@ -53,6 +53,39 @@ await test('mcp: conductor_gate ejecuta el gate real', async () => {
   eq(fail.verdict, 'FAIL');
   c.srv.kill();
 });
+await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "working" DENTRO del presupuesto (los hosts matan tool-calls largas)', async () => {
+  const { pollRun } = await import('../lib/sysops/mcp.mjs');
+  const { createServer } = await import('node:http');
+  const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+  // change de mentira con un artefacto para el bundle de la pausa
+  const CH = join(HERE, '.tmp-pollrun-change');
+  rmSync(CH, { recursive: true, force: true }); mkdirSync(join(CH, '.conductor'), { recursive: true });
+  writeFileSync(join(CH, 'proposal.md'), '## Why\nporque sí');
+  // servidor fake: el estado que toque según el escenario activo
+  let state = {};
+  const srv = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(state)); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${srv.address().port}/`;
+  try {
+    // 1) PAUSA → retorna al primer poll con los artefactos recortados y la instrucción del bucle
+    state = { pending: { before: 'apply' } };
+    const p = await pollRun(url, 'api/run/x', CH);
+    eq(p.status, 'paused'); eq(p.phase, 'apply');
+    assert(p.artifacts['proposal.md']?.includes('porque sí'), 'artefacto de la pausa incluido');
+    // 2) SIN FIN → retorna "working" dentro del presupuesto (no 30 min): el bucle lo lleva el agente
+    state = { verdict: 'running', alive: true };
+    const t0 = Date.now();
+    const w = await pollRun(url, 'api/run/x', CH, { timeoutMs: 1200 });
+    eq(w.status, 'working');
+    assert(Date.now() - t0 < 15000, 'retornó rápido (presupuesto corto respetado)');
+    assert(/action:"wait"/.test(w.next), 'instruye el re-llamado con action:"wait"');
+    // 3) TERMINAL → done con el veredicto
+    state = { verdict: 'GREEN', alive: false };
+    const d = await pollRun(url, 'api/run/x', CH);
+    eq(d.status, 'done'); eq(d.verdict, 'GREEN');
+  } finally { srv.close(); rmSync(CH, { recursive: true, force: true }); }
+});
+
 await test('mcp-config: imprime el snippet con la ruta REAL del motor resuelta en runtime (docs sin rutas de nadie)', () => {
   const out = execFileSync(process.execPath, [BIN, 'mcp-config'], { encoding: 'utf8', windowsHide: true });
   const enginePath = resolve(BIN).split('\\').join('/');

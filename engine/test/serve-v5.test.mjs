@@ -108,3 +108,39 @@ await test('scrubSecrets: redacta Bearer/sk- en un volcado de error de stderr', 
   assert(!/sk-LIVE_7h3Xk9qZ/.test(safe), 'el token sk- suelto queda redactado');
   assert(/ECONNREFUSED/.test(safe), 'conserva el contexto NO sensible del error');
 });
+
+// ── B5 (plan expertise 2026-07-17): guardar la mezcla de modelos como DEFAULT del proyecto ──
+await test('models-default: crea conductor.json si falta y guarda SOLO la seccion models (roles y fases)', async () => {
+  const { mergeModelsDefault } = await import('../lib/serving/serve.mjs');
+  const { readFileSync, existsSync } = await import('node:fs');
+  const T = join(dirname(fileURLToPath(import.meta.url)), '.tmp-mdl-default');
+  rmSync(T, { recursive: true, force: true }); mkdirSync(join(T, 'openspec'), { recursive: true });
+  const r = mergeModelsDefault(join(T, 'openspec'), { planner: 'litellm:glm-v52', explore: 'litellm:deepseek-v4-flash', hacker: 'byok:evil' });
+  eq(r.ok, true);
+  const cfg = JSON.parse(readFileSync(join(T, 'openspec', 'conductor.json'), 'utf8'));
+  eq(cfg.models.planner, 'litellm:glm-v52', 'rol guardado');
+  eq(cfg.models.explore, 'litellm:deepseek-v4-flash', 'clave de FASE guardada (models.<fase> gana al rol en el driver)');
+  assert(!('hacker' in (cfg.models || {})), 'claves fuera de la allowlist se descartan');
+  assert(existsSync(join(T, 'openspec', 'conductor.schema.json')), 'el schema del editor tambien queda (initConfig)');
+  rmSync(T, { recursive: true, force: true });
+});
+
+await test('models-default: merge CONSERVADOR — no pisa otras claves; vacio borra la clave (vuelve a Recomendado); JSON roto NO se toca', async () => {
+  const { mergeModelsDefault } = await import('../lib/serving/serve.mjs');
+  const { readFileSync } = await import('node:fs');
+  const T = join(dirname(fileURLToPath(import.meta.url)), '.tmp-mdl-default2');
+  rmSync(T, { recursive: true, force: true }); mkdirSync(join(T, 'openspec'), { recursive: true });
+  writeFileSync(join(T, 'openspec', 'conductor.json'), JSON.stringify({ timeoutSeconds: 300, models: { coder: 'copilot:claude-haiku-4.5', planner: 'litellm:viejo' } }));
+  const r = mergeModelsDefault(join(T, 'openspec'), { planner: 'litellm:glm-v52', coder: '' });
+  eq(r.ok, true);
+  const cfg = JSON.parse(readFileSync(join(T, 'openspec', 'conductor.json'), 'utf8'));
+  eq(cfg.timeoutSeconds, 300, 'las claves ajenas a models sobreviven');
+  eq(cfg.models.planner, 'litellm:glm-v52', 'la clave enviada se actualiza');
+  assert(!('coder' in cfg.models), "'' borra la clave: esa fase/rol vuelve al recomendado");
+  // JSON roto → error claro y CERO escritura
+  writeFileSync(join(T, 'openspec', 'conductor.json'), '{ roto');
+  const bad = mergeModelsDefault(join(T, 'openspec'), { planner: 'x' });
+  eq(bad.ok, false);
+  eq(readFileSync(join(T, 'openspec', 'conductor.json'), 'utf8'), '{ roto', 'el fichero roto queda INTACTO (no lo piso)');
+  rmSync(T, { recursive: true, force: true });
+});

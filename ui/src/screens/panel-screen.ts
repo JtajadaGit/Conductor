@@ -50,6 +50,8 @@ export class PanelScreen extends CElement {
   @state() private busy = false;
   @state() private error = '';
   @state() private atts: { name: string; data: string }[] = []; // capturas pegadas/arrastradas → attachments/ del change
+  @state() private savingDefaults = false; // guardando la mezcla como default del proyecto (openspec/conductor.json)
+  @state() private saveDefaultsMsg = '';
   @state() private est: { total: number; rows: PhaseEstimate[]; saved: number; actions: string[]; checks: PlanCheck[]; testCmd: string | null } | null = null;
   @state() private phaseSel: string[] = []; // fases SDD marcadas en los checkboxes — fuente de verdad de la selección
   @state() private runTests = false; // toggle "test": ejecutar las pruebas REALES del proyecto tras el gate (opcional, no es fase)
@@ -338,6 +340,21 @@ export class PanelScreen extends CElement {
     this.mPlanner = inOpts(p); this.mCoder = inOpts(c); this.mReviewer = inOpts(r);
   }
 
+  // B5 (plan expertise): persistir la mezcla elegida en openspec/conductor.json — "defaults en el repo,
+  // la web los cambia". El servidor valida contra el catálogo y hace merge conservador (jamás pisa otras claves).
+  private async saveModelsDefault(): Promise<void> {
+    const models: Record<string, string> = {};
+    if (this.mPlanner) models.planner = this.mPlanner;
+    if (this.mCoder) models.coder = this.mCoder;
+    if (this.mReviewer) models.reviewer = this.mReviewer;
+    this.savingDefaults = true; this.saveDefaultsMsg = '';
+    try {
+      const r = await this.api.modelsDefault(models, this.projId || undefined);
+      this.saveDefaultsMsg = r.ok ? '✓ guardado en openspec/conductor.json — commitéalo para tu equipo' : (r.error ?? 'no se pudo guardar');
+    } catch (e) { this.saveDefaultsMsg = (e as Error).message; }
+    finally { this.savingDefaults = false; setTimeout(() => { this.saveDefaultsMsg = ''; }, 6000); }
+  }
+
   private byokHost(): string {
     const u = this.models?.byokUrl || '';
     try { return new URL(u).host; } catch { return u || 'LiteLLM'; }
@@ -525,6 +542,11 @@ export class PanelScreen extends CElement {
               ${this.roleSelect('Reviewer', this.mReviewer, (v) => { this.mReviewer = v; this.preset = ''; })}
             </div>
             ${this.mixNote()}
+            <!-- B5: defaults en el REPO, la web los cambia — persiste la mezcla en openspec/conductor.json -->
+            <div class="frow" style="margin-top:.55rem;align-items:center">
+              <button type="button" class="btn sm sec" ?disabled=${this.savingDefaults || !(this.mPlanner || this.mCoder || this.mReviewer)} @click=${() => void this.saveModelsDefault()} title="Escribe esta mezcla en openspec/conductor.json — será el default del EQUIPO para este proyecto (committeable)">${this.savingDefaults ? '…' : '💾 Guardar como default del proyecto'}</button>
+              ${this.saveDefaultsMsg ? html`<span class="inst-msg ${this.saveDefaultsMsg.startsWith('✓') ? 'ok' : 'bad'}" role="status" aria-live="polite" style="margin-top:0">${this.saveDefaultsMsg}</span>` : nothing}
+            </div>
           </div>
         </details>` : nothing}
         ${this.byokForm()}

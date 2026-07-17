@@ -9,6 +9,7 @@ import { checkCoherence, readSpec } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { buildTrace } from '../gates/trace.mjs';
 import { loadPolicy, enforce, DEFAULT_POLICY } from '../gates/policy.mjs';
+import { plumbPath } from '../core/plumb.mjs';
 
 const PHASES = {
   micro: ['apply'], // "No SDD": 1 sola llamada LLM, sin spec POR DECISIÓN del usuario — máximo ahorro
@@ -47,10 +48,10 @@ const DEFAULT_INSTRUCTION = {
 
 // fontanería interna → subcarpeta oculta .conductor/ (no invita a editar ni ensucia el change).
 // Compat: si solo existe el fichero legacy en la raíz del change, se lee ese.
-export const stateFile = (dir) => join(dir, '.conductor', 'state.json');
+export const stateFile = (dir) => plumbPath(dir, 'state.json');
 const statePath = (dir) => (existsSync(stateFile(dir)) ? stateFile(dir) : join(dir, '.conductor-run.json'));
 const loadState = (dir) => JSON.parse(readFileSync(statePath(dir), 'utf8'));
-const saveState = (dir, s) => { mkdirSync(join(dir, '.conductor'), { recursive: true }); writeFileSync(stateFile(dir), JSON.stringify(s, null, 2)); };
+const saveState = (dir, s) => { mkdirSync(plumbPath(dir), { recursive: true }); writeFileSync(stateFile(dir), JSON.stringify(s, null, 2)); };
 
 // instrucción del apply en modo micro: sin spec que leer, diff mínimo, cero ceremonia
 DEFAULT_INSTRUCTION['micro-apply'] = 'CODER. MICRO MODE — tiny task, no spec by user choice. Implement the request directly at production quality with the SMALLEST possible diff, following the project conventions. TOOLS: create NEW files with the `create` tool and modify EXISTING files with the `edit` tool — do NOT `view`/`edit` paths that do not exist yet; write immediately. Shell ONLY to create directories. FORBIDDEN: running the project\'s tests, build, lint or dev server. Zero narration.';
@@ -214,7 +215,11 @@ function runGate(dir, srcDir, strict = {}) {
   const F = [...checkCoherence(dir, cohOpts), ...checkArtifacts(dir)];
   if (trace) {
     for (const f of trace.findings) {
-      if (strict.trace && f.rule === 'trace.coverage-gap') f.severity = 'error'; // trazabilidad contractual
+      // strict.trace (contractual) eleva AMBOS huecos; strict.tests (DEFAULT ON, opt-out strictTests:false)
+      // eleva SOLO el "código sin test" — cura del incidente real 2026-07-16 (GREEN con el test sin escribir
+      // porque el coder agotó el timeout). "Hecho sin test" no es hecho, salvo que el preset laxo lo permita.
+      if (strict.trace && (f.rule === 'trace.coverage-gap' || f.rule === 'trace.test-gap')) f.severity = 'error';
+      else if (strict.tests !== false && f.rule === 'trace.test-gap') f.severity = 'error';
       F.push(f);
     }
   }

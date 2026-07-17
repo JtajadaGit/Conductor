@@ -3,7 +3,7 @@
 // driver determinista NO tiene ese fallo: un agente flojo/que no coopera hace que la fase ABORTE en orden,
 // nunca que se salte la pipeline ni que "lo haga el modelo por su cuenta". (Cubre también el hueco QA:
 // "el stub del agente siempre devuelve éxito" → aquí el agente NO produce artefacto.)
-import { drive } from '../lib/pipeline/drive.mjs';
+import { drive, retryHint } from '../lib/pipeline/drive.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -38,4 +38,16 @@ await test('anti-V1: el ORDEN de fases lo fija el código por complejidad, no el
   // primera fase la elige el DRIVER (resolvePhases), no el modelo. La 1ª de 'simple' es una fase de plan, no 'apply' suelto.
   assert(order.length >= 1, 'el driver pidió la primera fase del plan');
   assert(order[0] !== 'verify', 'nunca arranca por el final: el código impone el orden');
+});
+
+await test('retry-delta: con progreso parcial el reintento dice "completa lo que falta" (jamas el mensaje falso de "no escribiste nada")', () => {
+  // caso real 2026-07-16: timeout tras escribir la fuente pero NO el test → re-pagaba la implementación entera
+  const conProgreso = retryHint([{ p: 'src/invertir.pipe.ts', k: 'create' }], ['- [x] 1.1 [REQ-X] pipe base']);
+  assert(conProgreso.includes('src/invertir.pipe.ts'), 'lista los ficheros ya escritos');
+  assert(/NO los re-crees/.test(conProgreso), 'prohibe re-crear lo existente (ahorro de tokens)');
+  assert(/TEST/.test(conProgreso), 'apunta a completar el test que falta');
+  assert(conProgreso.includes('- [x] 1.1'), 'las tareas hechas viajan');
+  assert(!/NO ESCRIBIÓ NINGÚN FICHERO/.test(conProgreso), 'el mensaje falso desaparece cuando HUBO progreso');
+  const sinProgreso = retryHint([], []);
+  assert(/NO ESCRIBIÓ NINGÚN FICHERO/.test(sinProgreso), 'sin progreso, el empujón contundente de siempre');
 });

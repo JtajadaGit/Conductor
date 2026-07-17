@@ -17,13 +17,14 @@ const restoreEnv = (s) => { for (const k of ENVK) { if (s[k] === undefined) dele
 const SPEC_ID = '## ADDED Requirements\n<!-- id: REQ-C -->\n### Requirement: C\nThe system SHALL c.\n#### Scenario: s\n- **GIVEN** a\n- **WHEN** b\n- **THEN** c';
 const SPEC_NOID = '## ADDED Requirements\n### Requirement: C\nThe system SHALL c.\n#### Scenario: s\n- **GIVEN** a\n- **WHEN** b\n- **THEN** c';
 
-// agente parametrizable: spec con/sin id, código con/sin tag @conductor
-const mkAgent = ({ spec = SPEC_ID, tag = true } = {}) => (a) => {
+// agente parametrizable: spec con/sin id, código con/sin tag @conductor, y test con/sin tag (testTag:false
+// = el incidente real 2026-07-16: código trazado pero NINGÚN test lo cubre)
+const mkAgent = ({ spec = SPEC_ID, tag = true, testTag = tag } = {}) => (a) => {
   const { phase, writeTo, cwd } = a;
   if (phase === 'apply' || phase === 'fix') {
     const c = tag ? '// @conductor REQ-C\nexport const x=1;' : 'export const x=1;';
     w(join(cwd, 'src', 'c.js'), c);
-    w(join(cwd, 'src', 'c.test.js'), tag ? '// @conductor REQ-C\ntest("x",()=>{});' : 'test("x",()=>{});');
+    w(join(cwd, 'src', 'c.test.js'), testTag ? '// @conductor REQ-C\ntest("x",()=>{});' : 'test("x",()=>{});');
     return Promise.resolve({ code: 0 });
   }
   w(writeTo, { propose: '## Why\nx\n## What Changes\n- a\n## Impact\nx', spec }[phase] || 'x');
@@ -108,6 +109,39 @@ await test('presets(P0): el preset llega como OPCIÓN de drive() y GANA sobre co
     writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false, preset: 'quick-fix' }));
     const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'p'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent({ tag: false }), preset: 'feature' });
     eq(r.verdict, 'BLOCKED', 'la opción preset:feature (panel) gana sobre conductor.json:quick-fix → strictTrace bloquea');
+  } finally { restoreEnv(saved); }
+});
+
+// ── strictTests (DEFAULT ON, incidente real 2026-07-16): "hecho sin test" no es hecho ──
+await test('strictTests(default): código trazado SIN test que lo cubra → BLOQUEA aunque no haya preset', async () => {
+  const saved = clearEnv();
+  try {
+    const r = await runWith({}, mkAgent({ testTag: false })); // sin preset, sin strictTests → default del motor
+    eq(r.verdict, 'BLOCKED', 'trace.test-gap es error por defecto: 2 fix sin test → escalar a humano');
+  } finally { restoreEnv(saved); }
+});
+
+await test('strictTests:false explícito → el mismo hueco vuelve a ser señal → GREEN (opt-out consciente)', async () => {
+  const saved = clearEnv();
+  try {
+    const r = await runWith({ strictTests: false }, mkAgent({ testTag: false }));
+    eq(r.verdict, 'GREEN', 'opt-out explícito relaja el test-gap');
+  } finally { restoreEnv(saved); }
+});
+
+await test('strictTests: preset quick-fix (laxo) lo relaja solo — un typo no exige test nuevo', async () => {
+  const saved = clearEnv();
+  try {
+    const r = await runWith({ preset: 'quick-fix' }, mkAgent({ testTag: false }));
+    eq(r.verdict, 'GREEN', 'los presets arreglo/retoque apagan strictTests');
+  } finally { restoreEnv(saved); }
+});
+
+await test('strictTests: código SIN tag (greenfield sin trazar) NO dispara test-gap → GREEN sin cambio', async () => {
+  const saved = clearEnv();
+  try {
+    const r = await runWith({}, mkAgent({ tag: false })); // ni código ni test trazados → coverage-gap warning, como siempre
+    eq(r.verdict, 'GREEN', 'la regla nueva solo muerde cuando HAY código trazado sin test — cero castigo al no-trazado');
   } finally { restoreEnv(saved); }
 });
 

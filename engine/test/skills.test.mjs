@@ -1,6 +1,6 @@
 // Catálogo de patrones de equipo (Ola 3): carga, matching e inyección.
 import { loadSkills, matchSkills, renderSkillsBlock, buildSkillsIndex, buildRegistry } from '../lib/analysis/skills.mjs';
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,4 +82,34 @@ await test('skills (#72): buildRegistry escribe REGISTRY.md (Skill|Trigger|Scope
     assert(/\| Skill \| Trigger \| Scope \| Path \|/.test(reg), 'tabla con columnas Skill/Trigger/Scope/Path');
     assert(/shared/.test(reg) && /local/.test(reg) && /\buser\b/.test(reg) && /\bproject\b/.test(reg), 'lista patrones con su scope');
   } finally { if (savedHome === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = savedHome; rmSync(ROOT, { recursive: true, force: true }); }
+});
+
+await test('skills(estandar): .github/skills es la ruta PRIMARIA y gana al legado .conductor/skills (dedup por nombre)', () => {
+  rmSync(ROOT, { recursive: true, force: true });
+  w(join(ROOT, '.github', 'skills', 'pago', 'SKILL.md'), '---\nname: pago\ndescription: Patron de pago\nmatch: checkout, apply\n---\nUsa el servicio de pagos central.');
+  w(join(ROOT, '.github', 'skills', 'estilo.md'), '# Estilo\nBEM siempre.'); // plano tambien vale en la ruta estandar
+  w(join(ROOT, '.conductor', 'skills', 'pago.md'), '---\ntitle: VIEJO\n---\nversion legada que debe PERDER');
+  const sk = loadSkills(ROOT);
+  eq(sk.length, 2, '.github + legado dedupeados');
+  assert(sk.find((s) => s.name === 'pago').body.includes('pagos central'), 'la version .github (estandar) GANA sobre el legado');
+  assert(sk.find((s) => s.name === 'estilo'), 'los planos de .github/skills tambien se cargan');
+  rmSync(ROOT, { recursive: true, force: true });
+});
+
+await test('skills(trampa /conductor): el SKILL.md del comando que escribe `conductor init` JAMAS se inyecta como patron', () => {
+  rmSync(ROOT, { recursive: true, force: true });
+  w(join(ROOT, '.github', 'skills', 'conductor', 'SKILL.md'), '---\nname: conductor\ndescription: comando /conductor\n---\nLlama a conductor_feature');
+  w(join(ROOT, '.github', 'skills', 'reales.md'), '# Real\npatron de verdad');
+  const sk = loadSkills(ROOT);
+  eq(sk.map((s) => s.name), ['reales'], 'la skill "conductor" (bootstrap del chat) queda EXCLUIDA del catalogo');
+  rmSync(ROOT, { recursive: true, force: true });
+});
+
+await test('skills(proyecto limpio): buildRegistry NO crea .conductor/ en proyectos frescos (solo reescribe donde ya existia)', () => {
+  rmSync(ROOT, { recursive: true, force: true });
+  w(join(ROOT, '.github', 'skills', 'x.md'), '# X\npatron');
+  const skills = buildRegistry(ROOT);
+  eq(skills.length, 1, 'los patrones se devuelven igualmente (el driver usa el array)');
+  assert(!existsSync(join(ROOT, '.conductor')), 'cero carpetas inventadas en el proyecto');
+  rmSync(ROOT, { recursive: true, force: true });
 });

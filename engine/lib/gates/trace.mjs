@@ -89,10 +89,17 @@ export function buildTrace(changeDir, srcDir) {
 
   const F = [];
   for (const m of matrix) {
-    // Sólo se avisa por falta de CÓDIGO o TEST (cobertura real). La "task" es informativa (no existe en
-    // complejidad simple). La trazabilidad es SEÑAL no bloqueante (warning), nunca error.
-    const missing = [!m.cov.code && 'code', !m.cov.test && 'test'].filter(Boolean);
-    if (missing.length) F.push({ rule: 'trace.coverage-gap', severity: 'warning', message: `${m.id} sin ${missing.join('/')} (trazabilidad opcional)`, file: 'spec.md' });
+    // Dos reglas SEPARADAS (incidente real 2026-07-16: el coder agotó el timeout dejando código sin su
+    // test y el run cerró GREEN):
+    //  · trace.coverage-gap — falta CÓDIGO (o todo): señal (warning); solo strictTrace la eleva.
+    //  · trace.test-gap    — hay código pero NINGÚN test lo cubre: la mitad peligrosa; el llamador
+    //    (runGate) la eleva a error POR DEFECTO (strictTests, opt-out) — "hecho sin test" no es hecho.
+    // La "task" sigue siendo informativa (no existe en complejidad simple).
+    if (m.cov.code && !m.cov.test) F.push({ rule: 'trace.test-gap', severity: 'warning', message: `${m.id} tiene código pero NINGÚN test lo cubre (marca @conductor ${m.id} en su test)`, file: 'spec.md' });
+    else {
+      const missing = [!m.cov.code && 'code', !m.cov.test && 'test'].filter(Boolean);
+      if (missing.length) F.push({ rule: 'trace.coverage-gap', severity: 'warning', message: `${m.id} sin ${missing.join('/')} (trazabilidad opcional)`, file: 'spec.md' });
+    }
   }
   for (const t of orphanTasks) F.push({ rule: 'trace.orphan-task', severity: 'warning', message: `tarea sin requisito: ${t.id || ''} ${t.desc}`.trim(), file: 'tasks.md' });
   return { matrix, orphanTasks, gaps: gaps.map((g) => g.id), findings: F };

@@ -13,6 +13,7 @@ export const CONFIG_SCHEMA = {
     $schema: { type: 'string' },
     preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
     strictTrace: { type: 'boolean', description: 'Trazabilidad CONTRACTUAL: un requisito sin código/test BLOQUEA el GREEN (no warning). Lo fija el preset; ponlo aquí para forzarlo.' },
+    strictTests: { type: 'boolean', description: 'Un requisito CON código pero SIN test BLOQUEA el GREEN. DEFAULT true ("hecho sin test" no es hecho); ponlo a false para relajarlo (los presets arreglo/retoque ya lo relajan).' },
     strictId: { type: 'boolean', description: 'Exige id estable "<!-- id: REQ-... -->" en cada requisito (error si falta). Lo fija el preset.' },
     models: {
       type: 'object',
@@ -55,6 +56,7 @@ export const CONFIG_SCHEMA = {
       ],
     },
     strictTrace: { type: 'boolean', description: 'Trazabilidad REQ↔código↔test BLOQUEANTE (un hueco tumba el GREEN). Lo activan los presets feature/migration; aquí lo fuerzas fuera de preset.' },
+    strictTests: { type: 'boolean', description: 'Código sin test = BLOQUEA (default true). false para relajar (presets arreglo/retoque lo relajan solos).' },
     strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
