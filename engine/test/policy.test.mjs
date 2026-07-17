@@ -27,7 +27,7 @@ await test('policy: gate obligatorio no ejecutado → bloquea', () => {
   assert(r.blocking.some((f) => f.rule === 'policy.mandatory-gate-missing'));
 });
 await test('policy: modelos permitidos', () => {
-  assert(modelAllowed('qwen36-msc1', DEFAULT_POLICY));
+  assert(modelAllowed('deepseek-v4-flash', DEFAULT_POLICY));
   assert(!modelAllowed('gpt-5.5', DEFAULT_POLICY));
 });
 await test('policy: validación de schema (válida/ inválida)', () => {

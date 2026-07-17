@@ -49,10 +49,7 @@ export class PanelScreen extends CElement {
   @state() private preset = ''; // preset de MODELO/coste activo: '' | 'cost' | 'quality' | 'clear' (resalta el botón elegido)
   @state() private busy = false;
   @state() private error = '';
-  @state() private byokUrl = '';
-  @state() private byokKey = '';
-  @state() private byokSaving = false;
-  @state() private byokMsg = '';
+  @state() private atts: { name: string; data: string }[] = []; // capturas pegadas/arrastradas → attachments/ del change
   @state() private est: { total: number; rows: PhaseEstimate[]; saved: number; actions: string[]; checks: PlanCheck[]; testCmd: string | null } | null = null;
   @state() private phaseSel: string[] = []; // fases SDD marcadas en los checkboxes — fuente de verdad de la selección
   @state() private runTests = false; // toggle "test": ejecutar las pruebas REALES del proyecto tras el gate (opcional, no es fase)
@@ -100,7 +97,7 @@ export class PanelScreen extends CElement {
       const served = d.projectId || this.projects.find((p) => p.name === d.project)?.id || this.projects[0]?.id || '';
       this.defProjId = served;
       // ARRANQUE PER-REPO (Opción A): sin selector en la web, el FOCO lo manda el SERVIDOR (focusId, que el
-      // launcher /sdd-run fija vía /api/focus al repo desde el que lanzaste). El panel SIGUE ese foco en CADA
+      // arranque (`conductor`/tool conductor_app) fija vía /api/focus al repo desde el que lanzaste). El panel SIGUE ese foco en CADA
       // poll → una pestaña ya abierta en OTRO repo se re-enfoca a ESTE en ≤5s, sin depender de que el navegador
       // navegue a un ?project=. Si el servidor devuelve vacío puntualmente, se conserva el último foco bueno.
       if (served) this.projId = served;
@@ -179,6 +176,25 @@ export class PanelScreen extends CElement {
     try { this.hits = (await this.api.search(this.q)).hits ?? []; } catch { /* búsqueda opcional */ }
   }
 
+  // IMÁGENES en la petición (capturas de bugs, mockups): pegar (Ctrl+V) o arrastrar sobre el campo. Van al
+  // change como attachments/ y la petición referencia sus rutas — el agente las abre con `view` en cada fase.
+  private addImageFiles(files: FileList | File[] | null): void {
+    if (!files) return;
+    for (const f of Array.from(files)) {
+      if (!/^image\//.test(f.type)) continue;
+      if (this.atts.length >= 4) { this.error = 'máximo 4 imágenes por run'; break; }
+      if (f.size > 3 * 1048576) { this.error = `«${f.name || 'imagen'}» supera 3 MB — recórtala o comprímela`; continue; }
+      const rd = new FileReader();
+      rd.onload = () => { this.atts = [...this.atts, { name: f.name || 'captura.png', data: String(rd.result || '') }]; };
+      rd.readAsDataURL(f);
+    }
+  }
+  private onReqPaste(e: ClipboardEvent): void {
+    const files = e.clipboardData?.files;
+    if (files && files.length) { e.preventDefault(); this.addImageFiles(files); }
+  }
+  private onReqDrop(e: DragEvent): void { e.preventDefault(); this.addImageFiles(e.dataTransfer?.files ?? null); }
+
   private async launch(e: Event): Promise<void> {
     e.preventDefault();
     if (!this.req.trim() || !this.name) { this.error = 'Indica la petición y el nombre del cambio'; return; }
@@ -194,8 +210,9 @@ export class PanelScreen extends CElement {
         models: Object.keys(models).length ? models : undefined,
         pipeline: this.pipelineForLaunch(), // fases elegidas en los checkboxes (real: el motor ejecuta EXACTO esto)
         runTests: this.runTests, // toggle "test": ejecutar las pruebas reales del proyecto tras el gate (opcional)
+        attachments: this.atts.length ? this.atts : undefined, // capturas → attachments/ del change (view en las fases)
       });
-      if (r.ok && r.url) { router.go(r.url); return; }
+      if (r.ok && r.url) { this.atts = []; router.go(r.url); return; }
       // backstop del gate de gobierno: si el server dice "sin init", refresca para que la UI muestre el CTA Inicializar
       if (r.needsInit) { await this.refreshChanges(); this.error = ''; return; }
       this.error = r.error ?? 'no se pudo lanzar';
@@ -267,7 +284,7 @@ export class PanelScreen extends CElement {
   // ARRANQUE PER-REPO (Opción A · arranque-per-repo): la app ES el repo desde el que lanzaste. Se QUITÓ el
   // selector de proyecto (dropdown + «ver todos» + «Añadir proyecto»): dejaba cambiar de proyecto y lanzar una
   // feature en OTRO repo desde esta misma ventana — la incoherencia "lancé en A, construyo en B". Para trabajar
-  // en otro repo se lanza /sdd-run DESDE él: el launcher abre la app ENFOCADA en ese repo (`?project=<id>`). El
+  // en otro repo se lanza `conductor` DESDE él: el arranque abre la app ENFOCADA en ese repo (`?project=<id>`). El
   // foco lo fija el ARRANQUE, no un menú. La banda «Tu atención» (pausas de CUALQUIER repo) se conserva aparte:
   // solo AVISA (enlace de solo-lectura), nunca lanza — por eso no reabre el agujero.
 
@@ -288,7 +305,7 @@ export class PanelScreen extends CElement {
   private tierRank(t?: string): number { return t === 'premium' ? 3 : t === 'economy' ? 1 : 2; }
 
   // PRESETS de modelo por fase. "Optimizar coste" es el pilar de la herramienta hecho un clic: el Coder
-  // (la fase que más tokens gasta) va a qwen/BYOK gratis, el Reviewer (gate innegociable) a un Copilot
+  // (la fase que más tokens gasta) va al modelo LiteLLM gratis, el Reviewer (gate innegociable) a un Copilot
   // capaz pero no al tier más caro, y el Planner a un Copilot económico. El experto puede ajustar después.
   private applyPreset(kind: 'cost' | 'quality' | 'clear'): void {
     this.preset = kind; // marca el preset activo (estado visible en los botones)
@@ -307,7 +324,7 @@ export class PanelScreen extends CElement {
       const nonPremium = cop.filter((x) => tiers[x] !== 'premium');
       const pool = nonPremium.length ? nonPremium : cop;
       const reviewer = pool.length ? 'copilot:' + [...pool].sort((a, b) => this.tierRank(tiers[b]) - this.tierRank(tiers[a]))[0] : '';
-      // Coder = el BYOK más BARATO por tier (qwen económico antes que un sonnet-vía-byok), no el alfabético
+      // Coder = el BYOK más BARATO por tier (el LiteLLM económico antes que un sonnet-vía-byok), no el alfabético
       const cheapestByok = m.byok.length ? 'byok:' + [...m.byok].sort((a, b) => this.tierRank(tiers[a]) - this.tierRank(tiers[b]))[0] : '';
       const hasByok = m.byokCreds && m.byok.length > 0;
       c = hasByok ? cheapestByok : cheapest;
@@ -321,78 +338,80 @@ export class PanelScreen extends CElement {
     this.mPlanner = inOpts(p); this.mCoder = inOpts(c); this.mReviewer = inOpts(r);
   }
 
-  private async byokSave(e: Event): Promise<void> {
-    e.preventDefault();
-    // la URL se mete UNA vez: si ya hay una guardada (o env), reusarla y solo pedir la key nueva
-    const url = (this.byokUrl || this.models?.byokUrl || '').trim();
-    const key = this.byokKey.trim();
-    if (!url || !key) return;
-    this.byokSaving = true; this.byokMsg = '';
-    try {
-      const r = await fetch('/api/byok/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url, key }) });
-      const j = await r.json() as { ok: boolean; error?: string };
-      if (j.ok) { this.byokMsg = '✓ Guardado'; this.byokKey = ''; this.models = null; try { this.models = await this.api.models(); } catch {} }
-      else this.byokMsg = j.error ?? 'Error al guardar';
-    } catch (err) {
-      // distingue fallo de RED (servidor caído/timeout) de un error de validación del servidor
-      const e = err as Error;
-      this.byokMsg = e instanceof TypeError ? 'No se pudo conectar con el servidor local. Comprueba que la aplicación está en ejecución.' : String(e.message);
-    }
-    finally { this.byokSaving = false; }
-  }
-
   private byokHost(): string {
-    const u = this.models?.byokUrl || this.byokUrl;
+    const u = this.models?.byokUrl || '';
     try { return new URL(u).host; } catch { return u || 'LiteLLM'; }
   }
 
+  // ESTADO LiteLLM, fichero-first (decisión de producto): la credencial vive en ~/.conductor/byok.json —
+  // la miniweb NUNCA pide la API key (ni la transporta); solo muestra si está conectado y, si algo falla,
+  // el MOTIVO y cómo arreglarlo en el fichero/terminal. Mismo patrón que un opencode.json: config como dato.
   private byokForm(): TemplateResult {
-    const connected = !!this.models?.byokCreds;
-    // el color (verde/rojo) comunica el resultado; quitamos el ✓ del texto. aria-live para lectores.
-    const msg = this.byokMsg ? html`<div class="inst-msg ${this.byokMsg.startsWith('✓') ? 'ok' : 'bad'}" role="status" aria-live="polite">${this.byokMsg.replace(/^✓\s*/, '')}</div>` : nothing;
+    const m = this.models;
+    const reason = m?.byokReason ?? null;
+    const connected = !!m?.byokCreds && !reason;
+    const fileHint = html`<p class="inst-note">Crea <code>~/.conductor/litellm.json</code> — formato OpenCode con lo que conductor necesita:</p>
+      <pre class="inst-code">{
+  "baseUrl": "https://…/v1",
+  "apiKey": "sk-…",
+  "models": {
+    "deepseek-v4-flash": { "limit": { "context": 250000, "output": 16384 } },
+    "glm-v52": { "limit": { "context": 250000, "output": 16384 } }
+  }
+}</pre>
+      <p class="inst-note"><code>models</code> = tu catálogo declarado: sale SIEMPRE en el selector (sin depender del proxy) y sus límites
+      viajan a cada fase. Al primer uso conductor <strong>sella</strong> el fichero: cifra la key (AES-256-GCM, Win/Mac/Linux) y la
+      versión en claro desaparece del disco. <strong>Nunca sale de tu máquina</strong>, no se registra ni se cachea.</p>`;
     if (connected) {
-      // CONECTADO = readout de instrumento: LED verde + pill "Conectado" + pares clave→valor. La key ya está
-      // guardada (cifrada en ~/.conductor/byok.json) o detectada del entorno; solo se cambia si caduca.
+      // CONECTADO = readout de instrumento: LED verde + pill "Conectado" + pares clave→valor.
       return html`
         <details class="inst-panel" style="margin-top:.6rem">
           <summary class="inst-head">
             <span class="inst-led on-ok" aria-hidden="true"></span>
-            <span class="inst-title">qwen · LiteLLM</span>
+            <span class="inst-title">LiteLLM</span>
             <span class="inst-status ok">Conectado</span>
             <span class="inst-chev" aria-hidden="true"></span>
           </summary>
           <div class="inst-body">
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
-              <div class="ro-row"><dt>Credencial</dt><dd>Cifrada en tu equipo (AES-256-GCM · Win/Mac/Linux)</dd></div>
+              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · cifrada (AES-256-GCM)</dd></div>
               <div class="ro-row"><dt>Privacidad</dt><dd>Nunca sale de tu máquina · no se registra</dd></div>
             </dl>
-            <p class="inst-note">La clave se guarda <strong>cifrada con AES-256-GCM</strong> (misma mecánica en Windows, Mac y Linux; la clave maestra vive en tu equipo con permisos 0600) en <code>~/.conductor/byok.json</code>. <strong>Nunca sale de tu equipo</strong>, no aparece en logs ni en comandos, y no se cachea — solo se guardan los nombres de los modelos. Se mantiene entre sesiones; cámbiala solo si caduca.</p>
-            <form class="frow" style="align-items:end" @submit=${(e: Event) => void this.byokSave(e)}>
-              <label class="fl" style="flex:2;min-width:12rem">Nueva API Key<input type="password" .value=${this.byokKey} @input=${(e: Event) => { this.byokKey = (e.target as HTMLInputElement).value; }} placeholder="sk-… (solo si caducó)" autocomplete="off"></label>
-              <button class="btn sm sec" ?disabled=${this.byokSaving || !this.byokKey.trim()} style="align-self:end">${this.byokSaving ? '…' : 'Actualizar clave'}</button>
-            </form>
-            ${msg}
+            <p class="inst-note">¿Key caducada o rotada? Escribe la nueva en <code>~/.conductor/litellm.json</code>
+              (campo <code>apiKey</code>; conductor la re-sella al primer uso) o ejecuta <code>conductor litellm login</code>.</p>
           </div>
         </details>`;
     }
-    // SIN conectar = LED ámbar (pendiente) + invitación con acento lateral. La URL se prefilla si la conocemos.
+    if (m?.byokCreds && reason) {
+      // HAY credencial pero el proveedor la rechaza (rotada/revocada) o no descifra → motivo + remedio, sin formulario.
+      return html`
+        <details class="inst-panel inst-prompt" style="margin-top:.6rem" open>
+          <summary class="inst-head">
+            <span class="inst-led on-warn" aria-hidden="true"></span>
+            <span class="inst-title">LiteLLM</span>
+            <span class="inst-status warn">Atención</span>
+            <span class="inst-chev" aria-hidden="true"></span>
+          </summary>
+          <div class="inst-body">
+            <div class="inst-msg bad" role="status" aria-live="polite">${reason}</div>
+            ${fileHint}
+          </div>
+        </details>`;
+    }
+    // SIN conectar = LED ámbar + instrucciones de fichero (configuración como DATO, no como formulario).
     return html`
       <details class="inst-panel inst-prompt" style="margin-top:.6rem">
         <summary class="inst-head">
           <span class="inst-led on-warn" aria-hidden="true"></span>
-          <span class="inst-title">Conectar qwen · LiteLLM</span>
+          <span class="inst-title">Conectar LiteLLM</span>
           <span class="inst-status warn">Configuración única</span>
           <span class="inst-chev" aria-hidden="true"></span>
         </summary>
         <div class="inst-body">
-          <p class="inst-note">Conecta tu proxy LiteLLM <strong>una sola vez</strong> para usar qwen (más barato) en las fases que elijas. La clave se guarda <strong>cifrada con AES-256-GCM</strong> en tu equipo (Windows, Mac y Linux), <strong>nunca sale de tu máquina</strong>, no se registra ni se cachea (solo los nombres de modelos). No la vuelves a meter.</p>
-          <form class="frow" style="align-items:end" @submit=${(e: Event) => void this.byokSave(e)}>
-            <label class="fl" style="flex:2;min-width:12rem">URL LiteLLM<input type="url" .value=${this.byokUrl} @input=${(e: Event) => { this.byokUrl = (e.target as HTMLInputElement).value; }} placeholder="https://…/v1" required></label>
-            <label class="fl" style="flex:2;min-width:10rem">API Key<input type="password" .value=${this.byokKey} @input=${(e: Event) => { this.byokKey = (e.target as HTMLInputElement).value; }} placeholder="sk-…" autocomplete="off" required></label>
-            <button class="btn sm" ?disabled=${this.byokSaving} style="align-self:end">${this.byokSaving ? '…' : 'Guardar'}</button>
-          </form>
-          ${msg}
+          <p class="inst-note">Conecta tu proxy LiteLLM <strong>una sola vez</strong> para usar tus modelos corporativos (más baratos, 0 AI Credits) en las fases que elijas.</p>
+          ${fileHint}
+          ${reason ? html`<div class="inst-msg bad" role="status" aria-live="polite">${reason}</div>` : nothing}
         </div>
       </details>`;
   }
@@ -464,9 +483,13 @@ export class PanelScreen extends CElement {
     );
     const launchForm = html`
       <form class="launch-form" @submit=${(e: Event) => void this.launch(e)}>
-        <label class="fl">Qué quieres construir
-          <mention-input .value=${this.req} .projId=${this.projId} placeholder="Describe el cambio en una frase o pega una spec. Escribe @ para dar contexto de un fichero · / para aplicar una skill del equipo" @cdr-input=${(e: Event) => this.onReq((e as CustomEvent).detail.value)}></mention-input>
+        <label class="fl" @paste=${(e: ClipboardEvent) => this.onReqPaste(e)} @drop=${(e: DragEvent) => this.onReqDrop(e)} @dragover=${(e: DragEvent) => e.preventDefault()}>Qué quieres construir
+          <mention-input .value=${this.req} .projId=${this.projId} placeholder="Describe el cambio en una frase o pega una spec. Escribe @ para dar contexto de un fichero · / para aplicar una skill del equipo · pega o arrastra capturas" @cdr-input=${(e: Event) => this.onReq((e as CustomEvent).detail.value)}></mention-input>
         </label>
+        ${this.atts.length ? html`<div class="att-row">
+          ${this.atts.map((a, i) => html`<span class="att-chip"><img src=${a.data} alt="">${a.name}<button type="button" class="att-x" aria-label="Quitar ${a.name}" @click=${() => { this.atts = this.atts.filter((_, j) => j !== i); }}>×</button></span>`)}
+          <span class="muted att-hint">van al change como <code>attachments/</code> — el agente las abre con view</span>
+        </div>` : nothing}
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
           <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
@@ -492,7 +515,7 @@ export class PanelScreen extends CElement {
           </summary>
           <div class="inst-body">
             <div class="seg-group" role="radiogroup" aria-label="Preajuste de modelo por fase">
-              <button type="button" role="radio" aria-checked=${this.preset === 'cost'} class="seg cost ${this.preset === 'cost' ? 'on' : ''}" @click=${() => this.applyPreset('cost')} title="Coder → qwen (más barato, vía LiteLLM) · Reviewer → Copilot capaz · Planner → Copilot económico"><span class="seg-led" aria-hidden="true"></span>Optimizar coste</button>
+              <button type="button" role="radio" aria-checked=${this.preset === 'cost'} class="seg cost ${this.preset === 'cost' ? 'on' : ''}" @click=${() => this.applyPreset('cost')} title="Coder → el modelo LiteLLM más barato · Reviewer → Copilot capaz · Planner → Copilot económico"><span class="seg-led" aria-hidden="true"></span>Optimizar coste</button>
               <button type="button" role="radio" aria-checked=${this.preset === 'quality'} class="seg ${this.preset === 'quality' ? 'on' : ''}" @click=${() => this.applyPreset('quality')} title="Todas las fases con el Copilot más capaz"><span class="seg-led" aria-hidden="true"></span>Máxima calidad</button>
               <button type="button" role="radio" aria-checked=${this.preset === 'clear' || this.preset === ''} class="seg ${this.preset === 'clear' || this.preset === '' ? 'on' : ''}" @click=${() => this.applyPreset('clear')} title="Cada fase usa el modelo recomendado por conductor"><span class="seg-led" aria-hidden="true"></span>Recomendado</button>
             </div>
@@ -531,7 +554,7 @@ export class PanelScreen extends CElement {
           <div class="card"><small>Tokens entrada ↓</small><span>${fmt(m.tin)}</span></div>
           <div class="card"><small>Tokens salida ↑</small><span>${fmt(m.tout)}</span></div>
           ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
-          ${this.usage ? html`<div class="card"><small>Uso total qwen</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
+          ${this.usage ? html`<div class="card"><small>Uso total LiteLLM</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
         </div>
       </details>
 
@@ -595,7 +618,7 @@ export class PanelScreen extends CElement {
   // coherencia multi-proveedor: si los modelos por fase abarcan >1 proveedor, hace VISIBLE el reparto de
   // coste (pilar mezcla qwen/Copilot). Determinista, sin LLM, client-side. Solo aparece si hay mezcla real.
   private mixNote(): TemplateResult | typeof nothing {
-    const prov = (s: string): string => !s ? '' : s.startsWith('byok:') ? 'qwen' : s.startsWith('copilot:') ? 'Copilot' : 'sesión';
+    const prov = (s: string): string => !s ? '' : s.startsWith('byok:') ? 'LiteLLM' : s.startsWith('copilot:') ? 'Copilot' : 'sesión';
     const set = [...new Set([this.mPlanner, this.mCoder, this.mReviewer].map(prov).filter(Boolean))];
     if (set.length < 2) return nothing;
     return html`<div class="muted" style="font-size:.72rem;margin-top:.5rem">proveedores: ${set.join(' + ')}</div>`;
@@ -616,10 +639,10 @@ export class PanelScreen extends CElement {
     // HONESTIDAD del catálogo: si el CLI aún no reportó su lista real, se declara (· vistos en tus runs)
     // y jamás se rellena con modelos inventados; sin nada observado, el estado vacío lo dice claro.
     const pend = m?.copilotPending;
-    return html`<label class="fl" style="flex:1">${label}<select .value=${value} title=${m ? `Copilot: ${m.copilotSource} · qwen: ${m.byokSource}` : ''} @change=${(e: Event) => set((e.target as HTMLSelectElement).value)}>
+    return html`<label class="fl" style="flex:1">${label}<select .value=${value} title=${m ? `Copilot: ${m.copilotSource} · LiteLLM: ${m.byokSource}` : ''} @change=${(e: Event) => set((e.target as HTMLSelectElement).value)}>
       <option value="">Recomendado (conductor elige)</option>
       ${groups.length ? groups.map(([g, xs]) => html`<optgroup label="Copilot · ${g}${pend ? ' · vistos en tus runs' : ''}">${xs.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>`) : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
-      ${creds && byok.length ? html`<optgroup label="qwen · LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : nothing}
+      ${creds && byok.length ? html`<optgroup label="LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${m?.names?.[o] ?? o}</option>`)}</optgroup>` : nothing}
     </select></label>`;
   }
 

@@ -337,10 +337,10 @@ await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-
   const KEY = 'sk-UNIT-TEST-KEY-abc123';
   // stdin en pipe = url + key en 2 líneas; la URL fake (127.0.0.1:1) hace fallar el fetch de modelos rápido
   const out = execFileSync(process.execPath, [bin, 'byok', 'login'], { input: `http://127.0.0.1:1/v1\n${KEY}\n`, env: { ...process.env, CONDUCTOR_HOME: home }, stdio: 'pipe', windowsHide: true, encoding: 'utf8' });
-  const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
+  const j = JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8'));
   assert(typeof j.apiKeyEnc === 'string' && j.apiKeyEnc.startsWith('c2:'), 'la key se guarda cifrada AES-GCM (blob c2:), no en claro');
   assert(!j.apiKey, 'no queda el campo apiKey en claro');
-  assert(!JSON.stringify(j).includes(KEY), 'la key NO aparece en claro en byok.json');
+  assert(!JSON.stringify(j).includes(KEY), 'la key NO aparece en claro en el fichero');
   assert(!String(out).includes(KEY), 'la key NO aparece en el output del comando (el LLM no la ve)');
   // URL inválida (usuario inexperto que teclea mal): debe FALLAR y NO guardar nada (no un "✓ guardadas" engañoso)
   const home2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-badurl');
@@ -348,7 +348,7 @@ await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-
   let rejected = false;
   try { execFileSync(process.execPath, [bin, 'byok', 'login'], { input: 'not-a-url\nsk-x\n', env: { ...process.env, CONDUCTOR_HOME: home2 }, stdio: 'pipe', windowsHide: true }); } catch { rejected = true; }
   assert(rejected, 'byok login rechaza una URL inválida (exit≠0)');
-  assert(!existsSync(join(home2, 'byok.json')), 'no guarda config con URL inválida (nada de "✓ guardadas" engañoso)');
+  assert(!existsSync(join(home2, 'litellm.json')) && !existsSync(join(home2, 'byok.json')), 'no guarda config con URL inválida (nada de "✓ guardadas" engañoso)');
   rmSync(home2, { recursive: true, force: true });
   // SEGURIDAD: con la clave maestra corrupta, NO guardar la key EN CLARO → debe FALLAR (nunca degradar en silencio)
   const home3 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-byok-corrupt');
@@ -357,7 +357,7 @@ await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-
   let failedCorrupt = false;
   try { execFileSync(process.execPath, [bin, 'byok', 'login'], { input: 'http://127.0.0.1:1/v1\nsk-secret\n', env: { ...process.env, CONDUCTOR_HOME: home3 }, stdio: 'pipe' }); } catch { failedCorrupt = true; }
   assert(failedCorrupt, 'byok login FALLA si no puede cifrar (clave maestra corrupta)');
-  assert(!existsSync(join(home3, 'byok.json')), 'con cifrado imposible NO guarda la key (ni en claro) — nunca un secreto en disco sin cifrar');
+  assert(!existsSync(join(home3, 'litellm.json')) && !existsSync(join(home3, 'byok.json')), 'con cifrado imposible NO guarda la key (ni en claro) — nunca un secreto en disco sin cifrar');
   rmSync(home3, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
@@ -378,7 +378,7 @@ await test('serve(byok-concurrency): N `byok login` concurrentes no corrompen la
   assert(codes.every((c) => c === 0), `los ${N} byok login concurrentes salen 0 (sin fallo por la carrera de .enckey): ${JSON.stringify(codes)}`);
   eq(Buffer.from(readFileSync(join(home, '.enckey'), 'utf8').trim(), 'base64').length, 32, 'clave maestra única de 32 bytes (no corrupta por la carrera)');
   const saved = process.env.CONDUCTOR_HOME; process.env.CONDUCTOR_HOME = home;
-  const dec = decryptSecret(JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8')).apiKeyEnc);
+  const dec = decryptSecret(JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8')).apiKeyEnc);
   process.env.CONDUCTOR_HOME = saved;
   eq(dec, KEY, 'la key guardada descifra bien tras la carrera concurrente');
   rmSync(home, { recursive: true, force: true });

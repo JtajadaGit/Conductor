@@ -16,7 +16,7 @@
 //   conductor doctor                    (autotest del entorno + validador de config)
 //   conductor version | help
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, chmodSync, rmSync } from 'node:fs';
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,7 +52,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret, decryptSecret, sealByokFile } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret, sealByokFile, byokFile } from '../lib/provenance/secret.mjs';
 import { homedir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
 import { toOtlp } from '../lib/sysops/otlp.mjs';
@@ -62,8 +62,14 @@ process.on('uncaughtException', (e) => { process.stderr.write(`conductor: error 
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
-// la versión REAL vive en plugin.json (junto a assets/ en la instalación) — cero constantes fósiles
-const VERSION = (() => { try { return JSON.parse(readFileSync(join(dirname(resolve(process.argv[1])), '..', 'plugin.json'), 'utf8')).version; } catch { try { return JSON.parse(readFileSync(join(ROOT, '..', 'plugin.json'), 'utf8')).version; } catch { return '0.0.0-dev'; } } })();
+// la versión REAL vive en package.json (LA fuente desde la retirada de la vía plugin; junto a assets/ en la
+// instalación npm) — cero constantes fósiles. Fallback: raíz de la fábrica. Compat: plugin.json legado.
+const VERSION = (() => {
+  for (const p of [join(dirname(resolve(process.argv[1])), '..', 'package.json'), join(ROOT, '..', 'package.json'), join(dirname(resolve(process.argv[1])), '..', 'plugin.json')]) {
+    try { const v = JSON.parse(readFileSync(p, 'utf8')).version; if (v) return v; } catch {}
+  }
+  return '0.0.0-dev';
+})();
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 const pos = argv.slice(1).filter((a) => !a.startsWith('-'));
@@ -200,12 +206,36 @@ switch (cmd) {
     let pause = {}, ttyRl = null;
     if (!auto && srv) pause = { pauseAt: ['apply', 'verify'], onPause: (info) => { console.log(`⏸ REVISIÓN: aprueba en ${srv.url} para continuar con "${info.before}"`); return srv.waitApproval(info); } };
     else if (!auto && !ipc && ((process.stdin.isTTY && process.stdout.isTTY) || process.env.CONDUCTOR_TTY === '1')) {
-      // CONDUCTOR_TTY=1 = forzar el modo interactivo donde isTTY no se detecta (Git Bash/MinTTY en Windows).
-      ttyRl = createInterface({ input: process.stdin, output: process.stdout });
-      // Ctrl-C con un question() activo: readline CAPTURA el SIGINT y sin listener el proceso no muere en
-      // ningún OS (el dev quedaría atrapado en la pausa). Salida limpia: el run queda reanudable (resume).
-      ttyRl.on('SIGINT', () => { console.log('\n■ interrumpido — el run queda reanudable desde el panel o con `resume`'); process.exit(130); });
-      const ask = (q) => new Promise((res) => ttyRl.question(q, (a) => res(a)));
+      let ask;
+      if (process.stdin.isTTY) {
+        // TTY real → readline interactivo pregunta-a-pregunta.
+        ttyRl = createInterface({ input: process.stdin, output: process.stdout });
+        // Ctrl-C con un question() activo: readline CAPTURA el SIGINT y sin listener el proceso no muere en
+        // ningún OS (el dev quedaría atrapado en la pausa). Salida limpia: el run queda reanudable (resume).
+        ttyRl.on('SIGINT', () => { console.log('\n■ interrumpido — el run queda reanudable desde el panel o con `resume`'); process.exit(130); });
+        ask = (q) => new Promise((res) => ttyRl.question(q, (a) => res(a)));
+      } else {
+        // CONDUCTOR_TTY=1 con PIPE (Git Bash/MinTTY/scripts): el pipe cierra stdin ANTES de la primera pausa
+        // (las fases tardan minutos) → readline moría con "readline was closed" en plena revisión (bug real,
+        // cazado en la batería de pruebas 2026-07-16). Misma cura que litellm login/setup: TODO stdin de golpe
+        // en una cola; cada pausa consume una línea. Cola agotada = aprobar (el script ya dijo todo lo suyo).
+        const cola = [];
+        let colaLista = new Promise((res) => {
+          let b = '';
+          process.stdin.setEncoding('utf8');
+          process.stdin.on('data', (d) => { b += d; });
+          process.stdin.on('end', () => { cola.push(...b.split(/\r?\n/)); res(); });
+          process.stdin.on('error', () => res());
+        });
+        let agotadas = 0; // anti-bucle: los sub-prompts (nota/modelo) re-preguntan ante vacío — un script incompleto no debe colgar
+        ask = async (q) => {
+          await colaLista;
+          if (!cola.length && ++agotadas > 8) { console.error('✗ stdin agotado en un sub-prompt del drive por tubería — pasa las respuestas completas (una por línea)'); process.exit(2); }
+          const a = cola.length ? cola.shift() : '';
+          console.log(q + (a || '(aprobar)'));
+          return String(a).trim();
+        };
+      }
       pause = { pauseAt: ['apply', 'verify'], onPause: createTtyPause({ ask, log: (m) => console.log(m) }) };
     }
     const r = await drive({
@@ -321,14 +351,16 @@ switch (cmd) {
     try { const out2 = writeAiact(resolve(dir2), flag('-o') ? resolve(flag('-o')) : undefined); console.log(`🇪🇺 informe AI Act → ${out2}`); process.exit(0); }
     catch (e) { console.error(`aiact: ${e.message}`); process.exit(1); }
   }
+  case 'litellm': // nombre user-facing (la palabra que usan los devs de la org); byok = alias histórico
   case 'byok': {
-    // credenciales BYOK persistentes (~/.conductor/byok.json) — la mezcla byok:/copilot: funciona aunque la app
-    // arranque sin las env. La KEY se cifra AES-256-GCM (MISMA mecánica en Windows/Mac/Linux, lib/secret.mjs;
-    // clave maestra en ~/.conductor/.enckey 0600). Tres vías: `byok login` (INTERACTIVO, key OCULTA, el LLM NUNCA
-    // la ve — recomendado) · `byok save` (desde el ENTORNO, para CI/scripts) · `byok status`.
+    // credenciales LiteLLM persistentes (~/.conductor/litellm.json; byok.json = legado, se lee y se migra al
+    // sellar) — la mezcla litellm:/copilot: funciona aunque la app arranque sin las env. La KEY se cifra
+    // AES-256-GCM (MISMA mecánica en Windows/Mac/Linux, lib/secret.mjs; clave maestra en ~/.conductor/.enckey
+    // 0600). Tres vías: `litellm login` (INTERACTIVO, key OCULTA, el LLM NUNCA la ve — recomendado) ·
+    // `litellm save` (desde el ENTORNO, para CI/scripts) · `litellm status`.
     const sub = pos[0];
     const home = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    const file = join(home, 'byok.json');
+    const file = join(home, 'litellm.json');
     // vía COMÚN (login/save): cifra + persiste (0600) + siembra la cache de NOMBRES de modelo (jamás la key).
     const storeByok = async (baseUrl, apiKey, type, model) => {
       // VALIDAR la URL antes de guardar: un usuario inexperto que teclea mal (p.ej. "litellm.org" sin http, o basura)
@@ -344,9 +376,13 @@ switch (cmd) {
       // límites del proveedor (si tu org los define por env o flags, viajan con las creds a TODAS las superficies)
       const maxOut = Number(flag('--max-output')) || Number(process.env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) || null;
       const maxIn = Number(flag('--max-input')) || Number(process.env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) || null;
-      writeFileSync(file, JSON.stringify({ type, baseUrl, apiKeyEnc: enc, model, ...(maxOut ? { maxOutputTokens: maxOut } : {}), ...(maxIn ? { maxPromptTokens: maxIn } : {}) }, null, 2), { mode: 0o600 });
+      // CONSERVAR lo que el dev declaró a mano en su fichero (p.ej. "models", patrón OpenCode) — renovar la
+      // key jamás debe borrar su catálogo declarado. Solo se renuevan credenciales/límites.
+      let keep = {}; try { const { apiKey: _a, apiKeyEnc: _e, baseUrl: _u, type: _y, model: _m, maxOutputTokens: _o, maxPromptTokens: _p, _rotar: _r, ...rest } = JSON.parse(readFileSync(byokFile(home), 'utf8')) || {}; keep = rest; } catch {}
+      writeFileSync(file, JSON.stringify({ ...keep, type, baseUrl, apiKeyEnc: enc, model, ...(maxOut ? { maxOutputTokens: maxOut } : {}), ...(maxIn ? { maxPromptTokens: maxIn } : {}) }, null, 2), { mode: 0o600 });
       if (process.platform !== 'win32') try { chmodSync(file, 0o600); } catch {} // no legible por otros usuarios de la máquina
-      console.log(`✓ credenciales BYOK guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`);
+      try { const legacy = join(home, 'byok.json'); if (existsSync(legacy)) rmSync(legacy); } catch {} // migración: no dejar la key vieja atrás
+      console.log(`✓ credenciales LiteLLM guardadas en ${file}\n  KEY cifrada AES-256-GCM (misma mecánica en Windows/Mac/Linux; clave maestra en ~/.conductor/.enckey, 0600). Nunca en el repo, ni en logs, ni en argv.`);
       try {
         const base = String(baseUrl).replace(/\/+$/, '');
         const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
@@ -376,55 +412,60 @@ switch (cmd) {
         baseUrl = String(envUrl || parts.shift() || '').trim();
         apiKey = String(parts.shift() || '').trim();
       }
-      if (!baseUrl) bad('byok login: la URL de LiteLLM es obligatoria.');
-      if (!apiKey) bad('byok login: la API Key es obligatoria.');
+      if (!baseUrl) bad('litellm login: la URL de LiteLLM es obligatoria.');
+      if (!apiKey) bad('litellm login: la API Key es obligatoria.');
       await storeByok(baseUrl, apiKey, type, model);
       process.exit(0);
     }
     if (sub === 'save') {
       const baseUrl = flag('--base-url') || process.env.COPILOT_PROVIDER_BASE_URL;
       const apiKey = flag('--api-key') || process.env.COPILOT_PROVIDER_API_KEY;
-      if (!baseUrl || !apiKey) bad('byok save: exporta COPILOT_PROVIDER_BASE_URL y COPILOT_PROVIDER_API_KEY y ejecuta `conductor byok save` (para CI/scripts). Para uso normal usa `conductor byok login` (interactivo, la key oculta).');
-      if (flag('--api-key')) console.error('⚠ --api-key queda en el historial del shell y en la lista de procesos; usa `conductor byok login` (interactivo) o exporta COPILOT_PROVIDER_API_KEY.');
+      if (!baseUrl || !apiKey) bad('litellm save: exporta COPILOT_PROVIDER_BASE_URL y COPILOT_PROVIDER_API_KEY y ejecuta `conductor litellm save` (para CI/scripts). Para uso normal usa `conductor litellm login` (interactivo, la key oculta).');
+      if (flag('--api-key')) console.error('⚠ --api-key queda en el historial del shell y en la lista de procesos; usa `conductor litellm login` (interactivo) o exporta COPILOT_PROVIDER_API_KEY.');
       await storeByok(baseUrl, apiKey, flag('--type') || process.env.COPILOT_PROVIDER_TYPE || 'openai', flag('--model') || process.env.COPILOT_MODEL || '');
       process.exit(0);
     }
-    if (sub === 'import') {
-      // IMPORTA credenciales de una config de host YA existente (forma openai-compatible: provider.*.options
-      // con baseURL/apiKey, o un {baseUrl,apiKey} plano) — el dev no re-teclea nada. Se guarda CIFRADO como
-      // siempre; su fichero original queda intacto (retirar la key en claro de él es cosa suya, se le avisa).
-      const src = pos[1]; if (!src || !existsSync(src)) bad('byok import <config-json-de-tu-host>');
-      let cfgI; try { cfgI = JSON.parse(readFileSync(src, 'utf8')); } catch (e) { console.error(`✗ JSON inválido: ${e.message}`); process.exit(2); }
-      let found = null;
-      if (cfgI && typeof cfgI === 'object') {
-        if (cfgI.baseUrl && cfgI.apiKey) found = { baseUrl: cfgI.baseUrl, apiKey: cfgI.apiKey };
-        else if (cfgI.provider && typeof cfgI.provider === 'object') {
-          for (const p of Object.values(cfgI.provider)) {
-            const o = p && p.options;
-            if (o && (o.baseURL || o.baseUrl) && o.apiKey && !String(o.apiKey).includes('XXX')) { found = { baseUrl: o.baseURL || o.baseUrl, apiKey: o.apiKey }; break; }
-          }
-        }
-      }
-      if (!found) { console.error('✗ no encontré credenciales utilizables en esa config (busco provider.*.options.{baseURL,apiKey} o {baseUrl,apiKey}; los placeholders tipo sk-XXXX se ignoran)'); process.exit(2); }
-      await storeByok(found.baseUrl, found.apiKey, flag('--type') || 'openai', flag('--model') || '');
-      console.log('  tu fichero original queda INTACTO — considera retirar de él la key en claro (aquí ya está cifrada)');
-      process.exit(0);
-    }
+    // ('import' ELIMINADO por decisión de producto: el fichero ES la interfaz — la gente lo edita a mano;
+    // el formato canónico lo enseñan el panel y `litellm status`. Menos comandos, menos follón.)
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
       const sealedNow = sealByokFile(home);
-      let fileOk = false, enc = false, portable = false; try { const j = JSON.parse(readFileSync(file, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); } catch {}
-      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `byok login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
-      console.log(`byok por env: ${envOk ? 'SÍ' : 'no'} · byok.json: ${fileOk ? 'SÍ (' + file + ', KEY ' + encTxt + ')' : 'no'} → byok disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor byok login`'}`);
+      const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
+      let fileOk = false, enc = false, portable = false, nDecl = 0; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = j.models ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
+      console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
     }
-    bad('byok login (interactivo, key oculta) | byok import <config-de-tu-host> (reusa credenciales existentes) | byok save (desde el entorno) | byok status');
+    bad('litellm login (interactivo, key oculta) | litellm save (desde el entorno, CI) | litellm status  — o edita ~/.conductor/litellm.json a mano: {"baseUrl": "https://…/v1", "apiKey": "sk-…", "models": {"<id>": {"limit": {"context": 250000, "output": 16384}}}} (se cifra al primer uso; los models declarados salen SIEMPRE en el selector)');
   }
+  case 'init': // por-PROYECTO (el `daisy init` nuestro): crea openspec/ listo para lanzar — idempotente
   case 'init-config': {
-    const dir = pos[0] || join(process.cwd(), 'openspec');
-    const r = initConfig(resolve(dir));
-    console.log(`conductor init-config\n  schema → ${r.schemaPath}\n  config → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'}`);
+    const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
+    const r = initConfig(join(rootI2, 'openspec'));
+    // /conductor en COPILOT es por-PROYECTO (no tiene comandos globales sin plugin): patrón daisy
+    // "skills mode" — .github/skills/<nombre>/SKILL.md con $ARGUMENTS ⇒ /conductor en su chat.
+    let copilotCmd = '';
+    try {
+      const skDir = join(rootI2, '.github', 'skills', 'conductor');
+      mkdirSync(skDir, { recursive: true });
+      writeFileSync(join(skDir, 'SKILL.md'), [
+        '---',
+        'name: conductor',
+        'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
+        '---',
+        'La petición del usuario: $ARGUMENTS',
+        '- Si viene VACÍA: llama a la tool MCP `conductor_app` (abre el panel web local) y devuelve su URL.',
+        '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
+        '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
+        '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+        '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
+        '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+        '',
+      ].join('\n'));
+      copilotCmd = `\n  /conductor (Copilot) → .github/skills/conductor/SKILL.md (por-proyecto, patrón estándar)`;
+    } catch {}
+    console.log(`✓ proyecto inicializado (openspec/)\n  schema → ${r.schemaPath}\n  config → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'}${copilotCmd}\n  Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }
   case 'keygen': {
@@ -736,7 +777,7 @@ switch (cmd) {
   // F3 (doctrina UX v2 #5) — EL GESTO de app: `conductor` a secas arranca el servidor si está apagado y
   // abre la ventana. Con ruta opcional (`conductor app <root>`) enfoca ese proyecto. CONDUCTOR_NO_OPEN=1
   // evita abrir navegador (headless/tests).
-  case undefined: case 'app': {
+  case undefined: case 'app': case 'run': { // `conductor` = `conductor run` = abre la miniweb en este repo
     const url = 'http://127.0.0.1:4750/';
     const rootArg = pos[0] ? resolve(pos[0]) : process.cwd();
     const ping2 = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
@@ -764,8 +805,7 @@ switch (cmd) {
     console.log(`🌐 conductor: ${url}`);
     break;
   }
-  // `setup` (shim manual en PATH) se ELIMINÓ (2026-07-15, anti-Frankenstein): la vía plugin no necesita
-  // comando de terminal y la vía npm crea los shims sola. Doctrina: UN modo de instalación por persona.
+  case 'setup': // el nombre que la gente espera tras `npm i -g` (patrón wizard de las referencias); install = alias
   case 'install': {
     // ONBOARDING GUIADO (estilo instalador enterprise): UNA orden tras `npm i -g …` y quedas operativo.
     // Reutiliza los comandos reales como subprocesos (stdio heredado → interactivo de verdad); cada paso es
@@ -775,7 +815,7 @@ switch (cmd) {
     console.log(`\nconductor ${VERSION} — instalación guiada`);
     console.log('────────────────────────────────────────────');
     if (!process.stdin.isTTY && process.env.CONDUCTOR_TTY !== '1') {
-      console.log('Sin terminal interactiva. Los 3 pasos, manuales:\n  1) conductor byok login              credenciales del proxy (una vez, key oculta y cifrada)\n  2) conductor connect --vscode        o  connect --to <config-de-tu-host-MCP>\n  3) conductor                          abre el panel en tu repo');
+      console.log('Sin terminal interactiva. Los 3 pasos, manuales:\n  1) conductor litellm login           credenciales del proxy (una vez, key oculta y cifrada)\n  2) conductor connect --vscode        o  connect --to <config-de-tu-host-MCP>\n  3) conductor                          abre el panel en tu repo');
       process.exit(0);
     }
     // entrada: TTY real → readline interactivo; pipe con CONDUCTOR_TTY=1 (Git Bash/tests) → TODO stdin de
@@ -792,17 +832,59 @@ switch (cmd) {
     }
     const yes = (a) => { const s = String(a).toLowerCase(); return s === '' || s === 's' || s === 'si' || s === 'sí' || s === 'y' || s === 'yes'; };
     const homeI = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    if (existsSync(join(homeI, 'byok.json'))) console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
-    else if (yes(await askI('1/3 · ¿Configurar las credenciales del proxy ahora? [S/n] '))) { rlI?.pause(); runI(['byok', 'login']); rlI?.resume(); }
-    else console.log('   (cuando quieras: conductor byok login)');
-    const hI = (await askI('2/3 · ¿Conectar tu editor/host MCP? [1] VS Code · [2] otro host · [Enter] saltar ')).toLowerCase();
-    if (hI === '1') { rlI?.pause(); runI(['connect', '--vscode']); rlI?.resume(); }
-    else if (hI === '2') { const p = await askI('   ruta de la config de tu host: '); if (p) { rlI?.pause(); runI(['connect', '--to', p]); rlI?.resume(); } }
-    else console.log('   (cuando quieras: conductor connect --vscode | --to <config>)');
+    // credenciales: NUNCA se piden aquí (decisión de producto, fichero-first). Solo se informa del estado;
+    // el panel muestra el mismo aviso con instrucciones si faltan. `litellm login` queda para quien lo prefiera.
+    if (existsSync(join(homeI, 'litellm.json')) || existsSync(join(homeI, 'byok.json'))) console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
+    else console.log(`1/3 · credenciales del proxy: pendientes — escribe ${join(homeI, 'litellm.json')} con {"baseUrl": "https://…/v1", "apiKey": "sk-…"} (se cifra solo al primer uso; también vale \`conductor litellm login\`). El panel te lo recordará.`);
+    // 2/3 · CONECTAR conductor a tus CLIs — TÚ eliges (Enter = los detectados). En cada host se instala el
+    // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
+    const CMD_MD = [
+      '---',
+      'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
+      '---',
+      '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
+      '- Si $ARGUMENTS está VACÍO: llama a la tool `conductor_app` (abre el panel web local) y devuelve su URL.',
+      '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
+      '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
+      '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
+      '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '',
+    ].join('\n');
+    // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
+    const homeU = process.env.CONDUCTOR_USERHOME || homedir();
+    const hostsI = [
+      { n: '1', key: 'copilot', label: 'Copilot CLI', det: existsSync(join(homeU, '.copilot')) },
+      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeU, '.claude')) },
+      { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeU, '.config', 'opencode')) },
+    ];
+    console.log('2/3 · ¿A qué CLIs conecto conductor? (comando /conductor + tools MCP)');
+    for (const h of hostsI) console.log(`   [${h.n}] ${h.label}${h.det ? '   ← detectado' : ''}`);
+    const selI = (await askI('   Elige [Enter = los detectados · números, p.ej. 1,3 · n = ninguno] ')).toLowerCase();
+    const chosen = new Set();
+    if (selI === '') { for (const h of hostsI) if (h.det) chosen.add(h.key); }
+    else if (selI !== 'n') { for (const h of hostsI) if (selI.includes(h.n)) chosen.add(h.key); }
+    // Claude Code: comando global (~/.claude/commands) + MCP de usuario vía su CLI oficial si está en PATH
+    if (chosen.has('claude')) {
+      try { mkdirSync(join(homeU, '.claude', 'commands'), { recursive: true }); writeFileSync(join(homeU, '.claude', 'commands', 'conductor.md'), CMD_MD); console.log('   ✓ Claude Code: comando /conductor instalado (global, todos tus repos)'); } catch (e) { console.log(`   ⚠ Claude Code: no pude escribir el comando (${e.message})`); }
+      try { execFileSync('claude', ['mcp', 'add', 'conductor', '-s', 'user', '--', 'conductor', 'mcp'], { stdio: 'pipe', timeout: 20000, windowsHide: true }); console.log('   ✓ Claude Code: servidor MCP registrado (usuario)'); }
+      catch { console.log('   ⚠ Claude Code: registra el MCP tú (una vez): claude mcp add conductor -s user -- conductor mcp'); }
+    }
+    // OpenCode: comando global + fusión no destructiva en su config global (se crea si no existe)
+    if (chosen.has('opencode')) {
+      const ocDir = join(homeU, '.config', 'opencode');
+      try { mkdirSync(join(ocDir, 'commands'), { recursive: true }); writeFileSync(join(ocDir, 'commands', 'conductor.md'), CMD_MD); console.log('   ✓ OpenCode: comando /conductor instalado (global)'); } catch (e) { console.log(`   ⚠ OpenCode: no pude escribir el comando (${e.message})`); }
+      try { const oc = join(ocDir, 'opencode.json'); if (!existsSync(oc)) { mkdirSync(ocDir, { recursive: true }); writeFileSync(oc, '{}\n'); } rlI?.pause(); runI(['connect', '--to', oc]); rlI?.resume(); } catch {}
+    }
+    // Copilot CLI: MCP en su config global (~/.copilot/mcp-config.json); el plugin sigue siendo la vía completa (skills)
+    if (chosen.has('copilot')) {
+      try { mkdirSync(join(homeU, '.copilot'), { recursive: true }); const mc = join(homeU, '.copilot', 'mcp-config.json'); if (!existsSync(mc)) writeFileSync(mc, '{}\n'); rlI?.pause(); runI(['connect', '--to', mc]); rlI?.resume(); console.log('   ✓ Copilot CLI: MCP conductor en su config global — el comando /conductor te lo deja `conductor init` en cada proyecto (.github/skills)'); } catch {}
+    }
+    if (!chosen.size) console.log('   (nada conectado — cuando quieras: `conductor setup` de nuevo, o conductor connect --to <config> | --command-dir <dir>)');
     const oI = yes(await askI('3/3 · ¿Abrir el panel ahora en este repo? [S/n] '));
     rlI?.close();
     if (oI) runI([]);
-    console.log('\n✅ Listo. A partir de aquí: /sdd-run en Copilot · «abre el panel de conductor» en tu host MCP · `conductor` en terminal.');
+    console.log('\n✅ Listo. Dos modos: 🌐 `conductor` en cualquier repo (miniweb) · 💬 /conductor en el chat de tu CLI.');
     process.exit(0);
   }
   case 'connect': {
@@ -845,8 +927,20 @@ switch (cmd) {
     if (cmdDir) {
       const dC = resolve(cmdDir); mkdirSync(dC, { recursive: true });
       const fC = join(dC, 'conductor.md');
-      writeFileSync(fC, ['---', 'description: Abre el panel local de conductor en este proyecto (pipeline SDD verificado)', '---', 'Usa la tool MCP `conductor_app` para abrir el panel de conductor. Si el usuario indica una ruta en $ARGUMENTS, pásala como projectRoot; si no, usa la raíz del proyecto actual. Devuelve la URL del panel.', ''].join('\n'));
-      console.log(`✅ comando de chat instalado: ${fC}\n   En tu host: /conductor   (requiere el MCP conectado: connect --to <su-config>)`);
+      writeFileSync(fC, [
+        '---',
+        'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
+        '---',
+        '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
+        '- Si $ARGUMENTS está VACÍO: llama a la tool `conductor_app` (abre el panel web local) y devuelve su URL.',
+        '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
+        '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
+        '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+        '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
+        '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+        '',
+      ].join('\n'));
+      console.log(`✅ comando de chat instalado: ${fC}\n   En tu host: /conductor <qué construir>   (pausas en el chat; sin argumentos abre el panel)\n   Requiere el MCP conectado: connect --to <su-config>`);
       process.exit(0);
     }
     const to = flag('--to');
@@ -893,16 +987,15 @@ function printHelp() {
     console.log(`conductor ${VERSION} — pipeline SDD verificado (0 deps)
 
   EL BUCLE DIARIO
-    (sin comando)                        abre el panel en este repo (lo arranca si está apagado)
-    drive <changeDir> --request "…" --src .   pipeline completo con pausas en tu consola
+    run  (o sin comando)                 abre la miniweb en este repo (la arranca si está apagada)
+    init [dir]                           inicializa el proyecto (crea openspec/ — una vez por repo)
     receipt <changeDir>                  recibo de PR (markdown) del run verificado
     stats                                tokens, coste REAL y ahorro por proveedor/modelo
     doctor                               autotest del entorno (proxy, app, bundle)
 
-  PRIMERA VEZ — solo instalación npm (con el plugin de Copilot NO necesitas nada de esto)
-    install                              instalación guiada: credenciales → host → panel
-    byok login                           credenciales del proxy (key oculta, cifrada local)
-    connect --vscode | --to <config>     conecta tu editor/host MCP (fusión no destructiva)
+  PRIMERA VEZ (tras npm i -g)
+    setup                                elige tus CLIs (Copilot/Claude/OpenCode) → /conductor en su chat
+    ~/.conductor/litellm.json            tus credenciales+modelos del proxy (o \`litellm login\`; se cifra sola)
 
   conductor help --all                   → la sala de máquinas completa (gates, sellos, ledger, CI…)`);
     process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
@@ -960,7 +1053,7 @@ function printStats(r, single) {
   const money = (n) => '$' + Number(n || 0).toFixed(2);
   const trunc = (s, n) => { s = String(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }; // evita desalinear con ids/rutas largas
   console.log(`\nconductor stats · uso real · ${single || r.projects_scanned + ' proyecto(s) registrado(s)'}\n`);
-  if (!r.runs) { console.log('  (sin runs con timeline todavía — lanza uno con `/sdd-run` o `conductor drive`)\n'); return; }
+  if (!r.runs) { console.log('  (sin runs con timeline todavía — lanza uno desde la miniweb `conductor` o con /conductor en tu chat)\n'); return; }
   console.log(`  RUNS     ${r.runs} total · ${r.green} GREEN · ${r.failed} fallido(s)${r.stopped ? ` · ${r.stopped} detenido(s)` : ''}${r.running ? ` · ${r.running} en curso` : ''}`);
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);

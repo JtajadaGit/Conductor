@@ -94,7 +94,7 @@ export class SessionScreen extends CElement {
       <p class="muted" style="margin:-.9rem 0 .9rem;font-size:.82rem">
         ${s.start?.branch ? html`⎇ ${s.start.branch} · ` : nothing}${this.dur(s.durationMs)} · ${s.total} eventos
         <span class="zero-tok" style="padding:.12rem .5rem;margin-left:.4rem">Visor local · 0 tokens</span>
-        ${s.reconstructed ? html`<span class="zero-tok" style="padding:.12rem .5rem;margin-left:.4rem" title="Reconstruida desde la telemetría OTel del run (qwen/LiteLLM no emite la traza nativa del CLI)">Reconstruida desde telemetría</span>` : nothing}
+        ${s.reconstructed ? html`<span class="zero-tok" style="padding:.12rem .5rem;margin-left:.4rem" title="Reconstruida desde la telemetría OTel del run (los modelos LiteLLM no emiten la traza nativa del CLI)">Reconstruida desde telemetría</span>` : nothing}
       </p>
       ${s.models.length ? html`<p class="se-models"><span class="se-mlbl">Modelos usados</span>${s.models.map((m) => html`<code class="ctx-chip">${m}</code>`)}</p>` : nothing}
       <div class="se-filters">

@@ -14,8 +14,6 @@
 4. [Verificación de la instalación](#verificación-de-la-instalación)
 5. [Coste y modelos](#coste-y-modelos)
 6. [Seguridad](#seguridad)
-7. [El mapa del repo](docs/MAPA.md) · [Integraciones avanzadas](docs/integraciones.md)
-8. [Notas de versión](CHANGELOG.md)
 
 ---
 
@@ -66,8 +64,10 @@ Conductor se instala como **un plugin de Copilot** — como cualquier otro que y
 
 **Copilot CLI:**
 ```bash
-/plugin install <URL del repo interno de conductor>
+/plugin marketplace add <URL del repo de conductor>
+/plugin install conductor
 ```
+> ⚠ Usa la URL del **repo** (la que acaba en `.git` o la raíz), NO la del navegador con `/tree/<rama>` — el instalador hace `git clone` literal y clona la **rama por defecto**. Para probar desde una copia local: `/plugin marketplace add <ruta-de-la-carpeta>`.
 
 **VS Code:** activa `chat.plugins.enabled` y `chat.subagents.allowInvocationsFromSubagents` en settings, luego Command Palette → `Chat: Install Plugin from Source` → URL del repo.
 
@@ -77,7 +77,7 @@ Conductor se instala como **un plugin de Copilot** — como cualquier otro que y
 
 > ¿Prefieres fichero, como en tus otras herramientas? Escribe `~/.conductor/byok.json` con `{"baseUrl": "…", "apiKey": "sk-…"}` — **al primer uso conductor lo sella**: cifra la key y la versión en claro desaparece del disco.
 
-> 🔌 ¿Otro host de agentes, terminal puro o instalación por npm? Existen y están soportados — pero son la excepción, no el camino: **[docs/integraciones.md](docs/integraciones.md)**.
+> 🔌 ¿Otro host de agentes, terminal puro o instalación por npm? Existen y están soportados (`npm i -g git+<URL-del-repo>#vX.Y.Z` → `conductor install`) — pero son la excepción, no el camino.
 
 ## Verificación de la instalación
 
@@ -182,12 +182,6 @@ openspec/
 ```
 
 ---
-
-## Documentación
-
-| Documento | Contenido |
-|---|---|
-| [Cómo probar](docs/como-probar.md) | Guía única: prueba paso a paso, adopción por proyecto/stack, configuración (`openspec/conductor.json`), BYOK, review multi-lente, glosario y troubleshooting |
 
 ## Requisitos
 

@@ -30,12 +30,18 @@ await test('mcp: tools/list expone el motor completo', async () => {
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
   const list = await c.rpc('tools/list', {});
   const names = list.result.tools.map((t) => t.name);
-  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift', 'conductor_app', 'conductor_drive', 'conductor_receipt'])
+  for (const n of ['conductor_gate', 'conductor_contract', 'conductor_trace', 'conductor_cost', 'conductor_seal', 'conductor_verify', 'conductor_explain', 'conductor_drift', 'conductor_app', 'conductor_drive', 'conductor_receipt', 'conductor_feature', 'conductor_continue'])
     assert(names.includes(n), `falta ${n}`);
   assert(list.result.tools.every((t) => t.inputSchema?.type === 'object'));
   // conductor_app = la ENTRADA universal (equivale a /sdd-run desde cualquier host MCP): projectRoot opcional
   const app = list.result.tools.find((t) => t.name === 'conductor_app');
   assert(app.inputSchema.properties.projectRoot && !(app.inputSchema.required || []).length, 'conductor_app: projectRoot opcional');
+  // MODO CHAT (pausas conversacionales): el contrato de las dos tools que hacen del chat el cockpit
+  const feat = list.result.tools.find((t) => t.name === 'conductor_feature');
+  eq(feat.inputSchema.required, ['request', 'projectRoot'], 'conductor_feature: request + projectRoot obligatorios');
+  const cont = list.result.tools.find((t) => t.name === 'conductor_continue');
+  eq(cont.inputSchema.required, ['projectRoot', 'changeName'], 'conductor_continue: projectRoot + changeName obligatorios');
+  eq(cont.inputSchema.properties.action.enum, ['continue', 'stop', 'wait'], 'conductor_continue: acciones cerradas');
   c.srv.kill();
 });
 await test('mcp: conductor_gate ejecuta el gate real', async () => {

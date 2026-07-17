@@ -10,7 +10,7 @@ export function phaseIcon(phase: string): string {
 
 export function modelIcon(model: string | null | undefined, provider?: string | null): string {
   const m = (model ?? '').toLowerCase();
-  if (provider === 'byok' || /qwen|deepseek/.test(m)) return '🔑';
+  if (provider === 'byok' || /qwen|deepseek|glm/.test(m)) return '🔑';
   if (/opus/.test(m)) return '🧠';
   if (/sonnet/.test(m)) return '🎼';
   if (/haiku/.test(m)) return '⚡';

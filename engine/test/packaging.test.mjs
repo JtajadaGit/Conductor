@@ -1,13 +1,13 @@
-// GUARDIA DEL EMPAQUETADO ENTERPRISE (npm i -g git+…): si alguien rompe el manifest, la suite grita ANTES
+// GUARDIA DEL EMPAQUETADO (vía ÚNICA: npm i -g git+…): si alguien rompe el manifest, la suite grita ANTES
 // de que un dev de Mac/Linux/Windows se estrelle instalando. El contrato: bin válido con shebang, versión
-// única (plugin.json manda), cero dependencias, private (jamás publicable al npm público — confidencialidad).
+// en package.json (LA fuente desde la retirada de la vía plugin), cero dependencias, private (jamás
+// publicable al npm público — confidencialidad), y la superficie dist limpia (producto sí, fábrica no).
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const pj = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-const plugin = JSON.parse(readFileSync(join(ROOT, 'plugin.json'), 'utf8'));
 
 await test('packaging: bin.conductor apunta a un fichero REAL con shebang (npm exige ambos para crear los shims)', () => {
   eq(typeof pj.bin?.conductor, 'string', 'bin.conductor definido');
@@ -16,8 +16,12 @@ await test('packaging: bin.conductor apunta a un fichero REAL con shebang (npm e
   assert(readFileSync(binPath, 'utf8').startsWith('#!/usr/bin/env node'), 'shebang presente (sin él, el shim POSIX no ejecuta)');
 });
 
-await test('packaging: versión ÚNICA (package.json === plugin.json — el build la sincroniza; el drift mentiría en npm ls)', () => {
-  eq(pj.version, plugin.version, `package ${pj.version} vs plugin ${plugin.version}`);
+await test('packaging: package.json es LA fuente de versión (semver) — bump = editar SOLO ahí', () => {
+  assert(/^\d+\.\d+\.\d+/.test(pj.version || ''), `versión semver: ${pj.version}`);
+  // la cabecera del README la propaga el build al cambiar de versión; si divergen, el build no corrió
+  const rm = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const rmV = (rm.match(/\*\*Versión\*\*: ([0-9][\w.-]*)/) || [])[1];
+  if (rmV) eq(rmV, pj.version, 'README en sync con package.json (lo hace engine/build.mjs)');
 });
 
 await test('packaging: private:true (Regla de confidencialidad: JAMÁS publicable al npm público) y CERO dependencias', () => {
@@ -51,20 +55,19 @@ function listTarNames(buf) {
 }
 import { execSync as execSyncReal } from 'node:child_process';
 
-await test('packaging: build-dist genera la superficie LIMPIA (dos-repos) — producto dentro, fábrica y notas FUERA', () => {
-  // el repo instalable ("pro") debe poder ser SOLO esto: da igual si el instalador de plugins clona o filtra.
+await test('packaging: build-dist genera la superficie LIMPIA — producto dentro (motor+UI+prompts+hook), fábrica y vía-plugin FUERA', () => {
   execSyncReal(`"${process.execPath}" engine/build-dist.mjs`, { cwd: ROOT, stdio: 'pipe' });
   const dist = join(ROOT, 'dist-plugin');
-  for (const f of ['assets/conductor.mjs', 'assets/ui/index.html', 'plugin.json', 'package.json', '.mcp.json', 'plugin/skills/sdd-run/SKILL.md', 'docs/MAPA.md', 'CHANGELOG.md']) {
+  for (const f of ['assets/conductor.mjs', 'assets/ui/index.html', 'package.json', 'prompts/verify.md', 'prompts/apply.md', 'hooks/guard-hook.mjs']) {
     assert(existsSync(join(dist, f)), `superficie completa: falta ${f}`);
   }
-  for (const f of ['engine', 'ui', 'CLAUDE.md', 'task', '.gitattributes']) {
-    assert(!existsSync(join(dist, f)), `la fábrica/notas JAMÁS en dist: sobra ${f}`);
+  for (const f of ['engine', 'ui', 'CLAUDE.md', 'task', '.gitattributes', 'plugin', 'plugin.json', '.mcp.json']) {
+    assert(!existsSync(join(dist, f)), `la fábrica/vía-plugin JAMÁS en dist: sobra ${f}`);
   }
 });
 
-await test('packaging: files incluye assets (motor+UI) — sin ellos la instalación arranca sin panel', () => {
-  assert(Array.isArray(pj.files) && pj.files.includes('assets'), 'assets empaquetado');
+await test('packaging: files empaqueta assets (motor+UI) + prompts (el alma editable) + hooks (guardián)', () => {
+  assert(Array.isArray(pj.files) && pj.files.includes('assets') && pj.files.includes('prompts') && pj.files.includes('hooks'), 'files completo');
   assert(existsSync(join(ROOT, 'assets', 'ui', 'index.html')), 'la UI compilada existe en el árbol (va dentro del paquete)');
   assert(pj.engines?.node, 'engines.node declarado (fail-fast en Node viejos)');
 });

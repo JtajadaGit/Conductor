@@ -16,13 +16,13 @@ export const CONFIG_SCHEMA = {
     strictId: { type: 'boolean', description: 'Exige id estable "<!-- id: REQ-... -->" en cada requisito (error si falta). Lo fija el preset.' },
     models: {
       type: 'object',
-      description: 'Modelo por fase. Prefijos: "byok:<m>" (tu LiteLLM, $0) · "copilot:<m>" (catálogo Business, AI Credits) · sin prefijo = proveedor de la sesión.',
+      description: 'Modelo por ROL (planner/coder/reviewer) y, si quieres control fino, por FASE (explore/propose/clarify/spec/design/tasks/apply/test/fix/verify — la fase GANA sobre su rol). Prefijos: "litellm:<m>" (tu proxy, $0; alias "byok:") · "copilot:<m>" (catálogo Business, AI Credits) · sin prefijo = proveedor de la sesión.',
       properties: {
-        planner: { type: 'string', examples: ['byok:qwen36-msc1'] },
+        planner: { type: 'string', examples: ['litellm:deepseek-v4-flash'] },
         coder: { type: 'string', examples: ['copilot:claude-haiku-4.5'] },
-        reviewer: { type: 'string', examples: ['byok:qwen36-msc1'] },
+        reviewer: { type: 'string', examples: ['litellm:deepseek-v4-flash'] },
       },
-      additionalProperties: false,
+      additionalProperties: { type: 'string' },
     },
     pipeline: {
       type: 'array',

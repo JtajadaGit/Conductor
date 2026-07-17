@@ -52,6 +52,66 @@ const featureName = (req) => { const w = deaccent(req).toLowerCase().split(/[^a-
 const PROTOCOL = '2025-11-25';
 const log = (...a) => process.stderr.write('[conductor-mcp] ' + a.join(' ') + '\n');
 
+// ── helpers del MODO CHAT (pausas conversacionales) ─────────────────────────────────────────────
+// El pipeline corre en la APP (mismo driver, mismas pausas del revisor); estas piezas son el puente:
+// lanzar, ESPERAR hasta la siguiente pausa o el veredicto, y devolver los artefactos para que el AGENTE
+// los presente en el chat. El usuario decide respondiendo — la conversación ES el cockpit.
+const APP_URL = () => `http://127.0.0.1:${Number(process.env.CONDUCTOR_PORT) || 4750}/`;
+async function appUp(root) {
+  const url = APP_URL();
+  const ping = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1500) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  let p = await ping();
+  if (!p) {
+    spawn(process.execPath, [resolve(process.argv[1]), 'serve', root], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
+    for (let i = 0; i < 14 && !p; i++) { await new Promise((r) => setTimeout(r, 500)); p = await ping(); }
+  }
+  return p ? { url, ping: p } : null;
+}
+function makeReceipt(dir) {
+  try {
+    const tl = JSON.parse(readFileSync(join(dir, '.conductor', 'timeline.json'), 'utf8'));
+    if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) return null;
+    let domain = 'core'; try { domain = JSON.parse(readFileSync(join(dir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+    const rd = (f) => { try { return readFileSync(join(dir, f), 'utf8'); } catch { return ''; } };
+    return renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') }) || null;
+  } catch { return null; }
+}
+// artefactos de la pausa, RECORTADOS (token-first: el chat no necesita el fichero entero para decidir)
+const artClip = (dir, f, max = 1800) => { try { const t = readFileSync(join(dir, f), 'utf8'); return t.length > max ? t.slice(0, max) + `\n… [recortado — completo en ${f}]` : t; } catch { return null; } };
+function pauseBundle(changeDir, pending) {
+  const arts = {};
+  const p1 = artClip(changeDir, 'proposal.md'); if (p1) arts['proposal.md'] = p1;
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) { const s = artClip(changeDir, join('specs', d, 'spec.md')); if (s) { arts[`specs/${d}/spec.md`] = s; break; } } } catch {}
+  if (pending?.before === 'verify' || pending?.before === 'fix') { const a = artClip(changeDir, 'apply-report.md'); if (a) arts['apply-report.md'] = a; }
+  if (pending?.before === 'fix') { const v = artClip(changeDir, 'verify-report.md'); if (v) arts['verify-report.md'] = v; }
+  return arts;
+}
+async function pollRun(url, apiBase, changeDir, { timeoutMs = 30 * 60000 } = {}) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    let st = null;
+    try { const r = await fetch(url + apiBase + '/state', { signal: AbortSignal.timeout(8000) }); st = r.ok ? await r.json() : null; } catch {}
+    if (st) {
+      if (st.pending) {
+        return {
+          status: 'paused', phase: st.pending.before || '?', findings: st.pending.findings || undefined,
+          artifacts: pauseBundle(changeDir, st.pending),
+          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Luego llama conductor_continue — sin note = aprobar; note = instrucción para la fase; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
+        };
+      }
+      const verdict = st.verdict || st.timeline?.verdict || null;
+      if (verdict && verdict !== 'running' && !st.alive) {
+        return {
+          status: 'done', verdict, receipt: makeReceipt(changeDir) || undefined,
+          next: verdict === 'GREEN' ? 'Presenta el recibo VERBATIM — el usuario lo revisa y commitea ÉL (tú jamás).' : `El run terminó ${verdict}: presenta el motivo tal cual y NO reintentes por tu cuenta — el usuario decide.`,
+        };
+      }
+    }
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  return { status: 'running', note: 'el run sigue trabajando — llama conductor_continue {action:"wait"} para seguir esperando (o abre la web)' };
+}
+
 const TOOLS = {
   echo: { def: { name: 'echo', description: 'Echo text (handshake check).', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }, run: ({ text }) => ({ text: String(text) }) },
   conductor_gate: { def: { name: 'conductor_gate', title: 'Deterministic SDD gate', description: 'Run coherence + artifact + (optional) traceability gate over an OpenSpec change dir. Returns verdict + findings.', inputSchema: { type: 'object', properties: { changeDir: { type: 'string' }, srcDir: { type: 'string' } }, required: ['changeDir'] } },
@@ -94,19 +154,14 @@ const TOOLS = {
   // web y en el TTY, no en una llamada MCP única.
   conductor_receipt: { def: { name: 'conductor_receipt', title: 'PR receipt (markdown) of a verified run', description: 'Return the PR-ready markdown receipt of a change that ran the pipeline (request, covered requirements, files, verification, models, token cost). Call it right after conductor_drive and SHOW the markdown to the user — they review it and commit themselves.', inputSchema: { type: 'object', properties: { changeDir: { type: 'string' } }, required: ['changeDir'] } },
     run: ({ changeDir }) => {
-      const dir = resolve(changeDir);
-      let tl = null; try { tl = JSON.parse(readFileSync(join(dir, '.conductor', 'timeline.json'), 'utf8')); } catch {}
-      if (!tl || !Array.isArray(tl.phases) || !tl.phases.length) throw new Error('sin timeline todavía — el recibo sale de un run ejecutado (usa conductor_drive primero)');
-      let domain = 'core'; try { domain = JSON.parse(readFileSync(join(dir, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
-      const rd = (f) => { try { return readFileSync(join(dir, f), 'utf8'); } catch { return ''; } };
-      const md = renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') });
-      if (!md) throw new Error('datos insuficientes para el recibo');
+      const md = makeReceipt(resolve(changeDir));
+      if (!md) throw new Error('sin timeline todavía — el recibo sale de un run ejecutado (usa conductor_drive/conductor_feature primero)');
       return { markdown: md };
     } },
-  // ENTRADA UNIVERSAL POR MCP (equivale a /sdd-run): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
+  // ENTRADA UNIVERSAL POR MCP (el arranque desde cualquier chat): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
   // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
   // desde el panel (decisión de producto: la web es la superficie de lanzamiento/revisión, el host solo la abre).
-  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. Equivalent to /sdd-run from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' } }, required: [] } },
+  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. The universal entry from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' } }, required: [] } },
     run: async ({ projectRoot }) => {
       const root = resolve(projectRoot || process.cwd());
       const port = Number(process.env.CONDUCTOR_PORT) || 4750;
@@ -130,10 +185,42 @@ const TOOLS = {
       }
       return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
+  // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
+  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature and WAIT until the first review pause (or the final verdict). Returns the pause artifacts (proposal/spec/report, trimmed) for you to SHOW the user verbatim; when they reply, call conductor_continue with their decision, and repeat until done. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
+    run: async ({ request, projectRoot, changeName }) => {
+      if (!request) throw new Error('request requerido');
+      const root = resolve(projectRoot || process.cwd());
+      const app = await appUp(root);
+      if (!app) return { ok: false, error: 'la app local no arrancó — diagnostica con `conductor doctor`' };
+      const name = changeName ? slug(changeName) : featureName(request);
+      let lr = null, lj = null;
+      try { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name, project: root, auto: false }) }); lj = await lr.json().catch(() => null); } catch (e) { return { ok: false, error: String(e.message) }; }
+      if (!lj?.ok) return { ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, needsInit: lj?.needsInit || undefined, web: lj?.url ? app.url.replace(/\/$/, '') + lj.url : undefined };
+      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name));
+      return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
+    } },
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) and wait for the next one', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" just keeps waiting (no decision). Waits until the NEXT pause or the final verdict and returns it — same contract as conductor_feature.', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
+    run: async ({ projectRoot, changeName, note, model, action }) => {
+      const root = resolve(projectRoot || process.cwd());
+      const name = slug(changeName);
+      const app = await appUp(root);
+      if (!app) return { ok: false, error: 'la app local no está en marcha — lanza primero con conductor_feature' };
+      // ruta 2-seg si el proyecto está en el registro (multi-proyecto); si no, forma 1-seg (default)
+      let pid = null; try { pid = (app.ping?.projects || []).find((p) => resolve(p.root) === root)?.id || null; } catch {}
+      const base = 'api/run/' + (pid ? pid + '/' : '') + name;
+      if (action === 'stop') { try { await fetch(app.url + base + '/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); } catch {} }
+      else if (action !== 'wait') {
+        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}) };
+        try { await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }); } catch {}
+        // (un 409 aquí = ya no había pausa — p.ej. terminó mientras el usuario respondía; el poll de abajo lo cuenta)
+      }
+      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name));
+      return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + '/run/' + (pid ? pid + '/' : '') + name };
+    } },
 };
 
 export function serve() {
-  // ENTRADA ÚNICA `/sdd-run`: el MCP ya NO auto-instala ningún comando `conductor` en el PATH al cargar el plugin
+  // ENTRADA ÚNICA: el MCP ya NO auto-instala ningún comando `conductor` en el PATH al cargar el plugin
   // (era opaco y fallaba fuera de Windows — en Mac ~/.local/bin no está en PATH; en Linux hasta re-login). El
   // atajo de terminal solo vía instalación npm (crea los shims ella sola). Nada se escribe en tu PATH a tus espaldas.
   const send = (m) => process.stdout.write(JSON.stringify(m) + '\n');

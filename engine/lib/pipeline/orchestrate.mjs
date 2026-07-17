@@ -3,7 +3,8 @@
 // El servidor impone la secuencia: no devuelve el siguiente paso hasta que el artefacto del actual existe,
 // y valida con el gate en verify. Así un modelo flojo NO puede saltar fases ni freestylear. Sin sub-agentes.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
-import { join, resolve, relative, isAbsolute } from 'node:path';
+import { join, resolve, relative, isAbsolute, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { checkCoherence, readSpec } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
 import { buildTrace } from '../gates/trace.mjs';
@@ -26,10 +27,13 @@ const artifactOf = (phase, domain) => ({
   apply: 'apply-report.md', fix: 'apply-report.md', test: 'test-report.md', verify: 'verify-report.md',
 }[phase]);
 
-// Instrucciones por fase: el ROL y el formato viajan como DATOS (no en un .md que el modelo ignora).
-// Tech-agnósticas. El agente escribe SOLO el artefacto indicado con la herramienta `edit`.
+// Instrucciones por fase — SUPERFICIE DE CONTRIBUCIÓN: la copia canónica y editable vive en
+// plugin/prompts/<fase>.md (markdown legible; mejorar un prompt = PR a un .md, cero JS). El código
+// sigue mandando la SECUENCIA — editar contenido no permite saltarse fases ni el gate. Lo de abajo
+// es el fallback EMBEBIDO (motor desplegado sin plugin/) y el contrato de paridad lo guarda
+// prompts.test.mjs (texto del .md === texto embebido; si divergen, la suite grita).
 // Límites de output explícitos en cada fase (el output es lo MÁS caro): cada instrucción fija un tope.
-const INSTRUCTION = {
+const DEFAULT_INSTRUCTION = {
   explore: 'PLANNER. Write a short exploration of the existing code/context relevant to the request. Domain language only, no framework names. MAX 120 words.',
   propose: 'PLANNER. Write the proposal: sections `## Why`, `## What Changes` (bullets), `## Impact`. Domain language only, no framework names. MAX 150 words. Base it ONLY on the exploration artifact and the request — do NOT read project source files in this phase.',
   clarify: 'PLANNER. Surface ONLY the ambiguities that change WHAT gets built — ask the minimum, never a quiz. Consider these generic categories when relevant: inputs/sources, behavior/semantics, outputs/consumers, edge-cases, compatibility/migration. Output TWO sections.\n## Open Questions\nTruly-blocking questions, each as `- [ ] question?` (the run BLOCKS until they are answered, flipped to `- [x]`). Put here ONLY what genuinely blocks building.\n## Assumptions\nWhere a sensible default exists, DECIDE it instead of asking: `- assumption taken (why it is the safe default)`. Informative, NON-blocking. If the request says "just decide", prefer Assumptions over Questions. Domain language only, MAX 6 open questions. Do NOT read project source files in this phase.',
@@ -49,7 +53,48 @@ const loadState = (dir) => JSON.parse(readFileSync(statePath(dir), 'utf8'));
 const saveState = (dir, s) => { mkdirSync(join(dir, '.conductor'), { recursive: true }); writeFileSync(stateFile(dir), JSON.stringify(s, null, 2)); };
 
 // instrucción del apply en modo micro: sin spec que leer, diff mínimo, cero ceremonia
-const MICRO_APPLY = 'CODER. MICRO MODE — tiny task, no spec by user choice. Implement the request directly at production quality with the SMALLEST possible diff, following the project conventions. TOOLS: create NEW files with the `create` tool and modify EXISTING files with the `edit` tool — do NOT `view`/`edit` paths that do not exist yet; write immediately. Shell ONLY to create directories. FORBIDDEN: running the project\'s tests, build, lint or dev server. Zero narration.';
+DEFAULT_INSTRUCTION['micro-apply'] = 'CODER. MICRO MODE — tiny task, no spec by user choice. Implement the request directly at production quality with the SMALLEST possible diff, following the project conventions. TOOLS: create NEW files with the `create` tool and modify EXISTING files with the `edit` tool — do NOT `view`/`edit` paths that do not exist yet; write immediately. Shell ONLY to create directories. FORBIDDEN: running the project\'s tests, build, lint or dev server. Zero narration.';
+
+// ── PROMPTS COMO FICHEROS ── la copia canónica de cada instrucción vive en prompts/<clave>.md (raíz del
+// producto, junto a assets/; `plugin/prompts` se acepta como ruta LEGADA de instalaciones previas).
+// Resolución: CONDUCTOR_PROMPTS_DIR (override de equipo) > prompts/ junto al motor (misma forma en
+// fábrica engine/lib/pipeline y en bundle assets/) > defaults embebidos. Cache POR DIR resuelto (jamás
+// cache global sin clave — trampa multi-run). Un .md ilegible NO tumba el run: cae al default.
+export const PROMPT_KEYS = Object.keys(DEFAULT_INSTRUCTION);
+const _promptCache = new Map();
+const promptBody = (txt) => {
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(txt);
+  return (m ? txt.slice(m[0].length) : txt).trim();
+};
+function promptsDir() {
+  if (process.env.CONDUCTOR_PROMPTS_DIR) return process.env.CONDUCTOR_PROMPTS_DIR;
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const up of ['..', '../..', '../../..']) {
+    const d = resolve(here, up, 'prompts');
+    if (existsSync(d)) return d;
+    const legacy = resolve(here, up, 'plugin', 'prompts'); // instalaciones previas a la retirada de la vía plugin
+    if (existsSync(legacy)) return legacy;
+  }
+  return null;
+}
+export function instructionFor(key) {
+  const dir = promptsDir();
+  const ck = dir || '(embebido)';
+  let map = _promptCache.get(ck);
+  if (!map) {
+    map = { ...DEFAULT_INSTRUCTION };
+    if (dir) {
+      for (const k of PROMPT_KEYS) {
+        try {
+          const f = join(dir, `${k}.md`);
+          if (existsSync(f)) { const b = promptBody(readFileSync(f, 'utf8')); if (b) map[k] = b; }
+        } catch { /* ilegible → default embebido */ }
+      }
+    }
+    _promptCache.set(ck, map);
+  }
+  return map[key];
+}
 
 function stepFor(dir, s, extra = {}) {
   const phase = s.phases[s.idx];
@@ -57,7 +102,7 @@ function stepFor(dir, s, extra = {}) {
   return {
     done: false, step: s.idx + 1, of: s.phases.length, phase, role: ROLE[phase],
     write_to: writeTo, write_to_abs: join(resolve(dir), writeTo),
-    instruction: s.complexity === 'micro' && phase === 'apply' ? MICRO_APPLY : INSTRUCTION[phase], request: s.request,
+    instruction: instructionFor(s.complexity === 'micro' && phase === 'apply' ? 'micro-apply' : phase), request: s.request,
     after: 'When the artifact is written, call conductor_next with the same changeDir.',
     ...extra,
   };
@@ -278,7 +323,7 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
       if (s.testFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
       saveState(changeDir, s);
       const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
-      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${INSTRUCTION.fix} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
+      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${instructionFor('fix')} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
     }
     s.idx += 1; saveState(changeDir, s); // PASS → avanza a verify (gobierno terminal)
     return stepFor(changeDir, s);
@@ -322,7 +367,7 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
       s.verifyFixCycles = (s.verifyFixCycles || 0) + 1;
       if (s.verifyFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'verify', reason: 'gate sigue fallando tras 2 ciclos de fix — escalar a humano (revisa los hallazgos, corrige manualmente y reanuda)', findings: blocking, policy: { source: pol.source, verdict: pe.verdict } }; }
       saveState(changeDir, s);
-      return { ...stepFor(changeDir, s), gate: 'FAIL', findings: blocking, instruction: `${INSTRUCTION.fix} Hallazgos: ${blocking.map((f) => f.message).join(' | ')}`, policy: { source: pol.source, verdict: pe.verdict } };
+      return { ...stepFor(changeDir, s), gate: 'FAIL', findings: blocking, instruction: `${instructionFor('fix')} Hallazgos: ${blocking.map((f) => f.message).join(' | ')}`, policy: { source: pol.source, verdict: pe.verdict } };
     }
     // PASS u OVERRIDDEN (override justificado y permitido) → GREEN; el audit del override queda en el estado.
     s.status = 'done'; s.verdict = 'GREEN'; if (pe.audit) s.override = pe.audit; saveState(changeDir, s);

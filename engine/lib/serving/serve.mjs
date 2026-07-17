@@ -4,7 +4,7 @@
 // con la fase en curso viva (progress bar vs timeout, intento N/M, último error) y totales de tokens.
 // Cero coste de tokens: aquí no hay LLM, solo ficheros locales.
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, renameSync, chmodSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute } from 'node:path';
@@ -33,7 +33,7 @@ import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
-import { decryptSecret, encryptSecret, isPortableBlob, sealByokFile } from '../provenance/secret.mjs';
+import { decryptSecret, isPortableBlob, sealByokFile, byokFile } from '../provenance/secret.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -584,7 +584,7 @@ function byokCredsLocal() {
   const env = process.env;
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
-    const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
+    const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
     // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
     // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
     if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
@@ -594,6 +594,31 @@ function byokCredsLocal() {
   return null;
 }
 let _byokSealed = false;
+// modelos DECLARADOS por el dev en su litellm.json ("models": mapa como en su config de OpenCode, o array).
+// Son la fuente MÁS fiable de la lista (no dependen de que el proxy conteste ni de que la key viva): el dev
+// los escribió a mano. Acepta AMBAS formas de límites para que el bloque "models" de un opencode.json(c)
+// se pueda pegar TAL CUAL: la nuestra (maxOutputTokens/maxPromptTokens) y la de OpenCode (limit.{context,output}).
+export function byokDeclaredModels() {
+  try {
+    const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    const m = j?.models;
+    if (Array.isArray(m)) return { ids: m.filter((x) => typeof x === 'string' && x), meta: {} };
+    if (m && typeof m === 'object') {
+      const ids = Object.keys(m).filter(Boolean);
+      const meta = {}, names = {};
+      for (const id of ids) {
+        const v = m[id] || {};
+        const out = Number(v.maxOutputTokens) || Number(v.limit?.output) || 0;
+        const inn = Number(v.maxPromptTokens || v.maxInputTokens) || Number(v.limit?.context) || 0;
+        const mm = { ...(out ? { maxOut: out } : {}), ...(inn ? { maxIn: inn } : {}) };
+        if (Object.keys(mm).length) meta[id] = mm;
+        if (typeof v.name === 'string' && v.name.trim()) names[id] = v.name.trim(); // display name del selector
+      }
+      return { ids, meta, names };
+    }
+  } catch {}
+  return { ids: [], meta: {}, names: {} };
+}
 // cache de NOMBRES de modelo (los ids NO son secretos; la KEY sí). Hace que el picker muestre qwen
 // SIEMPRE, aunque la app arranque sin credenciales — se siembra al hacer `byok save` o un fetch en vivo.
 const MODELS_CACHE = () => join(CONDUCTOR_HOME(), 'models-cache.json');
@@ -673,7 +698,7 @@ async function _computeAvailableModels(registry) {
         (ph.provider === 'byok' ? obsByok : obsCop).add(m);
       }
     }
-    try { const cfg = readDriveConfig(p.root).models || {}; for (const v of Object.values(cfg)) { if (typeof v !== 'string') continue; if (v.startsWith('byok:')) obsByok.add(v.slice(5)); else if (v.startsWith('copilot:')) obsCop.add(v.slice(8)); } } catch {}
+    try { const cfg = readDriveConfig(p.root).models || {}; for (const v of Object.values(cfg)) { if (typeof v !== 'string') continue; if (v.startsWith('byok:')) obsByok.add(v.slice(5)); else if (v.startsWith('litellm:')) obsByok.add(v.slice(8)); else if (v.startsWith('copilot:')) obsCop.add(v.slice(8)); } } catch {}
   }
   // byok: 1) en vivo desde el proveedor si hay creds (y CACHEA los nombres); 2) si no, lee la cache; 3) observados
   let byokSource = 'observados', byokCachedAt = null, live = false, byokReason = null;
@@ -683,9 +708,9 @@ async function _computeAvailableModels(registry) {
     // para que la pérdida sea VISIBLE y recuperable (antes: "sin BYOK" mudo): (a) blob c2 nuevo que no descifra →
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
-      const j = JSON.parse(readFileSync(join(CONDUCTOR_HOME(), 'byok.json'), 'utf8'));
-      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'byok.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Re-guarda la clave con `conductor byok login`.';
-      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'byok.json usa el cifrado DPAPI antiguo (solo Windows). Re-guarda con `conductor byok login` en este SO para migrarlo al cifrado común AES-256-GCM (portable).';
+      const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
+      else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}
   }
   if (creds) {
@@ -694,7 +719,7 @@ async function _computeAvailableModels(registry) {
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
       // key RECHAZADA por el proxy (rotada/revocada): sin este motivo explícito, el dev veía "byok ✅" (la
       // key existe y descifra) y un catálogo "observados" mudo — indistinguible de un fallo de red. Caso real.
-      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y re-guárdala (\`conductor byok login\` o el panel).`;
+      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y escríbela en ~/.conductor/litellm.json (campo "apiKey"; conductor la sella al primer uso) o ejecuta \`conductor litellm login\`.`;
       if (r.ok) {
         const j = await r.json(); const ids = [];
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
@@ -709,16 +734,26 @@ async function _computeAvailableModels(registry) {
       }
     } catch {}
   }
-  if (!live) {
+  if (!live && creds && !byokReason) {
     const cache = readModelsCache();
     // SOLO usar la cache si es del MISMO proveedor (baseUrlHash). Tras cambiar la URL BYOK cuyo fetch en vivo
-    // falla (401/URL mala), la lista VIEJA de otro proveedor no debe colarse: ni servirse ni pasar el gate
-    // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve). Sin creds no hay
-    // proveedor actual que validar (curHash=null) → se permite como fallback de display (lanzar byok sin creds ya da BLOCKED).
-    const curHash = creds ? byokUrlHash(creds.baseUrl) : null;
-    if (cache?.byok?.models?.length && (curHash === null || cache.byok.baseUrlHash === curHash)) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); if (cache.byok.meta) setLiveMeta(cache.byok.meta); }
+    // falla (URL mala/red), la lista VIEJA de otro proveedor no debe colarse: ni servirse ni pasar el gate
+    // checkByokModels (lanzaría un run condenado con modelos que el nuevo proveedor no sirve).
+    const curHash = byokUrlHash(creds.baseUrl);
+    if (cache?.byok?.models?.length && cache.byok.baseUrlHash === curHash) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); if (cache.byok.meta) setLiveMeta(cache.byok.meta); }
   }
-  if (!byok.size && obsByok.size) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: sin catálogo ni cache
+  // HONESTIDAD del grupo LiteLLM (feedback real: "aparece qwen, ¿qué mierda es esa?"): sin creds usables o
+  // con la key RECHAZADA (401/403), NO se ofrecen modelos byok de cache/observados — serían fantasmas no
+  // lanzables (el run daría BLOCKED). La UI enseña el MOTIVO (byokReason) o "sin conectar" en su lugar.
+  if (!byok.size && obsByok.size && creds && !byokReason) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: red caída puntual con key válida
+  // modelos DECLARADOS en litellm.json (patrón OpenCode: la lista la escribe el DEV en su config) — la fuente
+  // más fiable: se muestran SIEMPRE, con o sin catálogo vivo (una key rota impide lanzar, no borra tu config;
+  // el motivo sigue visible en byokReason). El fetch en vivo pasa a ser complemento, no requisito.
+  const declared = byokDeclaredModels();
+  if (declared.ids.length) {
+    for (const id of declared.ids) byok.add(id);
+    byokSource = live ? 'declarados en litellm.json + catálogo en vivo' : 'declarados en tu litellm.json';
+  }
   _models.at = Date.now();
   // catálogo REAL de Copilot (SDK client.listModels) fusionado con lo observado. Refresco en BACKGROUND
   // (no bloquea el panel) + cache 10 min; si aún no hay catálogo del SDK, NO inventamos — solo lo observado.
@@ -730,7 +765,9 @@ async function _computeAvailableModels(registry) {
   if (!_copilotCat.fetching && Date.now() - _copilotCat.at > 600000) {
     _copilotCat.fetching = true;
     let sdkBundle = null; try { sdkBundle = [join(resolve(process.argv[1]), '..', 'copilot-sdk.mjs')].find(existsSync) || null; } catch {}
-    listCopilotModels({ sdkBundle }).then((ids) => { if (ids.length) { _copilotCat.models = ids; _models.at = 0; } _copilotCat.at = Date.now(); }).catch(() => {}).finally(() => { _copilotCat.fetching = false; });
+    // fallo (máquina cargada, gh lento…) → reintento en ~60s, NO el ciclo completo de 10 min: si el primer
+    // intento del arranque moría, el panel se quedaba en "observados" 10 minutos aunque el catálogo ya saliera.
+    listCopilotModels({ sdkBundle }).then((ids) => { if (ids.length) { _copilotCat.models = ids; _models.at = 0; _copilotCat.at = Date.now(); } else { _copilotCat.at = Date.now() - 540000; } }).catch(() => { _copilotCat.at = Date.now() - 540000; }).finally(() => { _copilotCat.fetching = false; });
   }
   // anti-fuga de familia Copilot en el grupo BYOK: un run mal configurado o una cache vieja pudo
   // marcar provider:'byok' sobre un modelo Copilot (claude/gpt/gemini/o-series). El grupo BYOK es SOLO
@@ -746,10 +783,11 @@ async function _computeAvailableModels(registry) {
   // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
   const prices = {};
   for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
-  // límites reales por modelo (contexto/output del catálogo del proxy) — para que el picker informe sin inventar
+  // límites reales por modelo (contexto/output del catálogo del proxy) — para que el picker informe sin inventar.
+  // Los declarados en litellm.json rellenan los huecos que el proxy no reporta (el proxy, si habla, manda).
   const meta = {};
-  for (const id of byokIds) { const m = metaOf(id); if (m) meta[id] = m; }
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  for (const id of byokIds) { const m = metaOf(id) || declared.meta[id]; if (m) meta[id] = m; }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, names: declared.names || {}, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 
@@ -758,7 +796,8 @@ async function _computeAvailableModels(registry) {
 // lista byok → NO bloquea (no podemos validar de forma fiable; degradamos a permitir, no a 400).
 export function checkByokModels(models, byokList, hasCreds) {
   if (!models || typeof models !== 'object') return { ok: true };
-  const specs = ['planner', 'coder', 'reviewer', 'all'].map((k) => models[k]).filter((v) => typeof v === 'string' && v.startsWith('byok:')).map((v) => v.slice(5).trim()).filter(Boolean);
+  // TODAS las entradas (roles Y fases — models.<fase> gana sobre el rol): cualquier valor byok:/litellm: se valida
+  const specs = Object.values(models).filter((v) => typeof v === 'string' && (v.startsWith('byok:') || v.startsWith('litellm:'))).map((v) => v.replace(/^(byok|litellm):/, '').trim()).filter(Boolean);
   if (!specs.length || !hasCreds || !byokList?.length) return { ok: true };
   const set = new Set(byokList);
   const missing = [...new Set(specs.filter((m) => !set.has(m)))];
@@ -871,7 +910,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
     return p;
   };
   const DEFAULT = ensureProject(root);
-  // ARRANQUE PER-REPO (Opción A · arranque-per-repo): FOCO activo SERVER-SIDE. El launcher /sdd-run lo mueve
+  // ARRANQUE PER-REPO (Opción A · arranque-per-repo): FOCO activo SERVER-SIDE. El arranque per-repo (`conductor`/conductor_app) lo mueve
   // (POST /api/focus) al repo desde el que se lanzó; /api/changes lo reporta como projectId → el panel lo SIGUE
   // en su poll (una pestaña ya abierta se re-enfoca sin depender de que el navegador navegue). Arranca en DEFAULT.
   let focusId = DEFAULT.id;
@@ -916,7 +955,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // body con TOPE (anti-OOM): un POST gigante no debe acumular sin límite en memoria
   // null = body inválido (JSON malformado, overflow o no-objeto) → los handlers responden 400. Antes degradaba
   // a {} en silencio y un POST corrupto a `continue` APROBABA la pausa con payload vacío.
-  const readBody = (req) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > 1048576) { over = true; try { req.destroy(); } catch {} r(null); } }); req.on('end', () => { if (over) return; try { const j = JSON.parse(b || '{}'); r(j && typeof j === 'object' && !Array.isArray(j) ? j : null); } catch { r(null); } }); });
+  const readBody = (req, max = 1048576) => new Promise((r) => { let b = '', over = false; req.on('data', (c) => { if (over) return; b += c; if (b.length > max) { over = true; try { req.destroy(); } catch {} r(null); } }); req.on('end', () => { if (over) return; try { const j = JSON.parse(b || '{}'); r(j && typeof j === 'object' && !Array.isArray(j) ? j : null); } catch { r(null); } }); });
+  // /api/launch admite ADJUNTOS (imágenes base64 del panel) → tope propio 12 MB; el resto de endpoints siguen en 1 MB.
+  const readBodyBig = (req) => readBody(req, 12 * 1048576);
   const launch = (proj, name, request, complexity, domain, models, auto, preset, pipeline, runTests) => {
     // ANTI-race del guardrail working-tree: marca el timeline como 'running' SÍNCRONO antes de spawnear. Sin esto,
     // durante el arranque de un RESUME el timeline aún muestra el verdict TERMINAL del run anterior → notTerminal()/
@@ -1034,40 +1075,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const scope = pid ? [projOf(pid)].filter(Boolean) : [...registry.values()];
         return json(200, { hits: aggregateSearch(scope, u.searchParams.get('q') || '') });
       }
-      if (req.method === 'POST' && u.pathname === '/api/byok/save') {
-        const b = await readBody(req);
-        if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
-        const { url: bUrl, key, type } = b;
-        if (!bUrl || !key) return json(400, { ok: false, error: 'url y key requeridos' });
-        try {
-          const home = CONDUCTOR_HOME();
-          mkdirSync(home, { recursive: true });
-          const apiKeyEnc = encryptSecret(key);
-          // El cifrado AES-GCM (node:crypto) está disponible en los 3 SO → NUNCA caer a texto plano si falla.
-          // Hard-fail con diagnóstico + round-trip (descifra == key) en CUALQUIER plataforma antes de declarar
-          // éxito. Solo se guardaría en claro si el .enckey no se pudiera persistir (disco/permisos) → se rechaza.
-          if (!apiKeyEnc || decryptSecret(apiKeyEnc) !== key) {
-            return json(500, { ok: false, error: 'no se pudo cifrar la clave de forma segura; no se guarda en texto plano. Revisa permisos de ~/.conductor; o exporta COPILOT_PROVIDER_API_KEY en tu shell.' });
-          }
-          // límites del proveedor: del form si llegan, si no del env de la app (proxies corporativos los exigen)
-          const maxOutB = Number(b.maxOutputTokens) || Number(process.env.COPILOT_PROVIDER_MAX_OUTPUT_TOKENS) || null;
-          const maxInB = Number(b.maxPromptTokens) || Number(process.env.COPILOT_PROVIDER_MAX_PROMPT_TOKENS) || null;
-          const lims = { ...(maxOutB ? { maxOutputTokens: maxOutB } : {}), ...(maxInB ? { maxPromptTokens: maxInB } : {}) };
-          const data = apiKeyEnc ? { type: type || 'openai', baseUrl: bUrl, apiKeyEnc, ...lims } : { type: type || 'openai', baseUrl: bUrl, apiKey: key, ...lims };
-          const bf = join(home, 'byok.json');
-          writeFileSync(bf, JSON.stringify(data, null, 2), { mode: 0o600 });
-          if (process.platform !== 'win32') try { chmodSync(bf, 0o600); } catch {} // la key no queda legible por otros usuarios
-          _models.at = 0;
-          _scrubExtra = null; // INVALIDA la lista de redacción: sin esto, una key configurada/rotada tras arrancar
-          // (o cuando scrubExtra ya memoizó []) salía SIN redactar por /api/raw|diff|artifact|state|events (fuga real).
-          try {
-            const base = String(bUrl).replace(/\/+$/, '');
-            const r2 = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(5000) });
-            if (r2.ok) { const j2 = await r2.json(); const ids = (j2.data ?? []).map((m) => m.id).filter(Boolean); writeModelsCache(ids, bUrl); }
-          } catch {}
-          return json(200, { ok: true, encrypted: !!apiKeyEnc });
-        } catch (e) { return json(500, { ok: false, error: String(e.message) }); }
-      }
+      // /api/byok/save ELIMINADO (decisión de producto, fichero-first): la API key JAMÁS viaja por la miniweb
+      // ni por HTTP local. La credencial entra por ~/.conductor/byok.json (sellado al primer uso: sealByokFile)
+      // o por `conductor byok login` (stdin oculto). El panel solo MUESTRA estado y motivo (byokReason).
       if (u.pathname === '/api/changes') {
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         // pending=true ⇔ ese run espera una DECISIÓN humana ahora mismo → el panel/sidebar lo señalan (un run
@@ -1093,7 +1103,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const p = ensureProject(rp, { persist: true }); // alta EXPLÍCITA → siempre persiste (registro = intención)
         return json(200, { ok: true, id: p.id, name: p.name, openspec: isSdd(rp) });
       }
-      // ARRANQUE PER-REPO (Opción A): el launcher /sdd-run fija el FOCO en el repo desde el que se lanzó, sin
+      // ARRANQUE PER-REPO (Opción A): el arranque per-repo (`conductor`/conductor_app) fija el FOCO en el repo desde el que se lanzó, sin
       // depender de que el navegador navegue a un ?project= (una pestaña ya abierta se reenfoca sin navegar).
       // Mueve `focusId` → /api/changes lo reporta como projectId y el panel lo sigue en su poll (≤5s). Mismo
       // gate de seguridad que register/launch (anti-ruta-arbitraria). Persiste (arranque = adopción consciente).
@@ -1108,7 +1118,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         return json(200, { ok: true, id: p.id, name: p.name, openspec: isSdd(rp) });
       }
       if (req.method === 'POST' && u.pathname === '/api/launch') {
-        const b = await readBody(req);
+        const b = await readBodyBig(req); // admite imágenes adjuntas en base64 (tope 12 MB)
         if (!b) return json(400, { ok: false, error: 'body JSON inválido' });
         if (!b.request || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(b.name || '')) return json(400, { ok: false, error: 'request y name (kebab) requeridos' });
         b.request = String(b.request).slice(0, 8000); // acotado ANTES de viajar como argv al driver (coherente con el slice de runState)
@@ -1167,10 +1177,31 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // MICRO RETIRADO (decisión cerrada): "lanzar" significa SIEMPRE proyecto SDD gobernado (spec+apply+verify). El
         // server IGNORA un `complexity:'micro'` del cliente y deriva un flujo gobernado → no hay vía a un run sin spec
         // desde el producto. El modo ultra-ahorro = el flujo gobernado mínimo con modelos economy, no un modo sin spec.
+        // ADJUNTOS (imágenes/capturas pegadas en el panel): se guardan como CONTENIDO del change — entrada
+        // del revisor, junto a la spec — y la petición referencia sus rutas: cada fase puede abrirlas con la
+        // tool `view` (los modelos con visión las VEN; los demás al menos saben que existen y dónde).
+        // Límites duros: 4 ficheros × 3 MB, solo imagen (png/jpg/webp/gif), nombre saneado — nada ejecutable.
+        let launchRequest = b.request;
+        if (Array.isArray(b.attachments) && b.attachments.length) {
+          const savedA = [];
+          for (const a of b.attachments.slice(0, 4)) {
+            try {
+              const buf = Buffer.from(String(a?.data || '').replace(/^data:[^,]*,/, ''), 'base64');
+              if (!buf.length || buf.length > 3 * 1048576) continue;
+              const ext = (String(a?.name || '').match(/\.(png|jpe?g|webp|gif)$/i)?.[1] || 'png').toLowerCase();
+              const base = String(a?.name || '').replace(/\.[^.]*$/, '').toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'captura';
+              const fn = `${base}-${savedA.length + 1}.${ext}`;
+              mkdirSync(join(ch, 'attachments'), { recursive: true });
+              writeFileSync(join(ch, 'attachments', fn), buf);
+              savedA.push(`attachments/${fn}`);
+            } catch {}
+          }
+          if (savedA.length) launchRequest = `${launchRequest}\n\n[Imágenes adjuntas del revisor — ábrelas con la tool view (rutas relativas al change): ${savedA.join(' · ')}]`;
+        }
         const launchComplexity = resolvePlan({ request: b.request }).complexity;
         // fases por-run elegidas en la app (checkboxes): saneadas a KNOWN; el motor reimpone verify terminal.
         const pipelineArg = (Array.isArray(b.pipeline) ? b.pipeline.filter((p) => KNOWN_PHASES.includes(p)) : []);
-        launch(proj, b.name, b.request, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
+        launch(proj, b.name, launchRequest, launchComplexity, b.domain, b.models, b.auto === true, presetArg, pipelineArg.length ? pipelineArg : undefined, b.runTests === true);
         launched = true;
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
         } finally { if (!launched) runs.delete(k); } // libera la reserva ante CUALQUIER throw o return-temprano de rechazo

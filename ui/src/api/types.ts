@@ -127,6 +127,7 @@ export interface ModelsResponse {
   byok: string[];
   copilot: string[];
   tiers?: Record<string, string>; // id de modelo → 'economy' | 'balanced' | 'premium' (presets de coste)
+  names?: Record<string, string>; // id → nombre legible declarado en litellm.json ("deepseek-v4-flash" → "DeepSeek v4 flash")
   byokSource: string;
   copilotSource: string;
   copilotPending?: boolean; // true = el catálogo REAL del CLI aún no llegó; la lista son solo modelos observados
@@ -171,6 +172,7 @@ export interface LaunchBody {
   preset?: string; // dial de gobierno: quick-fix | visual | feature | migration ('' = sin override)
   pipeline?: string[]; // fases SDD elegidas en los checkboxes (orden = ejecución; el motor reimpone verify terminal)
   runTests?: boolean; // toggle "test": ejecutar las pruebas REALES del proyecto tras el gate (opcional, no es una fase)
+  attachments?: { name: string; data: string }[]; // imágenes pegadas/arrastradas (dataURL base64) → attachments/ del change
 }
 export interface ContinueBody { selected?: number[]; note?: string; model?: string; }
 export interface ApiResult { ok: boolean; url?: string; error?: string; restored?: number; removed?: number; needsInit?: boolean; projectId?: string; }

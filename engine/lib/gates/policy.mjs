@@ -9,7 +9,7 @@ export const DEFAULT_POLICY = {
   version: 1,
   blockSeverity: 'error',
   mandatoryGates: ['coherence', 'artifacts'],
-  allowedModels: ['qwen36-msc1', 'qwen36-msc2', 'deepseek-v4-flash', 'claude-sonnet-4-6', 'claude-opus-4-8'],
+  allowedModels: ['deepseek-v4-flash', 'glm-v52', 'claude-sonnet-4-6', 'claude-opus-4-8'],
   override: { allowed: true, requireJustification: true, minLength: 20 },
 };
 

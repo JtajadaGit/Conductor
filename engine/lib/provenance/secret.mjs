@@ -13,7 +13,7 @@
 // robusto en los 3 SO. Retrocompat: descifra los blobs DPAPI legacy (prefijo distinto) ya guardados en Windows.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, rmSync } from 'node:fs';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -90,21 +90,35 @@ export function decryptSecret(enc) {
 // SOLO ante blobs DPAPI legacy en un SO no-Windows (ilegibles ahí → hay que re-guardar).
 export function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
 
-// SELLADO AL PRIMER USO (hábito-de-fichero sin plaintext en reposo): el dev puede escribir a mano
-// ~/.conductor/byok.json con {"baseUrl","apiKey"} — su gesto de siempre — y al primer toque conductor
-// CIFRA la key y reescribe el fichero (apiKeyEnc, 0600); la key en claro desaparece del disco. Si el
-// cifrado no verifica round-trip, NO se toca nada (mejor plaintext utilizable que credenciales rotas);
-// el aviso de "sin cifrar" ya lo da `byok status`. Devuelve true solo si selló.
+// FICHERO DE CREDENCIALES, nombre user-facing: ~/.conductor/litellm.json (la palabra que usan los devs;
+// "byok" era jerga). byok.json = LEGADO: se sigue leyendo, y el sellado lo MIGRA al nombre nuevo.
+// Para LECTURAS devuelve el que exista (litellm.json gana); para escrituras nuevas, litellm.json.
+export function byokFile(home = homeDir()) {
+  const nu = join(home, 'litellm.json');
+  if (existsSync(nu)) return nu;
+  const legacy = join(home, 'byok.json');
+  return existsSync(legacy) ? legacy : nu;
+}
+
+// SELLADO AL PRIMER USO (hábito-de-fichero sin plaintext en reposo): el dev escribe a mano
+// ~/.conductor/litellm.json con {"baseUrl","apiKey"} — su gesto de siempre (mismo shape que su config de
+// OpenCode) — y al primer toque conductor CIFRA la key y reescribe el fichero (apiKeyEnc, 0600) con una
+// pista de rotación dentro; la key en claro desaparece del disco. Si el cifrado no verifica round-trip,
+// NO se toca nada (mejor plaintext utilizable que credenciales rotas). Un byok.json legado en claro se
+// sella Y MIGRA a litellm.json en el mismo gesto. Devuelve true solo si selló.
 export function sealByokFile(home = homeDir()) {
   try {
-    const p = join(home, 'byok.json');
+    const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
     if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
     const enc = encryptSecret(j.apiKey);
     if (!enc || decryptSecret(enc) !== j.apiKey) return false;
     const { apiKey, ...rest } = j;
-    writeFileSync(p, JSON.stringify({ ...rest, apiKeyEnc: enc }, null, 2), { mode: 0o600 });
-    try { chmodSync(p, 0o600); } catch {}
+    const target = join(home, 'litellm.json');
+    const sealed = { ...rest, apiKeyEnc: enc, _rotar: 'para cambiar la key: sustituye apiKeyEnc por "apiKey": "sk-…" y conductor la re-cifra al primer uso' };
+    writeFileSync(target, JSON.stringify(sealed, null, 2), { mode: 0o600 });
+    try { chmodSync(target, 0o600); } catch {}
+    if (p !== target) { try { rmSync(p); } catch {} } // migración: el legado en claro no se queda atrás
     return true;
   } catch { return false; }
 }

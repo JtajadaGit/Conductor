@@ -84,7 +84,7 @@ export class RunScreen extends CElement {
     return html`<label class="fl">Modelo de esta fase<select .value=${this.hotModel} title=${m ? `Copilot: ${m.copilotSource} · LiteLLM: ${m.byokSource}` : ''} @change=${(e: Event) => { this.hotModel = (e.target as HTMLSelectElement).value; }}>
       <option value="">Mantener el actual</option>
       ${cop.length ? html`<optgroup label="Copilot${m?.copilotPending ? ' · vistos en tus runs' : ''}">${cop.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>` : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
-      ${creds && byok.length ? html`<optgroup label="LiteLLM · conectado">${byok.map((o) => html`<option value="byok:${o}">${o}</option>`)}</optgroup>` : html`<option value="" disabled>LiteLLM: ${creds ? 'catálogo vacío (¿key rechazada? mira el panel)' : 'sin conectar — configura la key en el panel'}</option>`}
+      ${creds && byok.length ? html`<optgroup label="LiteLLM · conectado">${byok.map((o) => html`<option value="byok:${o}">${m?.names?.[o] ?? o}</option>`)}</optgroup>` : html`<option value="" disabled>LiteLLM: ${creds ? 'catálogo vacío (¿key rechazada? mira el panel)' : 'sin conectar — crea ~/.conductor/litellm.json (el panel te dice cómo)'}</option>`}
     </select></label>`;
   }
 

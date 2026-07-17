@@ -1,16 +1,16 @@
-import{_ as e,d as t,m as n,t as r}from"./index-BGWvcg2r.js";var i=class extends t{render(){return e`
+import{_ as e,d as t,m as n,t as r}from"./index-ClUu3IBA.js";var i=class extends t{render(){return e`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
       <h2 class="sect">Empezar (todo desde esta app)</h2>
       <ol class="muted steps">
-        <li><b>Elige el proyecto</b> en el selector del panel. Si el tuyo no aparece, arranca la app desde su carpeta una vez (<code>/sdd-run</code> en Copilot, o <code>conductor serve &lt;ruta&gt;</code>).</li>
+        <li><b>Elige el proyecto</b> en el selector del panel. Si el tuyo no aparece, arranca la app desde su carpeta una vez (<code>conductor</code> en su terminal).</li>
         <li><b>Inicialízalo</b> si el panel lo pide (botón «Inicializar este proyecto»): crea <code>openspec/</code> con la config del pipeline y <code>.copilotignore</code> (ahorro de tokens). No toca tu código.</li>
         <li><b>Describe el cambio</b> en «Qué quieres construir». Puedes señalar ficheros con <code>@ruta</code> y patrones de equipo con <code>/nombre</code>. El sistema propone el plan de fases y el coste estimado; tú mandas: ajusta fases, modelos por fase y el toggle <b>test</b>.</li>
         <li><b>Lanza el run</b> y atiende las <b>pausas de revisión</b>: leer/editar la spec, dejar una nota para la fase, cambiar el modelo en caliente, o detener. En el ciclo de corrección eliges qué hallazgos se arreglan.</li>
         <li>Con el run <b>Verificado</b> (GREEN): revisa el <b>Informe</b>, haz tu commit y pulsa <b>Archivar</b> — la spec se promueve a la fuente de verdad del repo.</li>
       </ol>
-      <p class="muted">Desde Copilot solo necesitas <code>/sdd-run</code>: enciende esta app y abre el panel. Todo lo demás (init, lanzar, revisar, archivar, informes) vive aquí.</p>
+      <p class="muted">Desde el chat de tu CLI solo necesitas <code>/conductor</code>: enciende esta app y abre el panel (y con una petición, corre la feature con pausas en el chat). Todo lo demás (init, lanzar, revisar, archivar, informes) vive aquí.</p>
 
       <h2 class="sect">El pipeline</h2>
       <p class="muted">Según el alcance: <code>propose → spec → apply → verify</code> (y en cambios mayores <code>explore</code>, <code>clarify</code>, <code>design</code>, <code>tasks</code>). Con el toggle <b>test</b>, tus pruebas reales corren <b>antes</b> de <code>verify</code>: si fallan → ciclo <code>fix</code> → re-test. Un driver determinista lanza al agente en cada fase y valida con el gate; si el fix no converge, el run <b>escala a ti</b> en vez de iterar a ciegas. Al cerrar: código + spec + informe + sello firmado.</p>

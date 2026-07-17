@@ -36,7 +36,7 @@ import { priceOf, metaOf } from '../core/cost.mjs';
 import { budgetContextFiles, summarizeArtifact } from '../core/estimate.mjs';
 import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
-import { decryptSecret, sealByokFile } from '../provenance/secret.mjs';
+import { decryptSecret, sealByokFile, byokFile } from '../provenance/secret.mjs';
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -76,7 +76,7 @@ function byokScrubExtra() {
   // tenía clave → congelaba la key del 1er run del proceso (en tests que reconfiguran byok, redactaba una stale).
   // En producción (un drive por proceso hijo) se computa una vez igual. La firma solo hace statSync, no DPAPI.
   let sig = (process.env.CONDUCTOR_HOME || '') + '|' + (process.env.COPILOT_PROVIDER_API_KEY || '') + '|' + (process.env.COPILOT_PROVIDER_BASE_URL || '');
-  try { sig += '|' + statSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'byok.json')).mtimeMs; } catch { sig += '|-'; }
+  try { sig += '|' + statSync(byokFile(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'))).mtimeMs; } catch { sig += '|-'; }
   if (_byokScrubMemo.sig === sig) return _byokScrubMemo.val;
   let val = []; try { const c = byokCreds(); val = c?.apiKey ? [c.apiKey] : []; } catch {}
   _byokScrubMemo = { sig, val };
@@ -213,19 +213,27 @@ function readTokens(file) {
 // modelo por fase NATIVO: como cada fase lanza un copilot fresco, podemos fijarle su COPILOT_MODEL
 // (Copilot CLI usa un modelo global por proceso; un proceso por fase = modelo por fase, sin proxy).
 // Fuentes: CONDUCTOR_MODEL_{PLANNER|CODER|REVIEWER|ORCHESTRATOR} → CONDUCTOR_MODEL → COPILOT_MODEL.
-const ROLE_ENV = { planner: 'CONDUCTOR_MODEL_PLANNER', coder: 'CONDUCTOR_MODEL_CODER', reviewer: 'CONDUCTOR_MODEL_REVIEWER', orchestrator: 'CONDUCTOR_MODEL_ORCHESTRATOR' };
+const ROLE_ENV = { planner: 'CONDUCTOR_MODEL_PLANNER', coder: 'CONDUCTOR_MODEL_CODER', reviewer: 'CONDUCTOR_MODEL_REVIEWER' }; // (QA 2026-07-16: 'orchestrator' retirado — nada lo consultaba; el driver ES el orquestador)
 function modelForRole(role, env = process.env, cfgModels = {}) {
   // precedencia: flag/env explícito > config del usuario > modelo global
   return env[ROLE_ENV[role]] || cfgModels[role] || env.CONDUCTOR_MODEL || env.COPILOT_MODEL || '';
 }
+// DESAGREGACIÓN FINA (control total de coste): "models" acepta también claves de FASE, que GANAN sobre el
+// rol — {"planner": "copilot:…", "explore": "litellm:deepseek-v4-flash"} manda explore al modelo barato sin
+// tocar el resto del planner. Fases y roles no colisionan (nombres disjuntos), así que viven en el mismo mapa.
+export function modelForPhase(phase, role, env = process.env, cfgModels = {}) {
+  return (typeof cfgModels[phase] === 'string' && cfgModels[phase]) || modelForRole(role, env, cfgModels);
+}
 
-// MEZCLA de proveedores POR FASE: "byok:qwen36-msc1" (LiteLLM, $0) | "copilot:<modelo>" (catálogo
-// Copilot Business, gasta premium requests) | "modelo" a secas (proveedor ambiente). Como cada fase es
-// un proceso/sesión fresca, planner puede ir en qwen gratis y coder en Sonnet premium en el mismo run.
+// MEZCLA de proveedores POR FASE: "litellm:<modelo>" (tu proxy, $0; "byok:" = alias histórico equivalente)
+// | "copilot:<modelo>" (catálogo Copilot Business, gasta premium requests) | "modelo" a secas (proveedor
+// ambiente). Como cada fase es un proceso/sesión fresca, planner puede ir al proxy gratis y coder en
+// Sonnet premium en el mismo run.
 export function parseModelSpec(spec) {
   if (!spec) return { model: '', provider: null };
   if (spec.startsWith('copilot:')) return { model: spec.slice(8).trim(), provider: 'copilot' };
   if (spec.startsWith('byok:')) return { model: spec.slice(5).trim(), provider: 'byok' };
+  if (spec.startsWith('litellm:')) return { model: spec.slice(8).trim(), provider: 'byok' };
   return { model: spec, provider: null };
 }
 const BYOK_ENV = ['COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_MAX_OUTPUT_TOKENS', 'COPILOT_PROVIDER_MAX_PROMPT_TOKENS'];
@@ -239,7 +247,7 @@ export function byokCreds(env = process.env) {
   }
   try {
     const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
+    const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
     // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
     // key en claro (fichero escrito a mano por el dev) → SELLAR al primer toque (best-effort, 1 vez/proceso)
     if (j.apiKey && !_byokSealedD) { _byokSealedD = true; try { sealByokFile(home); } catch {} }
@@ -251,13 +259,20 @@ export function byokCreds(env = process.env) {
   return null;
 }
 
-// config del USUARIO (en su repo, nunca del plugin): <proyecto>/openspec/conductor.json
-//   { "models": {"planner":"...","coder":"...","reviewer":"..."}, "timeoutSeconds": 600,
+// CONFIG EN CAPAS (estándar de la industria): defaults sanos > ~/.conductor/config.json (PERSONAL — tus
+// preferencias en TODOS tus proyectos, fuera del repo) > <proyecto>/openspec/conductor.json (del EQUIPO,
+// committeada) > env > flag. Shape en ambos ficheros:
+//   { "models": {"planner":"…","coder":"…","reviewer":"…", "<fase>":"…"}, "timeoutSeconds": 600,
 //     "maxRetries": 1, "serve": true|false, "runner": "spawn"|"sdk", "gitCommit": true|false }
-// Capas de configuración (estándar de la industria): defaults sanos > este fichero > env > flag.
+// "models" se fusiona POR CLAVE (tu default de planner sobrevive aunque el equipo solo fije el coder).
 export function readDriveConfig(projectRoot) {
-  try { return JSON.parse(readFileSync(join(projectRoot, 'openspec', 'conductor.json'), 'utf8')) || {}; }
-  catch { return {}; }
+  let user = {};
+  try { user = JSON.parse(readFileSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'config.json'), 'utf8')) || {}; } catch {}
+  let proj = {};
+  try { proj = JSON.parse(readFileSync(join(projectRoot, 'openspec', 'conductor.json'), 'utf8')) || {}; } catch {}
+  const merged = { ...user, ...proj };
+  if (user.models || proj.models) merged.models = { ...(user.models || {}), ...(proj.models || {}) };
+  return merged;
 }
 
 // sesiones efímeras: cada spawn one-shot crea una entrada en la lista de sesiones del usuario
@@ -974,7 +989,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       if (blk) { prompt += blk; if (!skillsLogged) { skillsLogged = true; log(`📐 patrones de equipo inyectados (${matched.length}): ${matched.map((s) => s.name).join(', ')}`); } }
     }
     if (isCode) { const sh = renderStackHint(stack); if (sh) prompt += sh; }
-    let model = hotModel || modelForRole(role, process.env, cfg.models || {});
+    let model = hotModel || modelForPhase(phase, role, process.env, cfg.models || {});
     let tierUsed = null;
     // routing por tier de coste (economy/balanced/premium) si no hay modelo explícito y hay tiers configurados
     if (!model && cfg.tiers) { const t = tierModel(phase, cfg, { request }); model = t.model; tierUsed = t.tier; if (tierUsed) log(`🎚 tier ${tierUsed} → ${model || '(de la sesión)'}`); }

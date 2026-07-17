@@ -11,7 +11,7 @@
 // Interface: misma que defaultRunAgent de drive.mjs → ({phase, role, prompt, cwd, timeoutMs, model}) ⇒ {code, out|err}
 // + .close() para parar el cliente al acabar el run (drive lo llama si existe).
 import { createRequire } from 'node:module';
-import { decryptSecret } from '../provenance/secret.mjs';
+import { decryptSecret, byokFile } from '../provenance/secret.mjs';
 const requireNode = createRequire(import.meta.url);
 
 // localiza el runtime de Copilot del USUARIO (sin shippear los ~557MB): COPILOT_CLI_PATH manda; si no,
@@ -79,7 +79,11 @@ export async function copilotCatalogFromCli(env = process.env) {
       "  else if(typeof m.getAvailableModels==='function'){",
       // token del ENTORNO primero (vía limpia, sin parsear el almacén del CLI): setups Copilot Business suelen
       // exportar COPILOT_API_TOKEN/COPILOT_GITHUB_TOKEN → con {type:'token'} devuelve el CATÁLOGO REAL completo.
-      "    const tok=process.env.COPILOT_API_TOKEN||process.env.COPILOT_GITHUB_TOKEN||process.env.GH_COPILOT_TOKEN||'';",
+      "    let tok=process.env.COPILOT_API_TOKEN||process.env.COPILOT_GITHUB_TOKEN||process.env.GH_COPILOT_TOKEN||'';",
+      // sin token en env → gh auth token: la MISMA credencial que ya usa la tarjeta AIC (ghUsage). En CLIs
+      // nuevos (getAvailableModels con auth) es la vía que SÍ resuelve desde un proceso externo (verificado
+      // en máquina real: type user/gh-cli/env fallan todos, type token con el token de gh devuelve el catálogo).
+      "    if(!tok){try{const{execSync}=await import('node:child_process');tok=String(execSync('gh auth token',{windowsHide:true,timeout:8000,stdio:['ignore','pipe','ignore']})||'').trim();}catch{}}",
       "    const auths=tok?[{type:'token',host:'https://github.com',token:tok}]:[];",
       "    auths.push({type:'user'},{type:'gh-cli'},{type:'copilot-api-token'},{type:'env'});",
       "    for(const ai of auths){",
@@ -95,7 +99,10 @@ export async function copilotCatalogFromCli(env = process.env) {
     const out = await new Promise((res) => {
       try {
         const cp = execFile(process.execPath, ['--input-type=module', '-e', script],
-          { env: { ...env, __C_SDK_ENTRY: pathToFileURL(entry).href }, timeout: 15000, windowsHide: true, maxBuffer: 1 << 20 },
+          // 30s, no 15: en máquina real el SDK tarda ~8s SOLO en importarse + ~3s gh + ~3s getAvailableModels
+          // (≈14s justos) — con 15s moría EN EL LÍMITE y el catálogo degradaba a "observados" para siempre.
+          // Corre en BACKGROUND (serve no bloquea el panel), así que el margen extra no cuesta UX.
+          { env: { ...env, __C_SDK_ENTRY: pathToFileURL(entry).href }, timeout: 30000, windowsHide: true, maxBuffer: 1 << 20 },
           (err, stdout) => res(err ? '[]' : String(stdout || '[]')));
         cp.on?.('error', () => res('[]'));
       } catch { res('[]'); }
@@ -145,7 +152,7 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       // misma resolución que drive.mjs/serve.mjs: honra CONDUCTOR_HOME (override en tests/multi-home) y descifra
       // apiKeyEnc (DPAPI, formato nuevo). Antes: HOME hardcodeado + solo apiKey en claro → rompía BYOK fuente única.
       const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-      const j = JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8'));
+      const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
       const dec = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : '');
       base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || dec || '';
     } catch {}
@@ -158,10 +165,11 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       let m = model || '', sessProvider = provider;
       if (m.startsWith('copilot:')) { m = m.slice(8).trim(); sessProvider = undefined; }
       else if (m.startsWith('byok:')) m = m.slice(5).trim();
-      // hardfail BYOK: una fase "byok:" SIN provider resuelto crearía la sesión contra el catálogo Copilot
-      // Business (gasta AI Credits en silencio). Se rechaza con error — el driver lo trata como fallo de fase.
-      if ((model || '').startsWith('byok:') && !sessProvider) {
-        return { code: -1, err: `fase byok:${m} sin credenciales BYOK (CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY, COPILOT_PROVIDER_*, o ~/.conductor/byok.json) — no se cae a Copilot Business para no gastar AI Credits` };
+      else if (m.startsWith('litellm:')) m = m.slice(8).trim();
+      // hardfail BYOK: una fase "byok:/litellm:" SIN provider resuelto crearía la sesión contra el catálogo
+      // Copilot Business (gasta AI Credits en silencio). Se rechaza — el driver lo trata como fallo de fase.
+      if (/^(byok|litellm):/.test(model || '') && !sessProvider) {
+        return { code: -1, err: `fase ${model} sin credenciales LiteLLM (CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY, COPILOT_PROVIDER_*, o ~/.conductor/litellm.json) — no se cae a Copilot Business para no gastar AI Credits` };
       }
       // onPermissionRequest: approveAll = el equivalente del --allow-all-tools del runner spawn (sin él,
       // las peticiones de permiso de tools quedan PENDIENTES y la sesión no escribe ficheros — verificado).

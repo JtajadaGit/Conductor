@@ -38,7 +38,10 @@ export function serveStatic({ uiDir, pathname, method, res }) {
     res.end(readFileSync(file));
     return true;
   }
-  if (pathname === '/' || pathname === '/demo' || pathname === '/help' || pathname === '/flow' || pathname === '/ahorro' || pathname.startsWith('/run/') || pathname.startsWith('/session/')) {
+  // SPA catch-all: TODA navegación GET (sin extensión de fichero y fuera de /api|/artifact|/events) recibe
+  // index.html y el router del cliente resuelve (ruta desconocida → panel). Con lista blanca, una URL
+  // desconocida caía al fallback "Interfaz no compilada" — un mensaje FALSO con la UI ya compilada.
+  if (!extname(pathname) && !pathname.startsWith('/api/') && !pathname.startsWith('/artifact/') && !pathname.startsWith('/events')) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
     res.end(readFileSync(indexPath));
     return true;

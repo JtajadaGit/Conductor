@@ -49,8 +49,8 @@ export class AppSidebar extends CElement {
   private async shutdown(): Promise<void> {
     try {
       const r = await fetch('/api/shutdown', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-      this.appMsg = r.status === 409 ? 'Hay un run en curso. Detenlo antes de apagar.' : 'Aplicación detenida. Vuelve a abrirla con /sdd-run.';
-    } catch { this.appMsg = 'Aplicación detenida. Vuelve a abrirla con /sdd-run.'; }
+      this.appMsg = r.status === 409 ? 'Hay un run en curso. Detenlo antes de apagar.' : 'Aplicación detenida. Vuelve a abrirla con conductor en tu terminal.';
+    } catch { this.appMsg = 'Aplicación detenida. Vuelve a abrirla con conductor en tu terminal.'; }
   }
   private dotClass(c: ChangeSummary): string {
     if (c.pending) return 'CURSO'; // pausa esperando decisión → punto "vivo" (ámbar pulsante)
@@ -106,7 +106,7 @@ export class AppSidebar extends CElement {
           <a class="sb-flink wide ${this.activeRoute === 'ahorro' ? 'active' : ''}" href="/ahorro" aria-current=${this.activeRoute === 'ahorro' ? 'page' : nothing}>💶 Ahorro de tokens</a>
         </nav>
         ${this.appMsg ? html`<div class="sb-appmsg" role="status" aria-live="polite">${this.appMsg}</div>` : nothing}
-        <button class="sb-shutdown" @click=${() => void this.shutdown()} aria-label="Apagar la app de conductor (se reabre con /sdd-run)">⏻ Apagar conductor</button>
+        <button class="sb-shutdown" @click=${() => void this.shutdown()} aria-label="Apagar la app de conductor (se reabre con conductor en terminal)">⏻ Apagar conductor</button>
       </div>
     `;
   }

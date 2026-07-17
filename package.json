@@ -10,9 +10,8 @@
   },
   "files": [
     "assets",
-    "plugin",
-    "plugin.json",
-    ".mcp.json"
+    "prompts",
+    "hooks"
   ],
   "engines": {
     "node": ">=20"
