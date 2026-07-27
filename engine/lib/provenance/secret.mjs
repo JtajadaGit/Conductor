@@ -90,6 +90,22 @@ export function decryptSecret(enc) {
 // SOLO ante blobs DPAPI legacy en un SO no-Windows (ilegibles ahí → hay que re-guardar).
 export function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
 
+// PLANTILLA de litellm.json (la escribe `conductor setup` si no existe — el usuario ABRE y RELLENA, nunca
+// crea el fichero desde cero). Los placeholders enseñan el formato; isTemplateCreds los detecta para que la
+// plantilla SIN rellenar jamás cuente como credenciales (ni se cifra, ni pinta modelos en el selector).
+export const LITELLM_TEMPLATE = {
+  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se CIFRA sola al primer uso (nunca queda en claro). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
+  baseUrl: 'https://TU-PROXY/v1',
+  apiKey: 'sk-PEGA-AQUI-TU-KEY',
+  models: {
+    'mi-modelo': { name: 'Mi Modelo', limit: { context: 128000, output: 16384 } },
+  },
+};
+export function isTemplateCreds(j) {
+  if (!j || typeof j !== 'object') return false;
+  return /PEGA-AQUI|TU-PROXY|TU-KEY|sk-XXX/i.test(String(j.apiKey || '') + String(j.baseUrl || ''));
+}
+
 // FICHERO DE CREDENCIALES, nombre user-facing: ~/.conductor/litellm.json (la palabra que usan los devs;
 // "byok" era jerga). byok.json = LEGADO: se sigue leyendo, y el sellado lo MIGRA al nombre nuevo.
 // Para LECTURAS devuelve el que exista (litellm.json gana); para escrituras nuevas, litellm.json.
@@ -111,6 +127,7 @@ export function sealByokFile(home = homeDir()) {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
     if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
+    if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
     const enc = encryptSecret(j.apiKey);
     if (!enc || decryptSecret(enc) !== j.apiKey) return false;
     const { apiKey, ...rest } = j;

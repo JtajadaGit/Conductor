@@ -211,6 +211,22 @@ function decryptSecret(enc) {
 // SOLO ante blobs DPAPI legacy en un SO no-Windows (ilegibles ahí → hay que re-guardar).
 function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
 
+// PLANTILLA de litellm.json (la escribe `conductor setup` si no existe — el usuario ABRE y RELLENA, nunca
+// crea el fichero desde cero). Los placeholders enseñan el formato; isTemplateCreds los detecta para que la
+// plantilla SIN rellenar jamás cuente como credenciales (ni se cifra, ni pinta modelos en el selector).
+const LITELLM_TEMPLATE = {
+  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se CIFRA sola al primer uso (nunca queda en claro). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
+  baseUrl: 'https://TU-PROXY/v1',
+  apiKey: 'sk-PEGA-AQUI-TU-KEY',
+  models: {
+    'mi-modelo': { name: 'Mi Modelo', limit: { context: 128000, output: 16384 } },
+  },
+};
+function isTemplateCreds(j) {
+  if (!j || typeof j !== 'object') return false;
+  return /PEGA-AQUI|TU-PROXY|TU-KEY|sk-XXX/i.test(String(j.apiKey || '') + String(j.baseUrl || ''));
+}
+
 // FICHERO DE CREDENCIALES, nombre user-facing: ~/.conductor/litellm.json (la palabra que usan los devs;
 // "byok" era jerga). byok.json = LEGADO: se sigue leyendo, y el sellado lo MIGRA al nombre nuevo.
 // Para LECTURAS devuelve el que exista (litellm.json gana); para escrituras nuevas, litellm.json.
@@ -232,6 +248,7 @@ function sealByokFile(home = homeDir()) {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
     if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
+    if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
     const enc = encryptSecret(j.apiKey);
     if (!enc || decryptSecret(enc) !== j.apiKey) return false;
     const { apiKey, ...rest } = j;
@@ -260,7 +277,7 @@ function decryptDpapiLegacy(enc) {
   return null;
 }
 
-return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, byokFile, sealByokFile };
+return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, isTemplateCreds, byokFile, sealByokFile, LITELLM_TEMPLATE };
 })();
 
 // ===== lib/core/report.mjs =====
@@ -4525,7 +4542,7 @@ const { priceOf, metaOf } = __M['cost'];
 const { budgetContextFiles, summarizeArtifact } = __M['estimate'];
 const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
-const { decryptSecret, sealByokFile, byokFile } = __M['secret'];
+const { decryptSecret, sealByokFile, byokFile, isTemplateCreds } = __M['secret'];
 const { plumbPath } = __M['plumb'];
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
@@ -4738,6 +4755,7 @@ function byokCreds(env = process.env) {
   try {
     const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
+    if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
     // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
     // key en claro (fichero escrito a mano por el dev) → SELLAR al primer toque (best-effort, 1 vez/proceso)
     if (j.apiKey && !_byokSealedD) { _byokSealedD = true; try { sealByokFile(home); } catch {} }
@@ -5988,7 +6006,7 @@ __M['sdk-runner'] = (function(){
 // Interface: misma que defaultRunAgent de drive.mjs → ({phase, role, prompt, cwd, timeoutMs, model}) ⇒ {code, out|err}
 // + .close() para parar el cliente al acabar el run (drive lo llama si existe).
 
-const { decryptSecret, byokFile } = __M['secret'];
+const { decryptSecret, byokFile, isTemplateCreds } = __M['secret'];
 const requireNode = createRequire(import.meta.url);
 
 // localiza el runtime de Copilot del USUARIO (sin shippear los ~557MB): COPILOT_CLI_PATH manda; si no,
@@ -6130,6 +6148,7 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
       // apiKeyEnc (DPAPI, formato nuevo). Antes: HOME hardcodeado + solo apiKey en claro → rompía BYOK fuente única.
       const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
       const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
+      if (isTemplateCreds(j)) throw new Error('plantilla'); // sin rellenar ≠ credenciales (cae al catch)
       const dec = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : '');
       base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || dec || '';
     } catch {}
@@ -6238,7 +6257,7 @@ const { parseEvents, parseOtelSession } = __M['events'];
 const { listCopilotModels } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
-const { decryptSecret, isPortableBlob, sealByokFile, byokFile } = __M['secret'];
+const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds } = __M['secret'];
 const { plumbPath } = __M['plumb'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -6790,6 +6809,7 @@ function byokCredsLocal() {
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
     const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
     // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
     // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
     if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
@@ -6806,6 +6826,7 @@ let _byokSealed = false;
 function byokDeclaredModels() {
   try {
     const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    if (isTemplateCreds(j)) return { ids: [], meta: {}, names: {} }; // el "mi-modelo" de la plantilla no es catálogo
     const m = j?.models;
     if (Array.isArray(m)) return { ids: m.filter((x) => typeof x === 'string' && x), meta: {} };
     if (m && typeof m === 'object') {
@@ -6914,7 +6935,8 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
-      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
+      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).';
+      else if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
       else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}
   }
@@ -8030,7 +8052,7 @@ const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
 const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
-const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob } = __M['secret'];
+const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE } = __M['secret'];
 const { PROMPT_KEYS, instructionFor } = __M['orchestrate'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
 const { toOtlp } = __M['otlp'];
@@ -8409,7 +8431,8 @@ switch (cmd) {
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
       const sealedNow = sealByokFile(home);
       const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
-      let fileOk = false, enc = false, portable = false, nDecl = 0; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = j.models ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); tpl = isTemplateCreds(j); fileOk = !tpl && !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = (!tpl && j.models) ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
       const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
       console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
@@ -8634,7 +8657,8 @@ switch (cmd) {
       const homeD = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
       const fD = byokFile(homeD);
       let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
-      if (!jD) console.log('  credenciales LiteLLM: AUSENTES → crea ~/.conductor/litellm.json {"baseUrl","apiKey"} (o `conductor litellm login`)');
+      if (!jD) console.log('  credenciales LiteLLM: AUSENTES → `conductor setup` deja la plantilla en ~/.conductor/litellm.json (o `conductor litellm login`)');
+      else if (isTemplateCreds(jD)) console.log(`  credenciales LiteLLM: PLANTILLA sin rellenar en ${fD} — ábrela y pega tu baseUrl y apiKey`);
       else if (jD.apiKey) console.log(`  credenciales LiteLLM: EN CLARO en ${fD} — se sellarán (cifrado) al primer uso`);
       else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
       else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
@@ -8834,10 +8858,17 @@ switch (cmd) {
     }
     const yes = (a) => { const s = String(a).toLowerCase(); return s === '' || s === 's' || s === 'si' || s === 'sí' || s === 'y' || s === 'yes'; };
     const homeI = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    // credenciales: NUNCA se piden aquí (decisión de producto, fichero-first). Solo se informa del estado;
-    // el panel muestra el mismo aviso con instrucciones si faltan. `litellm login` queda para quien lo prefiera.
-    if (existsSync(join(homeI, 'litellm.json')) || existsSync(join(homeI, 'byok.json'))) console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
-    else console.log(`1/3 · credenciales del proxy: pendientes — escribe ${join(homeI, 'litellm.json')} con {"baseUrl": "https://…/v1", "apiKey": "sk-…"} (se cifra solo al primer uso; también vale \`conductor litellm login\`). El panel te lo recordará.`);
+    // credenciales: NUNCA se piden aquí (la key jamás se teclea en un wizard/web). El fichero SÍ se deja
+    // CREADO con PLANTILLA (decisión 2026-07-17: "debería estar creado al instalar, con plantilla para que
+    // la gente vea cómo meterlo") — el usuario solo lo ABRE y RELLENA. La plantilla sin rellenar no cuenta
+    // como credenciales (isTemplateCreds) ni se cifra. `litellm login` sigue para quien prefiera asistente.
+    const credF = join(homeI, 'litellm.json');
+    if ((existsSync(credF) || existsSync(join(homeI, 'byok.json'))) && !(existsSync(credF) && isTemplateCreds(JSON.parse(readFileSync(credF, 'utf8'))))) {
+      console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
+    } else {
+      if (!existsSync(credF)) { mkdirSync(homeI, { recursive: true }); writeFileSync(credF, JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 }); }
+      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).\n     (alternativa con asistente: \`conductor litellm login\`)`);
+    }
     // 2/3 · CONECTAR conductor a tus CLIs — TÚ eliges (Enter = los detectados). En cada host se instala el
     // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
     const CMD_MD = [
@@ -9089,4 +9120,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: a2dc0b5f3b3d208b0f16a7f62853b41f91ae48aa4e510035e74d05ecf60c5f3c
+// build-inputs-sha256: b9823d665b98afc913dbbaf1ee271064f18df6d561f45052c71b5fabff815701

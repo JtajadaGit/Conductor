@@ -33,7 +33,7 @@ import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
-import { decryptSecret, isPortableBlob, sealByokFile, byokFile } from '../provenance/secret.mjs';
+import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds } from '../provenance/secret.mjs';
 import { plumbPath } from '../core/plumb.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
@@ -586,6 +586,7 @@ function byokCredsLocal() {
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
     const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
     // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
     // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
     if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
@@ -602,6 +603,7 @@ let _byokSealed = false;
 export function byokDeclaredModels() {
   try {
     const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    if (isTemplateCreds(j)) return { ids: [], meta: {}, names: {} }; // el "mi-modelo" de la plantilla no es catálogo
     const m = j?.models;
     if (Array.isArray(m)) return { ids: m.filter((x) => typeof x === 'string' && x), meta: {} };
     if (m && typeof m === 'object') {
@@ -710,7 +712,8 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
-      if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
+      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).';
+      else if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
       else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}
   }

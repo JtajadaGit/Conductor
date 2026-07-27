@@ -72,3 +72,27 @@ await test('litellm-file: renovar la key (CLI `litellm save`) CONSERVA los model
   eq(Object.keys(j.models ?? {}), ['glm-v52'], 'los modelos declarados SOBREVIVEN a la renovación');
   rmSync(home, { recursive: true, force: true });
 });
+
+await test('litellm-plantilla: la plantilla de setup SIN rellenar jamas cuenta como credenciales ni catalogo ni se cifra', async () => {
+  const { LITELLM_TEMPLATE, isTemplateCreds, sealByokFile } = await import('../lib/provenance/secret.mjs');
+  const { byokDeclaredModels } = await import('../lib/serving/serve.mjs');
+  const home = join(HERE, '.tmp-litellm-tpl');
+  rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
+  const prev = process.env.CONDUCTOR_HOME;
+  process.env.CONDUCTOR_HOME = home;
+  try {
+    writeFileSync(join(home, 'litellm.json'), JSON.stringify(LITELLM_TEMPLATE, null, 2));
+    assert(isTemplateCreds(LITELLM_TEMPLATE), 'la plantilla se auto-detecta');
+    eq(byokCreds({ CONDUCTOR_HOME: home }), null, 'plantilla != credenciales (nada de llamar al proxy con sk-PEGA-AQUI)');
+    eq(byokDeclaredModels().ids, [], 'el "mi-modelo" de ejemplo NO sale en el selector');
+    eq(sealByokFile(home), false, 'el sellado NO cifra placeholders');
+    const j = JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8'));
+    assert(j.apiKey && !j.apiKeyEnc, 'la plantilla queda intacta para que el usuario la rellene');
+    // rellenada de verdad -> todo vuelve a la normalidad
+    writeFileSync(join(home, 'litellm.json'), JSON.stringify({ ...LITELLM_TEMPLATE, baseUrl: 'http://real:9/v1', apiKey: 'sk-real-123' }));
+    eq(byokCreds({ CONDUCTOR_HOME: home }).apiKey, 'sk-real-123', 'rellenada -> credenciales normales');
+  } finally {
+    if (prev === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = prev;
+    rmSync(home, { recursive: true, force: true });
+  }
+});

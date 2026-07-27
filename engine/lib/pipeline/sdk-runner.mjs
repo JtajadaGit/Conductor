@@ -11,7 +11,7 @@
 // Interface: misma que defaultRunAgent de drive.mjs → ({phase, role, prompt, cwd, timeoutMs, model}) ⇒ {code, out|err}
 // + .close() para parar el cliente al acabar el run (drive lo llama si existe).
 import { createRequire } from 'node:module';
-import { decryptSecret, byokFile } from '../provenance/secret.mjs';
+import { decryptSecret, byokFile, isTemplateCreds } from '../provenance/secret.mjs';
 const requireNode = createRequire(import.meta.url);
 
 // localiza el runtime de Copilot del USUARIO (sin shippear los ~557MB): COPILOT_CLI_PATH manda; si no,
@@ -153,6 +153,7 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       // apiKeyEnc (DPAPI, formato nuevo). Antes: HOME hardcodeado + solo apiKey en claro → rompía BYOK fuente única.
       const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
       const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
+      if (isTemplateCreds(j)) throw new Error('plantilla'); // sin rellenar ≠ credenciales (cae al catch)
       const dec = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : '');
       base = base || String(j.baseUrl || '').replace(/\/+$/, ''); apiKey = apiKey || dec || '';
     } catch {}

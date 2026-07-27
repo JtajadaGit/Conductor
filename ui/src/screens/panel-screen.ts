@@ -367,7 +367,7 @@ export class PanelScreen extends CElement {
     const m = this.models;
     const reason = m?.byokReason ?? null;
     const connected = !!m?.byokCreds && !reason;
-    const fileHint = html`<p class="inst-note">Crea <code>~/.conductor/litellm.json</code> — formato OpenCode con lo que conductor necesita:</p>
+    const fileHint = html`<p class="inst-note">Abre <code>~/.conductor/litellm.json</code> (<code>conductor setup</code> deja la plantilla creada) y rellena tus datos — este es el formato:</p>
       <pre class="inst-code">{
   "baseUrl": "https://…/v1",
   "apiKey": "sk-…",

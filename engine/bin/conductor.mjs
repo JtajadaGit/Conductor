@@ -52,7 +52,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE } from '../lib/provenance/secret.mjs';
 import { PROMPT_KEYS, instructionFor } from '../lib/pipeline/orchestrate.mjs';
 import { homedir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
@@ -433,7 +433,8 @@ switch (cmd) {
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
       const sealedNow = sealByokFile(home);
       const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
-      let fileOk = false, enc = false, portable = false, nDecl = 0; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); fileOk = !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = j.models ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); tpl = isTemplateCreds(j); fileOk = !tpl && !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = (!tpl && j.models) ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
       const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
       console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
@@ -658,7 +659,8 @@ switch (cmd) {
       const homeD = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
       const fD = byokFile(homeD);
       let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
-      if (!jD) console.log('  credenciales LiteLLM: AUSENTES → crea ~/.conductor/litellm.json {"baseUrl","apiKey"} (o `conductor litellm login`)');
+      if (!jD) console.log('  credenciales LiteLLM: AUSENTES → `conductor setup` deja la plantilla en ~/.conductor/litellm.json (o `conductor litellm login`)');
+      else if (isTemplateCreds(jD)) console.log(`  credenciales LiteLLM: PLANTILLA sin rellenar en ${fD} — ábrela y pega tu baseUrl y apiKey`);
       else if (jD.apiKey) console.log(`  credenciales LiteLLM: EN CLARO en ${fD} — se sellarán (cifrado) al primer uso`);
       else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
       else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
@@ -858,10 +860,17 @@ switch (cmd) {
     }
     const yes = (a) => { const s = String(a).toLowerCase(); return s === '' || s === 's' || s === 'si' || s === 'sí' || s === 'y' || s === 'yes'; };
     const homeI = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    // credenciales: NUNCA se piden aquí (decisión de producto, fichero-first). Solo se informa del estado;
-    // el panel muestra el mismo aviso con instrucciones si faltan. `litellm login` queda para quien lo prefiera.
-    if (existsSync(join(homeI, 'litellm.json')) || existsSync(join(homeI, 'byok.json'))) console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
-    else console.log(`1/3 · credenciales del proxy: pendientes — escribe ${join(homeI, 'litellm.json')} con {"baseUrl": "https://…/v1", "apiKey": "sk-…"} (se cifra solo al primer uso; también vale \`conductor litellm login\`). El panel te lo recordará.`);
+    // credenciales: NUNCA se piden aquí (la key jamás se teclea en un wizard/web). El fichero SÍ se deja
+    // CREADO con PLANTILLA (decisión 2026-07-17: "debería estar creado al instalar, con plantilla para que
+    // la gente vea cómo meterlo") — el usuario solo lo ABRE y RELLENA. La plantilla sin rellenar no cuenta
+    // como credenciales (isTemplateCreds) ni se cifra. `litellm login` sigue para quien prefiera asistente.
+    const credF = join(homeI, 'litellm.json');
+    if ((existsSync(credF) || existsSync(join(homeI, 'byok.json'))) && !(existsSync(credF) && isTemplateCreds(JSON.parse(readFileSync(credF, 'utf8'))))) {
+      console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
+    } else {
+      if (!existsSync(credF)) { mkdirSync(homeI, { recursive: true }); writeFileSync(credF, JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 }); }
+      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).\n     (alternativa con asistente: \`conductor litellm login\`)`);
+    }
     // 2/3 · CONECTAR conductor a tus CLIs — TÚ eliges (Enter = los detectados). En cada host se instala el
     // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
     const CMD_MD = [
