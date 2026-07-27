@@ -43,7 +43,7 @@ export function aiactData(changeDir) {
     verdict: tl.verdict || null,
     generatedAt: new Date().toISOString(),
     spec: specPath ? { path: specPath.replace(/\\/g, '/').split('/').slice(-3).join('/'), sha256: sha(specPath) } : null,
-    models: phases.filter((p) => p.model).map((p) => ({ phase: p.phase, model: p.model, provider: p.provider || null, tokens: p.tokens || null })),
+    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null })),
     approvals: tl.approvals ?? [],
     aiGeneratedFiles: aiFiles,
     verification: {
@@ -61,7 +61,7 @@ export function aiactData(changeDir) {
 export function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
-  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td><b>${E(m.model)}</b></td><td style="color:var(--tx3)">${E(m.provider || '—')}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
     ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
@@ -89,7 +89,7 @@ export function renderAiact(changeDir) {
 ${d.spec ? `<dt>Especificación</dt><dd><code>${E(d.spec.path)}</code><br><small style="color:var(--tx3)">sha256 ${E((d.spec.sha256 || '').slice(0, 16))}…</small></dd>` : ''}
 </dl></div>
 <h2 class=sect>1 · Modelos de IA empleados <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué modelo generó cada fase (base de la trazabilidad)</span></h2>
-${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin telemetría de modelo</p>'}
+${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin fases de agente registradas todavía (el informe se completa según avanza el run)</p>'}
 <h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— cada pausa aprobada por una persona (control humano exigido)</span></h2><ul>${apps}</ul>
 <h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— inventario exacto, marcados con @conductor REQ-&lt;id&gt;</span></h2><ul>${files}</ul>
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>

@@ -366,7 +366,12 @@ export class PanelScreen extends CElement {
   private byokForm(): TemplateResult {
     const m = this.models;
     const reason = m?.byokReason ?? null;
-    const connected = !!m?.byokCreds && !reason;
+    // HONESTIDAD del badge: "Conectado" SOLO con el catálogo del proxy verificado EN VIVO en esta sesión.
+    // Con creds pero sin verificación (arranque reciente, red caída, timeout del sondeo) → "Configurado"
+    // (neutro): antes ese hueco se pintaba verde y podía contradecir un 401 real segundos después.
+    const live = String(m?.byokSource ?? '').includes('en vivo');
+    const connected = !!m?.byokCreds && !reason && live;
+    const configured = !!m?.byokCreds && !reason && !live;
     const fileHint = html`<p class="inst-note">Abre <code>~/.conductor/litellm.json</code> (<code>conductor setup</code> deja la plantilla creada) y rellena tus datos — este es el formato:</p>
       <pre class="inst-code">{
   "baseUrl": "https://…/v1",
@@ -397,6 +402,27 @@ export class PanelScreen extends CElement {
             </dl>
             <p class="inst-note">¿Key caducada o rotada? Escribe la nueva en <code>~/.conductor/litellm.json</code>
               (campo <code>apiKey</code>; conductor la re-sella al primer uso) o ejecuta <code>conductor litellm login</code>.</p>
+          </div>
+        </details>`;
+    }
+    if (configured) {
+      // CONFIGURADO = creds presentes pero catálogo del proxy AÚN sin verificar en esta sesión (arranque,
+      // red, timeout). Badge neutro — jamás prometer "Conectado" sin evidencia viva.
+      return html`
+        <details class="inst-panel" style="margin-top:.6rem">
+          <summary class="inst-head">
+            <span class="inst-led" aria-hidden="true"></span>
+            <span class="inst-title">LiteLLM</span>
+            <span class="inst-status idle">Configurado</span>
+            <span class="inst-chev" aria-hidden="true"></span>
+          </summary>
+          <div class="inst-body">
+            <dl class="readout">
+              <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
+              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · cifrada (AES-256-GCM)</dd></div>
+              <div class="ro-row"><dt>Catálogo</dt><dd>sin verificar aún en esta sesión — se comprueba al abrir el selector de modelos o lanzar un run</dd></div>
+            </dl>
+            <p class="inst-note">Si el proxy rechaza la key, aquí saldrá el motivo y cómo arreglarlo.</p>
           </div>
         </details>`;
     }

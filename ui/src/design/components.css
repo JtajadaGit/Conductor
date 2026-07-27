@@ -193,8 +193,14 @@ details.raw > summary:hover { color: var(--tx2); }
 
 /* ── PANEL: formulario + filas de run ── */
 /* inputs GLOBALES (como el diseño anterior): valen también en la tarjeta del revisor, no solo en el form */
-input:not([type=checkbox]):not([type=radio]), select, textarea { border: 1px solid var(--bd); border-radius: var(--r-sm); padding: .5rem .65rem; font: 400 .9rem var(--font); background: var(--card); color: var(--tx); }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+/* CAMPOS — aspecto de "campo" real (fondo hundido respecto a la tarjeta), hover que invita y
+   placeholder legible pero secundario. Transición corta: responde, no parpadea. */
+input:not([type=checkbox]):not([type=radio]), select, textarea { border: 1px solid var(--bd); border-radius: var(--r-sm); padding: .55rem .75rem; font: 400 .9rem var(--font); background: var(--bg); color: var(--tx); box-shadow: inset 0 1px 2px color-mix(in srgb, var(--tx) 4%, transparent); transition: border-color .15s, background .15s; }
+input:not([type=checkbox]):not([type=radio]):hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--accent) 32%, var(--bd)); }
+input::placeholder, textarea::placeholder { color: var(--tx3); opacity: 1; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); background: var(--card); }
+/* la fila Nombre + «Lanzar run»: misma altura exacta que el botón (40px) — sin bailes de línea base */
+.launch-form .frow input { min-height: 40px; }
 .launch-form { border: 1px solid var(--bd); border-radius: var(--r); padding: var(--sp-4); margin: var(--sp-4) 0 var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-3); background: linear-gradient(180deg, var(--accentbg), var(--card) 75%); box-shadow: var(--sh); }
 .launch-form textarea { width: 100%; resize: vertical; line-height: 1.55; max-height: 320px; overflow: auto; }
 .fl { display: flex; flex-direction: column; gap: .25rem; font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tx2); }
@@ -353,8 +359,10 @@ help-screen code { white-space: nowrap; }
 .hit-row .nm { font-weight: 650; }
 .hit-row .snip { flex: 1; min-width: 0; font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hit-row .tag { font-size: .72rem; }
-.arch { margin-top: 1.4rem; }
-.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tx2); padding: .4rem 0; }
+/* sección <details> de archivados del panel — escopada a details: el botón .btn.arch («Archivar»)
+   comparte nombre y heredaba este margin-top (botón descolgado de la fila de acciones) */
+details.arch { margin-top: 1.4rem; }
+details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--tx2); padding: .4rem 0; }
 .arch-row { display: flex; align-items: center; gap: .55rem; padding: .4rem .2rem; border-bottom: 1px solid var(--bd); }
 .arch-row .nm { font-weight: 600; }
 .arch-row .muted { font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -406,6 +414,7 @@ help-screen code { white-space: nowrap; }
 .inst-status { margin-left: auto; font: 700 .62rem/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; padding: .22rem .5rem; border-radius: var(--r-sm); white-space: nowrap; border: 1px solid transparent; }
 .inst-status.ok { color: var(--ok); background: var(--okbg); border-color: color-mix(in srgb, var(--ok) 30%, var(--bd)); }
 .inst-status.warn { color: var(--warn); background: var(--warnbg); border-color: color-mix(in srgb, var(--warn) 30%, var(--bd)); }
+.inst-status.idle { color: var(--tx2); background: var(--bg2); border-color: var(--bd); }
 
 /* chevron CSS — gira al abrir; va al final de la barra */
 .inst-chev { margin-left: .5rem; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--tx3); border-bottom: 2px solid var(--tx3); border-radius: 1px; transform: rotate(45deg); transition: transform .18s ease; }
@@ -474,13 +483,17 @@ help-screen code { white-space: nowrap; }
   animation: ldr-spin .8s linear infinite;
 }
 .ldr-lbl { font-size: .88rem; font-weight: 500; letter-spacing: .005em; color: var(--tx2); }
-.ldr-dots { display: inline-block; width: 1.1em; text-align: left; }
-.ldr-dots::after { content: ''; animation: ldr-dots 1.4s steps(1) infinite; }
+/* puntos como ELEMENTOS (no content creciente): siempre alineados a la caja del texto, laten en
+   secuencia sin mover la línea base ni reservar hueco que descuadre el label */
+.ldr-dots { display: inline-flex; align-items: center; gap: .17em; margin-left: .3em; vertical-align: middle; }
+.ldr-dots i { width: .26em; height: .26em; border-radius: 50%; background: currentColor; opacity: .22; animation: ldr-dot 1.2s ease-in-out infinite; }
+.ldr-dots i:nth-child(2) { animation-delay: .18s; }
+.ldr-dots i:nth-child(3) { animation-delay: .36s; }
 @keyframes ldr-spin { to { transform: rotate(360deg); } }
-@keyframes ldr-dots { 0% { content: ''; } 25% { content: '·'; } 50% { content: '··'; } 75%, 100% { content: '···'; } }
+@keyframes ldr-dot { 0%, 60%, 100% { opacity: .22; } 30% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
   .ldr-ring { animation-duration: 2.6s; }
-  .ldr-dots::after { content: '···'; animation: none; }
+  .ldr-dots i { animation: none; opacity: .5; }
 }
 
 /* auto-aprobar como opción SECUNDARIA y tenue en la línea de meta (no un toggle junto al CTA) */

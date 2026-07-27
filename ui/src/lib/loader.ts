@@ -11,6 +11,6 @@ import { html, type TemplateResult } from 'lit';
 export function loader(label = 'Cargando', center = false): TemplateResult {
   return html`<div class="ldr ${center ? 'ldr-center' : ''}" role="status" aria-live="polite">
     <span class="ldr-ring" aria-hidden="true"></span>
-    <span class="ldr-lbl">${label}<span class="ldr-dots" aria-hidden="true"></span></span>
+    <span class="ldr-lbl">${label}<span class="ldr-dots" aria-hidden="true"><i></i><i></i><i></i></span></span>
   </div>`;
 }

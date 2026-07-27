@@ -11,7 +11,7 @@
 //   spawn(CONDUCTOR_AGENT_CMD || 'copilot', ['--allow-all-tools','--no-auto-update','-p', <prompt>])
 // El agente hereda el entorno del proceso (BYOK) — por eso el driver se ejecuta desde la shell del
 // usuario (CLI `conductor drive` / eval), no desde el MCP server (que solo recibe PATH).
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, lstatSync, rmSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, readdirSync, statSync, lstatSync, rmSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
@@ -288,6 +288,26 @@ function cleanNewSessions(dir, before) {
   try { for (const s of readdirSync(dir)) if (!before.has(s)) rmSync(join(dir, s), { recursive: true, force: true }); } catch {}
 }
 
+// VISOR DE SESION: la traza nativa del CLI (events.jsonl de la sesion efimera) se PERSISTE en el change
+// ANTES de limpiar la sesion — sin esto el visor /session quedaba vacio (el CLI moderno ya no vuelca OTel
+// por env y la sesion se borraba con su traza dentro). Append: un run = varias fases, un solo fichero.
+function persistSessionTrace(ssd, before, otelFile) {
+  try {
+    let sess = null, mt = 0;
+    for (const s of listSessions(ssd)) {
+      if (before.has(s)) continue;
+      let st; try { st = statSync(join(ssd, s)); } catch { continue; }
+      if (st.mtimeMs >= mt) { mt = st.mtimeMs; sess = s; }
+    }
+    if (!sess) return;
+    const f = join(ssd, sess, 'events.jsonl');
+    if (!existsSync(f)) return;
+    const dst = join(dirname(dirname(otelFile)), 'events.jsonl');
+    mkdirSync(dirname(dst), { recursive: true });
+    appendFileSync(dst, readFileSync(f));
+  } catch { /* best-effort: sin traza no se rompe la fase */ }
+}
+
 // argumentos del one-shot por fase. AHORRO por defecto: github-mcp builtin y el MCP de conductor se
 // desactivan (sus schemas cuestan ~2.5-3k tokens/tool y las fases no los usan). PASSTHROUGH (poder del
 // dev): en openspec/conductor.json, `"mcp": {"disable": ["x"], "coder": { "<server>": {command,args} }}`
@@ -385,7 +405,7 @@ export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopS
     catch (e) { return resolve2({ code: -1, err: `no se pudo lanzar '${cmd}': ${e.message}` }); }
     let out = '', err = '';
     let stopPoll = null, actPoll = null;
-    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
+    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); if (otelFile) persistSessionTrace(ssd, beforeSessions, otelFile); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
     const timer = setTimeout(() => { killTree(child); finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
     // STOP del usuario: mata la fase en vuelo (la sesión efímera se limpia igualmente en finish)
     if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); killTree(child); finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);

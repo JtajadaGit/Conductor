@@ -675,7 +675,7 @@ switch (cmd) {
       const homeU2 = process.env.CONDUCTOR_USERHOME || homedir();
       const hosts = [];
       if (existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
-      if (existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
+      if (existsSync(join(homeU2, '.config', 'opencode', 'command', 'conductor.md')) || existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
       try { if (readFileSync(join(homeU2, '.copilot', 'mcp-config.json'), 'utf8').includes('conductor')) hosts.push('Copilot CLI (MCP)'); } catch {}
       console.log(`  hosts conectados: ${hosts.length ? hosts.join(' · ') : 'ninguno → `conductor setup` los conecta (comando /conductor + MCP)'}`);
     } catch { console.log('  hosts conectados: (no comprobable)'); }
@@ -908,8 +908,8 @@ switch (cmd) {
     // OpenCode: comando global + fusión no destructiva en su config global (se crea si no existe)
     if (chosen.has('opencode')) {
       const ocDir = join(homeU, '.config', 'opencode');
-      try { mkdirSync(join(ocDir, 'commands'), { recursive: true }); writeFileSync(join(ocDir, 'commands', 'conductor.md'), CMD_MD); console.log('   ✓ OpenCode: comando /conductor instalado (global)'); } catch (e) { console.log(`   ⚠ OpenCode: no pude escribir el comando (${e.message})`); }
-      try { const oc = join(ocDir, 'opencode.json'); if (!existsSync(oc)) { mkdirSync(ocDir, { recursive: true }); writeFileSync(oc, '{}\n'); } rlI?.pause(); runI(['connect', '--to', oc]); rlI?.resume(); } catch {}
+      try { mkdirSync(join(ocDir, 'command'), { recursive: true }); writeFileSync(join(ocDir, 'command', 'conductor.md'), CMD_MD); console.log('   ✓ OpenCode: comando /conductor instalado (global)'); } catch (e) { console.log(`   ⚠ OpenCode: no pude escribir el comando (${e.message})`); }
+      try { const oc = join(ocDir, 'opencode.json'); if (!existsSync(oc)) { mkdirSync(ocDir, { recursive: true }); writeFileSync(oc, '{}\n'); } rlI?.pause(); runI(['connect', '--to', oc, '--key', 'mcp']); rlI?.resume(); } catch {}
     }
     // Copilot CLI: MCP en su config global (~/.copilot/mcp-config.json); el plugin sigue siendo la vía completa (skills)
     if (chosen.has('copilot')) {

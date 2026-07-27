@@ -4281,7 +4281,7 @@ function aiactData(changeDir) {
     verdict: tl.verdict || null,
     generatedAt: new Date().toISOString(),
     spec: specPath ? { path: specPath.replace(/\\/g, '/').split('/').slice(-3).join('/'), sha256: sha(specPath) } : null,
-    models: phases.filter((p) => p.model).map((p) => ({ phase: p.phase, model: p.model, provider: p.provider || null, tokens: p.tokens || null })),
+    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null })),
     approvals: tl.approvals ?? [],
     aiGeneratedFiles: aiFiles,
     verification: {
@@ -4299,7 +4299,7 @@ function aiactData(changeDir) {
 function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
-  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td><b>${E(m.model)}</b></td><td style="color:var(--tx3)">${E(m.provider || '—')}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
     ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
@@ -4327,7 +4327,7 @@ function renderAiact(changeDir) {
 ${d.spec ? `<dt>Especificación</dt><dd><code>${E(d.spec.path)}</code><br><small style="color:var(--tx3)">sha256 ${E((d.spec.sha256 || '').slice(0, 16))}…</small></dd>` : ''}
 </dl></div>
 <h2 class=sect>1 · Modelos de IA empleados <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué modelo generó cada fase (base de la trazabilidad)</span></h2>
-${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin telemetría de modelo</p>'}
+${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin fases de agente registradas todavía (el informe se completa según avanza el run)</p>'}
 <h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— cada pausa aprobada por una persona (control humano exigido)</span></h2><ul>${apps}</ul>
 <h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— inventario exacto, marcados con @conductor REQ-&lt;id&gt;</span></h2><ul>${files}</ul>
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>
@@ -4794,6 +4794,26 @@ function cleanNewSessions(dir, before) {
   try { for (const s of readdirSync(dir)) if (!before.has(s)) rmSync(join(dir, s), { recursive: true, force: true }); } catch {}
 }
 
+// VISOR DE SESION: la traza nativa del CLI (events.jsonl de la sesion efimera) se PERSISTE en el change
+// ANTES de limpiar la sesion — sin esto el visor /session quedaba vacio (el CLI moderno ya no vuelca OTel
+// por env y la sesion se borraba con su traza dentro). Append: un run = varias fases, un solo fichero.
+function persistSessionTrace(ssd, before, otelFile) {
+  try {
+    let sess = null, mt = 0;
+    for (const s of listSessions(ssd)) {
+      if (before.has(s)) continue;
+      let st; try { st = statSync(join(ssd, s)); } catch { continue; }
+      if (st.mtimeMs >= mt) { mt = st.mtimeMs; sess = s; }
+    }
+    if (!sess) return;
+    const f = join(ssd, sess, 'events.jsonl');
+    if (!existsSync(f)) return;
+    const dst = join(dirname(dirname(otelFile)), 'events.jsonl');
+    mkdirSync(dirname(dst), { recursive: true });
+    appendFileSync(dst, readFileSync(f));
+  } catch { /* best-effort: sin traza no se rompe la fase */ }
+}
+
 // argumentos del one-shot por fase. AHORRO por defecto: github-mcp builtin y el MCP de conductor se
 // desactivan (sus schemas cuestan ~2.5-3k tokens/tool y las fases no los usan). PASSTHROUGH (poder del
 // dev): en openspec/conductor.json, `"mcp": {"disable": ["x"], "coder": { "<server>": {command,args} }}`
@@ -4891,7 +4911,7 @@ function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, 
     catch (e) { return resolve2({ code: -1, err: `no se pudo lanzar '${cmd}': ${e.message}` }); }
     let out = '', err = '';
     let stopPoll = null, actPoll = null;
-    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
+    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); if (otelFile) persistSessionTrace(ssd, beforeSessions, otelFile); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
     const timer = setTimeout(() => { killTree(child); finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
     // STOP del usuario: mata la fase en vuelo (la sesión efímera se limpia igualmente en finish)
     if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); killTree(child); finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
@@ -8673,7 +8693,7 @@ switch (cmd) {
       const homeU2 = process.env.CONDUCTOR_USERHOME || homedir();
       const hosts = [];
       if (existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
-      if (existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
+      if (existsSync(join(homeU2, '.config', 'opencode', 'command', 'conductor.md')) || existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
       try { if (readFileSync(join(homeU2, '.copilot', 'mcp-config.json'), 'utf8').includes('conductor')) hosts.push('Copilot CLI (MCP)'); } catch {}
       console.log(`  hosts conectados: ${hosts.length ? hosts.join(' · ') : 'ninguno → `conductor setup` los conecta (comando /conductor + MCP)'}`);
     } catch { console.log('  hosts conectados: (no comprobable)'); }
@@ -8906,8 +8926,8 @@ switch (cmd) {
     // OpenCode: comando global + fusión no destructiva en su config global (se crea si no existe)
     if (chosen.has('opencode')) {
       const ocDir = join(homeU, '.config', 'opencode');
-      try { mkdirSync(join(ocDir, 'commands'), { recursive: true }); writeFileSync(join(ocDir, 'commands', 'conductor.md'), CMD_MD); console.log('   ✓ OpenCode: comando /conductor instalado (global)'); } catch (e) { console.log(`   ⚠ OpenCode: no pude escribir el comando (${e.message})`); }
-      try { const oc = join(ocDir, 'opencode.json'); if (!existsSync(oc)) { mkdirSync(ocDir, { recursive: true }); writeFileSync(oc, '{}\n'); } rlI?.pause(); runI(['connect', '--to', oc]); rlI?.resume(); } catch {}
+      try { mkdirSync(join(ocDir, 'command'), { recursive: true }); writeFileSync(join(ocDir, 'command', 'conductor.md'), CMD_MD); console.log('   ✓ OpenCode: comando /conductor instalado (global)'); } catch (e) { console.log(`   ⚠ OpenCode: no pude escribir el comando (${e.message})`); }
+      try { const oc = join(ocDir, 'opencode.json'); if (!existsSync(oc)) { mkdirSync(ocDir, { recursive: true }); writeFileSync(oc, '{}\n'); } rlI?.pause(); runI(['connect', '--to', oc, '--key', 'mcp']); rlI?.resume(); } catch {}
     }
     // Copilot CLI: MCP en su config global (~/.copilot/mcp-config.json); el plugin sigue siendo la vía completa (skills)
     if (chosen.has('copilot')) {
@@ -9120,4 +9140,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: b9823d665b98afc913dbbaf1ee271064f18df6d561f45052c71b5fabff815701
+// build-inputs-sha256: 766e58108c286aeb0c947747864f25d61e7abb7c9de5aa475af73e369b5b5fab
