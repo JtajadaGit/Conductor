@@ -2,7 +2,7 @@
 
 **Spec-Driven Development verificado para GitHub Copilot — pipeline conducido por código, gate sin LLM, coste real.**
 
-**Versión**: 3.12.0 · **Actualización**: 2026-07-15
+**Versión**: 2.0.0 · **Actualización**: 2026-07-15
 
 ---
 

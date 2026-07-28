@@ -1,6 +1,6 @@
 # AGENTS.md — conductor
 
-> Contexto del repo (estándar abierto AGENTS.md) para **agentes de IA y devs que contribuyen**. Exhaustivo a propósito y **verificado contra el código** (deep-search 2026-07-28): aquí está todo lo que cuesta caro re-aprender. Si tocas algo relevante, ACTUALIZA este fichero. Estado: **v3.12.0**.
+> Contexto del repo (estándar abierto AGENTS.md) para **agentes de IA y devs que contribuyen**. Exhaustivo a propósito y **verificado contra el código** (deep-search 2026-07-28): aquí está todo lo que cuesta caro re-aprender. Si tocas algo relevante, ACTUALIZA este fichero. Estado: **v2.0.0 — AÚN SIN PUBLICAR**.
 
 ## Qué es
 **conductor**: pipeline de **Spec-Driven Development VERIFICADO**. No es "otro generador": es **gobierno** — un driver determinista (código, no un LLM) ejecuta las fases en orden y un **gate sin LLM** comprueba coherencia spec↔código↔tests antes de dar GREEN. Ningún modelo puede saltarse la secuencia: un modelo flojo da peor CONTENIDO, nunca rompe el ORDEN. Doble usuario: dev junior y tech-lead («el experto manda», nada de piloto automático). Tres pilares innegociables: ahorro de tokens líder · modelos económicos vía proxy perfectamente soportados · mezcla de proveedores en la misma pipeline.
