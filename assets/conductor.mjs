@@ -17,7 +17,7 @@ __M['plumb'] = (function(){
 // conductor/lib/core/plumb.mjs — COSTURA de la fontanería runtime (plan expertise 2026-07-17, fase 1/2).
 // HOY: identidad — la fontanería de un run vive en <change>/.conductor/ como siempre (cero cambio de
 // comportamiento; la prueba del refactor es que NINGÚN test se toca).
-// MAÑANA (fase 2 aprobada por Jorge): cambiar SOLO estas dos funciones moverá TODO el estado runtime a
+// MAÑANA (fase 2 aprobada): cambiar SOLO estas dos funciones moverá TODO el estado runtime a
 // ~/.conductor/state/<projId>/<change>/ (fidelidad OpenSpec: el change queda con artefactos del estándar
 // + provenance) con fallback al legado y GC al archivar. Todos los join(<change>, '.conductor', …) del
 // motor pasan por aquí — el flip será una función, no 66 sitios.
@@ -1424,7 +1424,7 @@ __M['legacy'] = (function(){
 //  · extractAnchors(): extractor GENÉRICO de "anclas" (señales de capacidad) por regex, agnóstico de lenguaje.
 //  · traceFeature(): puntúa una feature declarada contra las anclas → evidencia + confianza + estado.
 //  · assessReadiness(): gate determinista de readiness sobre todas las features (con blockers explícitos).
-// DECISIÓN QUE NECESITA JORGE (marcada): los ADAPTADORES por stack concreto (PowerBuilder/Oracle/SAP/Magento/…)
+// DECISIÓN PENDIENTE DEL PROPIETARIO DEL PRODUCTO (marcada): los ADAPTADORES por stack concreto (PowerBuilder/Oracle/SAP/Magento/…)
 // que produzcan anclas de alta fidelidad son trabajo siguiente; aquí el extractor genérico cubre patrones comunes
 // (SQL, símbolos de código, rutas HTTP, formularios UI) suficiente para la base y los tests.
 
@@ -7052,7 +7052,7 @@ function checkByokModels(models, byokList, hasCreds) {
   return { ok: true };
 }
 
-// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo que pidió Jorge —
+// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo pedido por el propietario del producto —
 // "defaults en el repo, la web los cambia". Merge CONSERVADOR en openspec/conductor.json: solo la sección
 // models, clave a clave (roles y fases válidas), '' = borrar esa clave (volver a "Recomendado"); jamás pisa
 // otras claves del fichero; si el JSON del usuario está roto, NO se toca. Puro y exportado (testeable).
@@ -9140,4 +9140,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 766e58108c286aeb0c947747864f25d61e7abb7c9de5aa475af73e369b5b5fab
+// build-inputs-sha256: f26cce878258093701ed97baebacb609c436bfe5619bdd0158cc6db14e507970

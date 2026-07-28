@@ -809,7 +809,7 @@ export function checkByokModels(models, byokList, hasCreds) {
   return { ok: true };
 }
 
-// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo que pidió Jorge —
+// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo pedido por el propietario del producto —
 // "defaults en el repo, la web los cambia". Merge CONSERVADOR en openspec/conductor.json: solo la sección
 // models, clave a clave (roles y fases válidas), '' = borrar esa clave (volver a "Recomendado"); jamás pisa
 // otras claves del fichero; si el JSON del usuario está roto, NO se toca. Puro y exportado (testeable).

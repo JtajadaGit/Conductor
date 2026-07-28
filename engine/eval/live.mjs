@@ -5,7 +5,7 @@
 //   - OFFLINE (default): un agente FAKE determinista que produce artefactos VÁLIDOS por fase → prueba que el
 //     aparato funciona de punta a punta sin gastar AI Credits, y DISCRIMINA calidad (perfil 'weak' omite el
 //     tag de trazabilidad → el gate estricto lo tumba → pass-rate < 100%).
-//   - REAL (Jorge, bajo flag): se inyecta un runAgent que spawnea el modelo real → números de modelo reales.
+//   - REAL (el propietario del producto, bajo flag): se inyecta un runAgent que spawnea el modelo real → números de modelo reales.
 // 0-dep, sin nombrar terceros, corpus local.
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';

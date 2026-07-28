@@ -8,7 +8,7 @@
 //  · extractAnchors(): extractor GENÉRICO de "anclas" (señales de capacidad) por regex, agnóstico de lenguaje.
 //  · traceFeature(): puntúa una feature declarada contra las anclas → evidencia + confianza + estado.
 //  · assessReadiness(): gate determinista de readiness sobre todas las features (con blockers explícitos).
-// DECISIÓN QUE NECESITA JORGE (marcada): los ADAPTADORES por stack concreto (PowerBuilder/Oracle/SAP/Magento/…)
+// DECISIÓN PENDIENTE DEL PROPIETARIO DEL PRODUCTO (marcada): los ADAPTADORES por stack concreto (PowerBuilder/Oracle/SAP/Magento/…)
 // que produzcan anclas de alta fidelidad son trabajo siguiente; aquí el extractor genérico cubre patrones comunes
 // (SQL, símbolos de código, rutas HTTP, formularios UI) suficiente para la base y los tests.
 
