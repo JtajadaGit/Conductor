@@ -28,6 +28,7 @@ export class ConductorApp extends CElement {
   })();
   @state() private ready = false;
   @state() private online = true; // conexión con el servidor local (el ping es el latido)
+  private pingFails = 0; // histéresis: solo declaramos «apagado» tras 3 fallos consecutivos (un blip no es una caída)
 
   private buildTimer: ReturnType<typeof setTimeout> | null = null;
   private bootSig: string | null = null;
@@ -58,8 +59,9 @@ export class ConductorApp extends CElement {
         if (this.bootSig === null) this.bootSig = sig; // primera lectura = línea base
         else if (sig !== this.bootSig) location.reload();
       }
-    } catch { /* servidor caído/red: ok queda false → banner de desconexión */ }
-    this.online = ok;
+    } catch { /* servidor caído/red: ok queda false → estado «apagado» */ }
+    this.pingFails = ok ? 0 : this.pingFails + 1;
+    this.online = ok || this.pingFails < 3;
     // reprograma adaptativo: sano cada 10s (detecta la caída pronto sin martillear); caído cada 3s (recuperación rápida)
     if (this.buildTimer) clearTimeout(this.buildTimer);
     this.buildTimer = setTimeout(() => void this.checkBuild(), ok ? 10000 : 3000);
@@ -96,6 +98,14 @@ export class ConductorApp extends CElement {
   }
 
   private screen(): TemplateResult | typeof nothing {
+    if (!this.online) {
+      return html`<div class="srv-down" role="alert">
+        <div class="srv-down-ic" aria-hidden="true">⏻</div>
+        <h1>conductor está apagado</h1>
+        <p>El servidor local no responde. Arráncalo con <code>conductor</code> en tu terminal — esta pantalla se recupera sola en cuanto vuelva.</p>
+        <button class="btn" @click=${() => void this.checkBuild()}>Reintentar ahora</button>
+      </div>`;
+    }
     if (!this.ready) return loader('Cargando conductor', true);
     const r = this.route;
     if (r.name === 'panel') return html`<panel-screen></panel-screen>`;
@@ -113,7 +123,6 @@ export class ConductorApp extends CElement {
     const activeProj = this.route.projId ?? this.route.query.get('project') ?? '';
     return html`
       <a class="skiplink" href="#main-content">Saltar al contenido</a>
-      ${!this.online ? html`<div class="offline-bar" role="alert"><span class="offline-dot"></span>Sin conexión con conductor — ¿se cerró el servidor? Reintentando…</div>` : nothing}
       <button class="sbtog" aria-label="alternar panel lateral" @click=${() => this.toggleSb()}>☰</button>
       <theme-toggle></theme-toggle>
       <div class="layout ${this.sbHide ? 'sbhide' : ''}" @click=${(e: MouseEvent) => this.onLayoutClick(e)}>

@@ -126,11 +126,11 @@ switch (cmd) {
     if (has('--json')) { console.log(JSON.stringify(r, null, 2)); process.exit(0); }
     printCost(r); if (otlp) console.log(`  OTLP → ${otlp}\n`); process.exit(0);
   }
-  case 'run': case 'resume': case 'status': {
+  case 'resume': case 'status': { // legacy .runs — 'run' ya NO vive aqui: es el gesto app (como promete la ayuda)
     const runsDir = join(ROOT, '.runs');
     if (cmd === 'status') { const id = pos[0]; const p = join(runsDir, (existsSync(join(runsDir, `${id}.json`)) ? id : R.runIdFor(id)) + '.json'); if (!existsSync(p)) bad('run no encontrado'); const s = JSON.parse(readFileSync(p, 'utf8')); has('--json') ? console.log(JSON.stringify(s, null, 2)) : printRun(s); process.exit(0); }
     if (cmd === 'resume') { const p = join(runsDir, `${pos[0]}.json`); if (!existsSync(p)) bad('run no encontrado'); const s = R.resume(JSON.parse(readFileSync(p, 'utf8'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1); }
-    const s = R.advance(R.loadOrNew(runsDir, pos[0], flag('--complexity', 'medium'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1);
+    bad('resume <runId> | status <runId|changeDir>');
   }
   case 'drive': {
     // DRIVER DETERMINISTA: el código conduce el pipeline y llama al modelo (BYOK) por fase.
@@ -808,11 +808,14 @@ switch (cmd) {
   case undefined: case 'app': case 'run': { // `conductor` = `conductor run` = abre la miniweb en este repo
     const url = 'http://127.0.0.1:4750/';
     const rootArg = pos[0] ? resolve(pos[0]) : process.cwd();
-    const ping2 = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
-    let alive = await ping2();
+    const pingInfo = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    let info = await pingInfo();
+    const wasAlive = !!info;
+    let alive = wasAlive;
     if (!alive) {
+      console.log(`▶ arrancando conductor v${VERSION} …`);
       spawn(process.execPath, [resolve(process.argv[1]), 'serve', rootArg], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
-      for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); alive = await ping2(); }
+      for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); info = await pingInfo(); alive = !!info; }
       if (!alive) { console.error('conductor: la app no arrancó (¿:4750 ocupado por otra cosa?)'); process.exit(1); }
     }
     // ARRANQUE PER-REPO (Opción A): fija el FOCO en el repo desde el que lanzaste `conductor` (server-side) → el
@@ -830,6 +833,8 @@ switch (cmd) {
         execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true });
       } catch { /* sin navegador disponible: la URL impresa basta */ }
     }
+    if (wasAlive) console.log(`✓ conductor ya estaba encendido — v${info?.version || '?'} sirviendo ${info?.root || 'tu proyecto'} · te abro el panel`);
+    else console.log(`✓ conductor v${VERSION} en marcha · (para pararlo: conductor stop)`);
     console.log(`🌐 conductor: ${url}`);
     break;
   }
@@ -878,7 +883,7 @@ switch (cmd) {
       'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
       '---',
       '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
-      '- Si $ARGUMENTS está VACÍO: llama a la tool `conductor_app` (abre el panel web local) y devuelve su URL.',
+      '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
       '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
@@ -967,7 +972,7 @@ switch (cmd) {
         'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
         '---',
         '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
-        '- Si $ARGUMENTS está VACÍO: llama a la tool `conductor_app` (abre el panel web local) y devuelve su URL.',
+        '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
         '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
         '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
         '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',

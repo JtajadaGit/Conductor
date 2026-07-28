@@ -51,3 +51,23 @@ await test('retry-delta: con progreso parcial el reintento dice "completa lo que
   const sinProgreso = retryHint([], []);
   assert(/NO ESCRIBIÓ NINGÚN FICHERO/.test(sinProgreso), 'sin progreso, el empujón contundente de siempre');
 });
+
+await test('approvalSha: receipt de aprobación — hash estable de los artefactos presentes al aprobar', async () => {
+  const { approvalSha } = await import('../lib/pipeline/drive.mjs');
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const D = join(dirname(fileURLToPath(import.meta.url)), '.tmp-apprsha');
+  rmSync(D, { recursive: true, force: true });
+  mkdirSync(join(D, 'specs', 'pipe'), { recursive: true });
+  writeFileSync(join(D, 'proposal.md'), '# p');
+  writeFileSync(join(D, 'specs', 'pipe', 'spec.md'), '## REQ-1');
+  const a = approvalSha(D);
+  eq(Object.keys(a).sort(), ['proposal.md', 'specs/pipe/spec.md'], 'solo lo PRESENTE, con ruta relativa');
+  eq(a['proposal.md'].length, 12, 'sha corto de 12');
+  eq(approvalSha(D), a, 'determinista: mismo contenido, mismo hash');
+  writeFileSync(join(D, 'proposal.md'), '# p CAMBIADO');
+  assert(approvalSha(D)['proposal.md'] !== a['proposal.md'], 'contenido distinto => hash distinto (eso ES el receipt)');
+  eq(approvalSha(join(D, 'no-existe')), undefined, 'change vacio => undefined (no ensucia el timeline)');
+  rmSync(D, { recursive: true, force: true });
+});

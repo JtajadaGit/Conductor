@@ -36,6 +36,8 @@ await test('mcp: tools/list expone el motor completo', async () => {
   // conductor_app = la ENTRADA universal (equivale a /sdd-run desde cualquier host MCP): projectRoot opcional
   const app = list.result.tools.find((t) => t.name === 'conductor_app');
   assert(app.inputSchema.properties.projectRoot && !(app.inputSchema.required || []).length, 'conductor_app: projectRoot opcional');
+  // el /conductor VACIO del chat responde EN el chat: open:false = sin navegador + resumen de runs
+  assert(app.inputSchema.properties.open && app.inputSchema.properties.open.type === 'boolean', 'conductor_app: modo open:false declarado (chat educado, sin ventanas)');
   // MODO CHAT (pausas conversacionales): el contrato de las dos tools que hacen del chat el cockpit
   const feat = list.result.tools.find((t) => t.name === 'conductor_feature');
   eq(feat.inputSchema.required, ['request', 'projectRoot'], 'conductor_feature: request + projectRoot obligatorios');

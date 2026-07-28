@@ -78,3 +78,13 @@ await test('packaging: files empaqueta assets (motor+UI) + prompts (el alma edit
   assert(existsSync(join(ROOT, 'assets', 'ui', 'index.html')), 'la UI compilada existe en el árbol (va dentro del paquete)');
   assert(pj.engines?.node, 'engines.node declarado (fail-fast en Node viejos)');
 });
+
+await test('packaging: `conductor run` es el gesto app (case unico) y el CLI dice si arranco o si ya estaba', () => {
+  // regresion real 2026-07-28: habia DOS `case 'run'` y ganaba la maquina de estados legacy — la ayuda
+  // prometia la miniweb y el usuario aterrizaba en engine/.runs. Un solo case + mensajes honestos.
+  const src = readFileSync(join(ROOT, 'engine', 'bin', 'conductor.mjs'), 'utf8');
+  eq((src.match(/case 'run'/g) || []).length, 1, "un unico case 'run' (el gesto app)");
+  assert(src.includes('ya estaba encendido'), 'mensaje de app ya viva presente');
+  assert(src.includes('arrancando conductor v'), 'mensaje de arranque presente');
+  assert(src.includes('para pararlo: conductor stop'), 'pista de apagado presente');
+});

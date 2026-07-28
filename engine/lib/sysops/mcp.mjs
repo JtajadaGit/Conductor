@@ -168,8 +168,8 @@ const TOOLS = {
   // ENTRADA UNIVERSAL POR MCP (el arranque desde cualquier chat): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
   // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
   // desde el panel (decisión de producto: la web es la superficie de lanzamiento/revisión, el host solo la abre).
-  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. The universal entry from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' } }, required: [] } },
-    run: async ({ projectRoot }) => {
+  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. The universal entry from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' }, open: { type: 'boolean', description: 'false = do NOT open the browser: return url + runs summary so the CHAT can answer in place (the polite default for an empty /conductor)' } }, required: [] } },
+    run: async ({ projectRoot, open }) => {
       const root = resolve(projectRoot || process.cwd());
       const port = Number(process.env.CONDUCTOR_PORT) || 4750;
       const url = `http://127.0.0.1:${port}/`;
@@ -187,10 +187,20 @@ const TOOLS = {
         const j = await fr.json().catch(() => null);
         if (fr.ok && j && j.ok) { focused = true; name = j.name || name; openspec = j.openspec ?? null; }
       } catch { /* foco best-effort: sin él la app abre con el foco anterior y se avisa en note */ }
-      if (process.env.CONDUCTOR_NO_OPEN !== '1') {
+      if (open !== false && process.env.CONDUCTOR_NO_OPEN !== '1') {
         try { const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch { /* sin navegador: la URL devuelta basta */ }
       }
-      return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
+      // open:false = modo ESTADO para el chat (el /conductor vacío): runs del proyecto en una línea, sin ventanas
+      let runs;
+      if (open === false) {
+        try {
+          const ch = await fetch(url + 'api/changes', { signal: AbortSignal.timeout(3000) }).then((r) => (r.ok ? r.json() : null));
+          const mine = (ch?.projects || []).find((pr) => pr.name === name) || null;
+          const list = mine?.changes || ch?.changes || [];
+          runs = { total: list.length, paused: list.filter((c) => c.pending).length, running: list.filter((c) => c.running || c.alive).length };
+        } catch { /* resumen best-effort */ }
+      }
+      return { ok: true, url, project: name, focused, openspec, runs, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
   conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~90s with a status: "working" = phase still running → IMMEDIATELY call conductor_continue {action:"wait"} and repeat (do not narrate each wait); "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },

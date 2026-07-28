@@ -524,14 +524,16 @@ const MANIFEST = JSON.stringify({
 const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#6e56cf"/><text x="32" y="45" font-size="38" font-weight="800" font-family="sans-serif" fill="#fff" text-anchor="middle">C</text></svg>';
 // SERVICE WORKER versionado (instalabilidad PWA + offline del historial). Cache nombrada por versión del
 // plugin → al actualizar el motor (auto-relevo), 'activate' purga la vieja (skipWaiting+clients.claim) y
-// NUNCA sirve un app-shell rancio. /api/* = network-first (cachea /api/changes para ver historial offline);
-// /assets/* hasheados = cache-first (inmutables); navegación = network-first con fallback al shell cacheado.
+// NUNCA sirve un app-shell rancio. /api/* = red SIEMPRE y JAMÁS cacheado: con el server caído devuelve un 503
+// sintético {offline:true} — antes servía /api/changes de caché y el panel FINGÍA estar vivo con datos viejos
+// (queja real 2026-07-28: «stop y la web sigue funcionando»). /assets/* hasheados = cache-first (inmutables);
+// navegación = network-first con fallback al shell cacheado (la SPA pinta su estado «apagado» encima).
 const swJs = (version) => `const V='conductor-v${version || '0'}';const SHELL=['/','/manifest.json','/icon.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL).catch(()=>{})))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;const u=new URL(r.url);
 if(u.pathname.startsWith('/assets/')){e.respondWith(caches.match(r).then(h=>h||fetch(r).then(res=>{const cp=res.clone();caches.open(V).then(c=>c.put(r,cp));return res})));return}
-if(u.pathname.startsWith('/api/')){e.respondWith(fetch(r).then(res=>{if(u.pathname==='/api/changes'){const cp=res.clone();caches.open(V).then(c=>c.put(r,cp))}return res}).catch(()=>caches.match(r)));return}
+if(u.pathname.startsWith('/api/')){e.respondWith(fetch(r).catch(()=>new Response('{"ok":false,"offline":true}',{status:503,headers:{'content-type':'application/json'}})));return}
 if(r.mode==='navigate'){e.respondWith(fetch(r).catch(()=>caches.match('/')))}});`;
 
 // ── APP GLOBAL (v4-P2): registro de proyectos — un solo conductor para toda la máquina ──
@@ -1428,7 +1430,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // señal (SIGINT/SIGTERM → no deja node huérfanos) y auto-apagado por inactividad. Lo de señal/idle solo
   // para la app REAL (`serve` pasa onShutdown); los tests crean servers sin onShutdown y no se ven afectados.
   const killChildren = () => { for (const [, r2] of runs) { try { r2.child?.kill?.(); } catch {} } };
-  const idleMin = onShutdown ? (Number(process.env.CONDUCTOR_IDLE_EXIT_MIN) || 480) : 0; // 8h por defecto; 0 lo desactiva
+  const idleMin = onShutdown ? (Number(process.env.CONDUCTOR_IDLE_EXIT_MIN) || 120) : 0; // 2h por defecto (un daemon local no debe vivir para siempre); 0 lo desactiva
   const sweep = setInterval(() => {
     const now = Date.now();
     for (const [k, r2] of runs) if (r2.exited && r2.exitedAt && now - r2.exitedAt > 600000) runs.delete(k); // saca runs terminados > 10 min del Map

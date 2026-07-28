@@ -144,3 +144,24 @@ await test('models-default: merge CONSERVADOR — no pisa otras claves; vacio bo
   eq(readFileSync(join(T, 'openspec', 'conductor.json'), 'utf8'), '{ roto', 'el fichero roto queda INTACTO (no lo piso)');
   rmSync(T, { recursive: true, force: true });
 });
+
+await test('sw honesto: el service worker JAMAS cachea /api ni finge servidor vivo (503 offline sintetico)', async () => {
+  // regresion real 2026-07-28: tras `conductor stop`, la web "seguia funcionando" — el SW servia
+  // /api/changes de cache y el panel pintaba datos viejos como vivos. Ahora: /api sin cache, fallo => 503.
+  const { createAppServer } = await import('../lib/serving/serve.mjs');
+  const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const R2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-sw');
+  rmSync(R2, { recursive: true, force: true });
+  mkdirSync(join(R2, 'openspec', 'changes'), { recursive: true });
+  writeFileSync(join(R2, 'openspec', 'conductor.json'), '{}');
+  const srv = await createAppServer({ root: R2, engine: 'E.mjs', spawnRun: () => null });
+  try {
+    const sw = await (await fetch(srv.url + 'sw.js')).text();
+    assert(!sw.includes("'/api/changes'"), 'sin cacheo especial de /api/changes');
+    assert(!/api.*caches\.match/.test(sw), 'sin fallback a cache para rutas /api');
+    assert(sw.includes('offline') && sw.includes('503'), 'fallo de red => 503 {offline:true} sintetico');
+    assert(sw.includes("startsWith('/assets/')"), 'los estaticos hasheados SI se cachean (inmutables)');
+  } finally { await srv.close(); rmSync(R2, { recursive: true, force: true }); }
+});

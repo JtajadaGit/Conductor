@@ -4070,9 +4070,6 @@ const CONFIG_SCHEMA = {
   properties: {
     $schema: { type: 'string' },
     preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
-    strictTrace: { type: 'boolean', description: 'Trazabilidad CONTRACTUAL: un requisito sin código/test BLOQUEA el GREEN (no warning). Lo fija el preset; ponlo aquí para forzarlo.' },
-    strictTests: { type: 'boolean', description: 'Un requisito CON código pero SIN test BLOQUEA el GREEN. DEFAULT true ("hecho sin test" no es hecho); ponlo a false para relajarlo (los presets arreglo/retoque ya lo relajan).' },
-    strictId: { type: 'boolean', description: 'Exige id estable "<!-- id: REQ-... -->" en cada requisito (error si falta). Lo fija el preset.' },
     models: {
       type: 'object',
       description: 'Modelo por ROL (planner/coder/reviewer) y, si quieres control fino, por FASE (explore/propose/clarify/spec/design/tasks/apply/test/fix/verify — la fase GANA sobre su rol). Prefijos: "litellm:<m>" (tu proxy, $0; alias "byok:") · "copilot:<m>" (catálogo Business, AI Credits) · sin prefijo = proveedor de la sesión.',
@@ -4119,6 +4116,7 @@ const CONFIG_SCHEMA = {
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
     byokFallback: { type: 'boolean', default: false, description: 'true = si se pide byok: sin credenciales, permite caer al catálogo Business (gasta créditos). Por defecto se BLOQUEA.' },
+    rawCapture: { type: 'boolean', default: true, description: 'Guardar la salida CRUDA del modelo por fase en .conductor/raw/ (scrubbeada, tope 40k). false la desactiva. Siempre fue leída en runtime; ahora está declarada.' },
     preconditions: {
       type: 'object',
       description: 'Pre-condiciones deterministas por fase (BLOQUEAN antes de gastar tokens). Por fase: lista de "exists:<ruta>" | "git-clean" | "cmd:<comando>". Ej: {"apply":["exists:specs"]}.',
@@ -4301,7 +4299,7 @@ function renderAiact(changeDir) {
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
   const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
-    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}</li>`).join('')
+    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
   const files = d.aiGeneratedFiles.map((f) => `<li><code>${E(f.p)}</code> <span style="color:var(--tx3);font-size:.85em">${E(f.k)} · ${E(f.phase)}</span></li>`).join('') || '<li style="color:var(--tx3)">ninguno registrado</li>';
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -4517,6 +4515,7 @@ __M['drive'] = (function(){
 //   spawn(CONDUCTOR_AGENT_CMD || 'copilot', ['--allow-all-tools','--no-auto-update','-p', <prompt>])
 // El agente hereda el entorno del proceso (BYOK) — por eso el driver se ejecuta desde la shell del
 // usuario (CLI `conductor drive` / eval), no desde el MCP server (que solo recibe PATH).
+
 
 
 
@@ -4873,6 +4872,18 @@ function killTree(child) {
     try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); return; } catch {}
   }
   try { child.kill(); } catch {}
+}
+
+
+// RECEIPT DE APROBACIÓN (evidencia enterprise): sha256 corto de cada artefacto del estándar PRESENTE en el
+// momento de aprobar — «lo que aprobaste es EXACTAMENTE esto». Viaja en timeline.approvals y al AI Act.
+// Puro y best-effort: jamás rompe una pausa por un fs raro.
+function approvalSha(changeDir) {
+  const out = {};
+  const put = (rel, abs) => { try { if (existsSync(abs)) out[rel] = createHash('sha256').update(readFileSync(abs)).digest('hex').slice(0, 12); } catch {} };
+  for (const f of ['exploration.md', 'proposal.md', 'questions.md', 'design.md', 'tasks.md', 'apply-report.md', 'test-report.md', 'verify-report.md']) put(f, join(changeDir, f));
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) put(`specs/${d}/spec.md`, join(changeDir, 'specs', d, 'spec.md')); } catch {}
+  return Object.keys(out).length ? out : undefined;
 }
 
 function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, role, phase, mcp, allowTools, onActivity }) {
@@ -5420,7 +5431,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
   let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
-  const approvals = []; // registro de aprobaciones humanas (provenance / AI Act)
+  const approvals = []; // registro de aprobaciones humanas (provenance / AI Act) — con receipt sha de artefactos
   const decisions = []; // registro AUDITABLE de decisiones del revisor (nota, modelo en caliente, fix dirigido)
   while (!step.done) {
     const { phase, role, write_to } = step;
@@ -5458,7 +5469,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
             redoCount++;
             if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
             decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
-            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim() });
+            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
             log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
             step = r;
             continue;
@@ -5483,7 +5494,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       if (pr?.note && String(pr.note).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'note', value: String(pr.note).trim().slice(0, 200) });
       if (pr?.model && String(pr.model).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'model-override', value: String(pr.model).trim() });
       if (phase === 'fix' && Array.isArray(pr?.selected) && pr.selected.length) decisions.push({ at: new Date().toISOString(), phase, kind: 'fix-selection', value: pr.selected.length });
-      approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined });
+      approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
       log(`▶ aprobado — continúa "${phase}"`);
     }
     // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
@@ -6008,7 +6019,7 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
 })();
 
 // ===== lib/pipeline/sdk-runner.mjs =====
@@ -6767,14 +6778,16 @@ const MANIFEST = JSON.stringify({
 const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#6e56cf"/><text x="32" y="45" font-size="38" font-weight="800" font-family="sans-serif" fill="#fff" text-anchor="middle">C</text></svg>';
 // SERVICE WORKER versionado (instalabilidad PWA + offline del historial). Cache nombrada por versión del
 // plugin → al actualizar el motor (auto-relevo), 'activate' purga la vieja (skipWaiting+clients.claim) y
-// NUNCA sirve un app-shell rancio. /api/* = network-first (cachea /api/changes para ver historial offline);
-// /assets/* hasheados = cache-first (inmutables); navegación = network-first con fallback al shell cacheado.
+// NUNCA sirve un app-shell rancio. /api/* = red SIEMPRE y JAMÁS cacheado: con el server caído devuelve un 503
+// sintético {offline:true} — antes servía /api/changes de caché y el panel FINGÍA estar vivo con datos viejos
+// (queja real 2026-07-28: «stop y la web sigue funcionando»). /assets/* hasheados = cache-first (inmutables);
+// navegación = network-first con fallback al shell cacheado (la SPA pinta su estado «apagado» encima).
 const swJs = (version) => `const V='conductor-v${version || '0'}';const SHELL=['/','/manifest.json','/icon.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL).catch(()=>{})))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;const u=new URL(r.url);
 if(u.pathname.startsWith('/assets/')){e.respondWith(caches.match(r).then(h=>h||fetch(r).then(res=>{const cp=res.clone();caches.open(V).then(c=>c.put(r,cp));return res})));return}
-if(u.pathname.startsWith('/api/')){e.respondWith(fetch(r).then(res=>{if(u.pathname==='/api/changes'){const cp=res.clone();caches.open(V).then(c=>c.put(r,cp))}return res}).catch(()=>caches.match(r)));return}
+if(u.pathname.startsWith('/api/')){e.respondWith(fetch(r).catch(()=>new Response('{"ok":false,"offline":true}',{status:503,headers:{'content-type':'application/json'}})));return}
 if(r.mode==='navigate'){e.respondWith(fetch(r).catch(()=>caches.match('/')))}});`;
 
 // ── APP GLOBAL (v4-P2): registro de proyectos — un solo conductor para toda la máquina ──
@@ -7671,7 +7684,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   // señal (SIGINT/SIGTERM → no deja node huérfanos) y auto-apagado por inactividad. Lo de señal/idle solo
   // para la app REAL (`serve` pasa onShutdown); los tests crean servers sin onShutdown y no se ven afectados.
   const killChildren = () => { for (const [, r2] of runs) { try { r2.child?.kill?.(); } catch {} } };
-  const idleMin = onShutdown ? (Number(process.env.CONDUCTOR_IDLE_EXIT_MIN) || 480) : 0; // 8h por defecto; 0 lo desactiva
+  const idleMin = onShutdown ? (Number(process.env.CONDUCTOR_IDLE_EXIT_MIN) || 120) : 0; // 2h por defecto (un daemon local no debe vivir para siempre); 0 lo desactiva
   const sweep = setInterval(() => {
     const now = Date.now();
     for (const [k, r2] of runs) if (r2.exited && r2.exitedAt && now - r2.exitedAt > 600000) runs.delete(k); // saca runs terminados > 10 min del Map
@@ -7929,8 +7942,8 @@ const TOOLS = {
   // ENTRADA UNIVERSAL POR MCP (el arranque desde cualquier chat): cualquier host MCP (IDE, CLI de agente, etc.) puede abrir
   // la app única de conductor enfocada en el repo actual. La app se arranca si está apagada; los runs se lanzan
   // desde el panel (decisión de producto: la web es la superficie de lanzamiento/revisión, el host solo la abre).
-  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. The universal entry from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' } }, required: [] } },
-    run: async ({ projectRoot }) => {
+  conductor_app: { def: { name: 'conductor_app', title: 'open the conductor panel (single local app)', description: 'Open (starting it if needed) the LOCAL conductor web panel focused on the given project. The universal entry from any MCP host: runs are launched and reviewed in the panel. Returns the URL (also tries to open the browser; set CONDUCTOR_NO_OPEN=1 to skip).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string', description: 'absolute path of the repo to focus (default: the MCP server cwd)' }, open: { type: 'boolean', description: 'false = do NOT open the browser: return url + runs summary so the CHAT can answer in place (the polite default for an empty /conductor)' } }, required: [] } },
+    run: async ({ projectRoot, open }) => {
       const root = resolve(projectRoot || process.cwd());
       const port = Number(process.env.CONDUCTOR_PORT) || 4750;
       const url = `http://127.0.0.1:${port}/`;
@@ -7948,10 +7961,20 @@ const TOOLS = {
         const j = await fr.json().catch(() => null);
         if (fr.ok && j && j.ok) { focused = true; name = j.name || name; openspec = j.openspec ?? null; }
       } catch { /* foco best-effort: sin él la app abre con el foco anterior y se avisa en note */ }
-      if (process.env.CONDUCTOR_NO_OPEN !== '1') {
+      if (open !== false && process.env.CONDUCTOR_NO_OPEN !== '1') {
         try { const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`; execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true }); } catch { /* sin navegador: la URL devuelta basta */ }
       }
-      return { ok: true, url, project: name, focused, openspec, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
+      // open:false = modo ESTADO para el chat (el /conductor vacío): runs del proyecto en una línea, sin ventanas
+      let runs;
+      if (open === false) {
+        try {
+          const ch = await fetch(url + 'api/changes', { signal: AbortSignal.timeout(3000) }).then((r) => (r.ok ? r.json() : null));
+          const mine = (ch?.projects || []).find((pr) => pr.name === name) || null;
+          const list = mine?.changes || ch?.changes || [];
+          runs = { total: list.length, paused: list.filter((c) => c.pending).length, running: list.filter((c) => c.running || c.alive).length };
+        } catch { /* resumen best-effort */ }
+      }
+      return { ok: true, url, project: name, focused, openspec, runs, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
   conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~90s with a status: "working" = phase still running → IMMEDIATELY call conductor_continue {action:"wait"} and repeat (do not narrate each wait); "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
@@ -8144,11 +8167,11 @@ switch (cmd) {
     if (has('--json')) { console.log(JSON.stringify(r, null, 2)); process.exit(0); }
     printCost(r); if (otlp) console.log(`  OTLP → ${otlp}\n`); process.exit(0);
   }
-  case 'run': case 'resume': case 'status': {
+  case 'resume': case 'status': { // legacy .runs — 'run' ya NO vive aqui: es el gesto app (como promete la ayuda)
     const runsDir = join(ROOT, '.runs');
     if (cmd === 'status') { const id = pos[0]; const p = join(runsDir, (existsSync(join(runsDir, `${id}.json`)) ? id : R.runIdFor(id)) + '.json'); if (!existsSync(p)) bad('run no encontrado'); const s = JSON.parse(readFileSync(p, 'utf8')); has('--json') ? console.log(JSON.stringify(s, null, 2)) : printRun(s); process.exit(0); }
     if (cmd === 'resume') { const p = join(runsDir, `${pos[0]}.json`); if (!existsSync(p)) bad('run no encontrado'); const s = R.resume(JSON.parse(readFileSync(p, 'utf8'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1); }
-    const s = R.advance(R.loadOrNew(runsDir, pos[0], flag('--complexity', 'medium'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1);
+    bad('resume <runId> | status <runId|changeDir>');
   }
   case 'drive': {
     // DRIVER DETERMINISTA: el código conduce el pipeline y llama al modelo (BYOK) por fase.
@@ -8826,11 +8849,14 @@ switch (cmd) {
   case undefined: case 'app': case 'run': { // `conductor` = `conductor run` = abre la miniweb en este repo
     const url = 'http://127.0.0.1:4750/';
     const rootArg = pos[0] ? resolve(pos[0]) : process.cwd();
-    const ping2 = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => r.ok).catch(() => false);
-    let alive = await ping2();
+    const pingInfo = () => fetch(url + 'api/ping', { signal: AbortSignal.timeout(1200) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    let info = await pingInfo();
+    const wasAlive = !!info;
+    let alive = wasAlive;
     if (!alive) {
+      console.log(`▶ arrancando conductor v${VERSION} …`);
       spawn(process.execPath, [resolve(process.argv[1]), 'serve', rootArg], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } }).unref();
-      for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); alive = await ping2(); }
+      for (let i = 0; i < 14 && !alive; i++) { await new Promise((r) => setTimeout(r, 500)); info = await pingInfo(); alive = !!info; }
       if (!alive) { console.error('conductor: la app no arrancó (¿:4750 ocupado por otra cosa?)'); process.exit(1); }
     }
     // ARRANQUE PER-REPO (Opción A): fija el FOCO en el repo desde el que lanzaste `conductor` (server-side) → el
@@ -8848,6 +8874,8 @@ switch (cmd) {
         execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true });
       } catch { /* sin navegador disponible: la URL impresa basta */ }
     }
+    if (wasAlive) console.log(`✓ conductor ya estaba encendido — v${info?.version || '?'} sirviendo ${info?.root || 'tu proyecto'} · te abro el panel`);
+    else console.log(`✓ conductor v${VERSION} en marcha · (para pararlo: conductor stop)`);
     console.log(`🌐 conductor: ${url}`);
     break;
   }
@@ -8896,7 +8924,7 @@ switch (cmd) {
       'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
       '---',
       '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
-      '- Si $ARGUMENTS está VACÍO: llama a la tool `conductor_app` (abre el panel web local) y devuelve su URL.',
+      '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
       '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
@@ -8985,7 +9013,7 @@ switch (cmd) {
         'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
         '---',
         '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
-        '- Si $ARGUMENTS está VACÍO: llama a la tool `conductor_app` (abre el panel web local) y devuelve su URL.',
+        '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
         '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
         '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
         '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
@@ -9140,4 +9168,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: f26cce878258093701ed97baebacb609c436bfe5619bdd0158cc6db14e507970
+// build-inputs-sha256: c0772c6f4075b31a2732f1899849c1e55fb2f8442b2e42f09cd33cccbd58e148

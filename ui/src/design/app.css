@@ -223,3 +223,9 @@ h1 { font-size: 1.55rem; }
    inequívoco — antes la UI se congelaba en datos viejos sin avisar. Reaparece la conexión → desaparece solo. */
 .offline-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 60; display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .4rem .8rem; background: var(--warn); color: #fff; font: 600 .8rem/1.3 var(--font); box-shadow: var(--sh); }
 .offline-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: pulse 1.4s ease-in-out infinite; }
+
+/* estado «servidor apagado» — honesto y a pantalla completa (la barrita se ignoraba; queja real 2026-07-28) */
+.srv-down { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .65rem; text-align: center; padding: 2rem 1rem; }
+.srv-down-ic { font-size: 2.6rem; color: var(--tx3); }
+.srv-down h1 { font-size: 1.25rem; margin: 0; }
+.srv-down p { color: var(--tx2); max-width: 34rem; margin: 0 0 .6rem; line-height: 1.55; }

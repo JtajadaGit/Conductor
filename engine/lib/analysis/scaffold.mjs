@@ -12,9 +12,6 @@ export const CONFIG_SCHEMA = {
   properties: {
     $schema: { type: 'string' },
     preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
-    strictTrace: { type: 'boolean', description: 'Trazabilidad CONTRACTUAL: un requisito sin código/test BLOQUEA el GREEN (no warning). Lo fija el preset; ponlo aquí para forzarlo.' },
-    strictTests: { type: 'boolean', description: 'Un requisito CON código pero SIN test BLOQUEA el GREEN. DEFAULT true ("hecho sin test" no es hecho); ponlo a false para relajarlo (los presets arreglo/retoque ya lo relajan).' },
-    strictId: { type: 'boolean', description: 'Exige id estable "<!-- id: REQ-... -->" en cada requisito (error si falta). Lo fija el preset.' },
     models: {
       type: 'object',
       description: 'Modelo por ROL (planner/coder/reviewer) y, si quieres control fino, por FASE (explore/propose/clarify/spec/design/tasks/apply/test/fix/verify — la fase GANA sobre su rol). Prefijos: "litellm:<m>" (tu proxy, $0; alias "byok:") · "copilot:<m>" (catálogo Business, AI Credits) · sin prefijo = proveedor de la sesión.',
@@ -61,6 +58,7 @@ export const CONFIG_SCHEMA = {
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
     byokFallback: { type: 'boolean', default: false, description: 'true = si se pide byok: sin credenciales, permite caer al catálogo Business (gasta créditos). Por defecto se BLOQUEA.' },
+    rawCapture: { type: 'boolean', default: true, description: 'Guardar la salida CRUDA del modelo por fase en .conductor/raw/ (scrubbeada, tope 40k). false la desactiva. Siempre fue leída en runtime; ahora está declarada.' },
     preconditions: {
       type: 'object',
       description: 'Pre-condiciones deterministas por fase (BLOQUEAN antes de gastar tokens). Por fase: lista de "exists:<ruta>" | "git-clean" | "cmd:<comando>". Ej: {"apply":["exists:specs"]}.',

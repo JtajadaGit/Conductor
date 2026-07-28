@@ -15,6 +15,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, rea
 import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { start, next, resolvePhases, redoPlanning, KNOWN_PHASES } from './orchestrate.mjs';
 import { resolvePreset } from './presets.mjs';
 import { checkCoherence, parseReport } from '../gates/coherence.mjs';
@@ -367,6 +368,18 @@ export function killTree(child) {
     try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); return; } catch {}
   }
   try { child.kill(); } catch {}
+}
+
+
+// RECEIPT DE APROBACIÓN (evidencia enterprise): sha256 corto de cada artefacto del estándar PRESENTE en el
+// momento de aprobar — «lo que aprobaste es EXACTAMENTE esto». Viaja en timeline.approvals y al AI Act.
+// Puro y best-effort: jamás rompe una pausa por un fs raro.
+export function approvalSha(changeDir) {
+  const out = {};
+  const put = (rel, abs) => { try { if (existsSync(abs)) out[rel] = createHash('sha256').update(readFileSync(abs)).digest('hex').slice(0, 12); } catch {} };
+  for (const f of ['exploration.md', 'proposal.md', 'questions.md', 'design.md', 'tasks.md', 'apply-report.md', 'test-report.md', 'verify-report.md']) put(f, join(changeDir, f));
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) put(`specs/${d}/spec.md`, join(changeDir, 'specs', d, 'spec.md')); } catch {}
+  return Object.keys(out).length ? out : undefined;
 }
 
 export function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, role, phase, mcp, allowTools, onActivity }) {
@@ -914,7 +927,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
   let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
-  const approvals = []; // registro de aprobaciones humanas (provenance / AI Act)
+  const approvals = []; // registro de aprobaciones humanas (provenance / AI Act) — con receipt sha de artefactos
   const decisions = []; // registro AUDITABLE de decisiones del revisor (nota, modelo en caliente, fix dirigido)
   while (!step.done) {
     const { phase, role, write_to } = step;
@@ -952,7 +965,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
             redoCount++;
             if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
             decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
-            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim() });
+            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
             log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
             step = r;
             continue;
@@ -977,7 +990,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       if (pr?.note && String(pr.note).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'note', value: String(pr.note).trim().slice(0, 200) });
       if (pr?.model && String(pr.model).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'model-override', value: String(pr.model).trim() });
       if (phase === 'fix' && Array.isArray(pr?.selected) && pr.selected.length) decisions.push({ at: new Date().toISOString(), phase, kind: 'fix-selection', value: pr.selected.length });
-      approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined });
+      approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
       log(`▶ aprobado — continúa "${phase}"`);
     }
     // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
