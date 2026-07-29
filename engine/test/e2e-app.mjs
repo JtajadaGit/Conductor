@@ -164,7 +164,15 @@ try {
   // ── ESCENARIO 3: MICRO RETIRADO (decisión: lanzar = SIEMPRE SDD gobernado) + modo AUTO (sin pausas) ──
   // El cliente envía complexity:'micro' pero el server lo IGNORA y deriva un flujo GOBERNADO (resolvePlan):
   // no hay vía a un run sin spec desde el producto. Verificamos que el run pasa por verify (gobierno) y cierra GREEN.
-  const l3 = await apiJson('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'añade un componente header con título y test', name: 'micro-e2e', complexity: 'micro', auto: true }) });
+  // el run anterior (resume) acaba de dar GREEN: su driver puede tardar unos ms/s en soltar el lock y
+  // salir (más en máquinas cargadas). busyProject aquí NO es fallo: es el guardarraíl 1-run/repo haciendo
+  // su trabajo — reintento acotado, como haría un humano que espera un segundo y vuelve a pulsar.
+  let l3 = null;
+  for (let i = 0; i < 40; i++) {
+    l3 = await apiJson('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request: 'añade un componente header con título y test', name: 'micro-e2e', complexity: 'micro', auto: true }) });
+    if (l3.ok || !l3.busyProject) break;
+    await sleep(500);
+  }
   if (!l3.ok) fail('launch (micro ignorado): ' + JSON.stringify(l3));
   for (let i = 0; i < 220; i++) { await sleep(400); st = await apiJson('/api/run/micro-e2e/state'); if (st.pending) fail('auto NO debe pausar'); if (st.done) break; }
   if (st.verdict !== 'GREEN') fail('no llegó a GREEN: ' + st.verdict + ' — registro:\n' + (st.logTail || []).join('\n'));

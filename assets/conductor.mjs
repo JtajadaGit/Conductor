@@ -4082,6 +4082,8 @@ const CONFIG_SCHEMA = {
   type: 'object',
   properties: {
     $schema: { type: 'string' },
+    _ayuda: { type: 'string', description: 'Texto de ayuda de la plantilla — el motor lo ignora.' },
+    _ejemplos: { type: 'object', description: 'Ejemplos de la plantilla — el motor los ignora.' },
     preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
     models: {
       type: 'object',
@@ -4196,6 +4198,11 @@ const CONFIG_SCHEMA = {
 // init v2: SIN $schema — el fichero de schema ya no se escribe en el repo del usuario (apuntarlo sería
 // un enlace roto). La validación real es del motor (doctor); el autocompletado, opción del editor.
 const DEFAULT_CONFIG = {
+  _ayuda: 'Gobierno del EQUIPO (committeable). NO necesitas rellenar nada: todo tiene default. models = tu mezcla por rol/fase (la escribe el botón 💾 del panel, o tú a mano — ver _ejemplos); preset = quick-fix|visual|feature|migration; el resto de knobs en la doc. Las claves que empiezan por _ se ignoran.',
+  _ejemplos: {
+    models: { planner: 'litellm:tu-modelo-barato', coder: 'copilot:claude-sonnet-4.5', spec: 'copilot:gpt-4.1' },
+    preset: 'feature',
+  },
   models: {},
   autoApprove: false,
 };
@@ -4208,6 +4215,42 @@ const COPILOTIGNORE = [
   '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
   'openspec/changes/**/.conductor/',
 ].join('\n') + '\n';
+
+// REFRESCO al arrancar la app (decisión de producto 2026-07-29): config.yaml es espejo DETECTADO y
+// machine-owned — se regenera entero con fecha; si el humano quiere contexto editable, eso es project.md.
+// una sola fuente del yaml (init y refresh): machine-owned, con fecha de detección
+function buildMetaYaml(root, stk, dirs, scripts) {
+  // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
+  return [
+    '# conductor — metadata DETECTADA del proyecto (machine-owned: la app la refresca al arrancar).',
+    '# Espejo de lo que el motor VE. El contexto EDITABLE (propósito, convenciones) vive en openspec/project.md.',
+    `name: ${basename(root) || 'proyecto'}`,
+    `detected: ${JSON.stringify(new Date().toISOString().slice(0, 10))}`,
+    'stack:',
+    `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
+    stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
+    stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
+    stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
+    stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
+    dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
+    ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
+    Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
+    ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
+    '',
+  ].join('\n');
+}
+
+function refreshProjectMeta(root) {
+  try {
+    const ymlPath = join(root, 'openspec', 'config.yaml');
+    if (!existsSync(ymlPath)) return false;
+    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch {}
+    const dirs = topDirs(root);
+    const scripts = pkgScripts(root);
+    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts));
+    return true;
+  } catch { return false; }
+}
 
 // dirs de primer nivel con señal (para structure: de config.yaml) — sin recursión, sin ejecutar nada
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'openspec']);
@@ -4245,25 +4288,7 @@ function initConfig(openspecDir) {
     let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
     const dirs = topDirs(root);
     const scripts = pkgScripts(root);
-    // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
-    const yml = [
-      '# conductor — metadata DETECTADA del proyecto (init v2: motor, determinista, sin LLM).',
-      '# Espejo de lo que el motor VE (si se equivoca, corrígelo aquí y avisa). El contexto',
-      '# EDITABLE (propósito, convenciones, decisiones) vive en openspec/project.md.',
-      `name: ${basename(root) || 'proyecto'}`,
-      'stack:',
-      `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
-      stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
-      stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
-      stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
-      stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
-      dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
-      ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
-      Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
-      ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
-      '',
-    ].join('\n');
-    writeFileSync(ymlPath, yml); metadata = true;
+    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts)); metadata = true;
     // project.md: el CONTEXTO del estándar para humanos y agentes (lo que en v1 escribía la skill con LLM,
     // ahora nace determinista y editable; las fases de planificación lo leen si existe)
     const pmPath = join(openspecDir, 'project.md');
@@ -4300,7 +4325,7 @@ function initConfig(openspecDir) {
   return { cfgPath, created, ymlPath, metadata, projectMd: join(openspecDir, 'project.md'), ignorePath, copilotignore };
 }
 
-return { initConfig, CONFIG_SCHEMA };
+return { refreshProjectMeta, initConfig, CONFIG_SCHEMA };
 })();
 
 // ===== lib/serving/aiact.mjs =====
@@ -6376,6 +6401,7 @@ const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate } = __M['secret'];
 const { plumbPath } = __M['plumb'];
+const { refreshProjectMeta } = __M['scaffold'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
   if (!root || !rel) return null;
@@ -7267,6 +7293,8 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   // init v2: la app garantiza la plantilla de credenciales aunque nadie pasara por setup/init.
   // DENTRO de createAppServer (no a nivel de módulo): un import jamás debe escribir en el HOME real.
   try { ensureByokTemplate(CONDUCTOR_HOME()); } catch { /* best-effort: el panel enseña el formato igualmente */ }
+  // decisión 2026-07-29: config.yaml (espejo detectado) se refresca en cada arranque — jamás toca project.md
+  try { refreshProjectMeta(root); } catch { /* sin openspec aún: nada que refrescar */ }
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }
   for (const p of loadRegistry()) registry.set(p.id, p);
@@ -8575,34 +8603,48 @@ switch (cmd) {
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
     const r = initConfig(join(rootI2, 'openspec'));
-    // /conductor en COPILOT es por-PROYECTO (no tiene comandos globales sin plugin): patrón daisy
-    // "skills mode" — .github/skills/<nombre>/SKILL.md con $ARGUMENTS ⇒ /conductor en su chat.
-    let copilotCmd = '';
-    try {
-      const skDir = join(rootI2, '.github', 'skills', 'conductor');
-      mkdirSync(skDir, { recursive: true });
-      writeFileSync(join(skDir, 'SKILL.md'), [
-        '---',
-        'name: conductor',
-        'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
-        '---',
-        'La petición del usuario: $ARGUMENTS',
-        '- Si viene VACÍA: llama a la tool MCP `conductor_app` (abre el panel web local) y devuelve su URL.',
-        '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
-        '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
-        '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
-        '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
-        '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
-        '',
-      ].join('\n'));
-      copilotCmd = `\n  /conductor (Copilot) → .github/skills/conductor/SKILL.md (por-proyecto, patrón estándar)`;
-    } catch {}
+    // /conductor POR-PROYECTO y COMMITTEABLE (decisión 2026-07-29): la integración de MÁQUINA la hace
+    // `setup`; init deja los comandos de PROYECTO — al clonar el repo, TODO el equipo hereda /conductor.
+    // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.
+    const BODY_CMD = [
+      'La petición del usuario: $ARGUMENTS',
+      '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
+      '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
+      '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
+      '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} sin narrar cada espera.',
+      '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
+      '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '',
+    ];
+    const DESC = 'Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)';
+    const homeH = process.env.CONDUCTOR_USERHOME || homedir();
+    const HOSTS_PROJ = [
+      { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'commands', 'conductor.md'), rel: '.claude/commands/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+    ];
+    let chosenH = HOSTS_PROJ.filter((h) => h.det);
+    const tty2 = process.stdin.isTTY || process.env.CONDUCTOR_TTY === '1';
+    if (tty2) {
+      const det = chosenH.map((h) => h.label).join(', ') || 'ninguno';
+      const rl2 = createInterface({ input: process.stdin, output: process.stdout });
+      const ans = (await new Promise((res) => rl2.question(`  /conductor por-proyecto (committeable — tu equipo lo hereda al clonar):\n    [1] Copilot  [2] Claude Code  [3] OpenCode  ·  Enter = detectados (${det})  ·  n = ninguno\n  → `, res))).trim().toLowerCase();
+      rl2.close();
+      if (ans === 'n') chosenH = [];
+      else if (ans) chosenH = HOSTS_PROJ.filter((h) => ans.includes(h.n));
+    }
+    let hostLines = '';
+    for (const h of chosenH) {
+      try { mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`; } catch {}
+    }
+    if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
   project.md → ${r.projectMd} (contexto del proyecto: RELLÉNALO, las fases de planificación lo leen)
   config.yaml → ${r.ymlPath} (metadata detectada: stack, estructura, scripts)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, preset, gates)
-  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${copilotCmd}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }
@@ -9263,4 +9305,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: febb739daa9fd3030db30b1bc5d883dd490e86a431ef9d25b681f1385bc9ade1
+// build-inputs-sha256: c3eb712f557e8f93d145db27781770efc19a21b5ef2f4265c4b35bb5afa54a48

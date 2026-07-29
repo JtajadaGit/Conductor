@@ -41,3 +41,26 @@ await test('install: flujo interactivo guionizado — saltar todo termina limpio
   assert(out.includes('✅ Listo'), 'cierre con resumen de superficies');
   rmSync(home, { recursive: true, force: true });
 });
+
+await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectados; "n" no conecta ninguno; comandos committeables', async () => {
+  const { readFileSync: rf, existsSync: ex } = await import('node:fs');
+  const home = join(HERE, '.tmp-initmenu-home');
+  const proj = join(HERE, '.tmp-initmenu-proj');
+  rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true });
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+  const env = { ...process.env, CONDUCTOR_USERHOME: home, CONDUCTOR_HOME: join(home, '.conductor') };
+  // pipe (sin TTY): conecta los DETECTADOS sin preguntar (CI/scripts jamas se cuelgan)
+  execFileSync(process.execPath, [BIN, 'init', proj], { encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 30000, env });
+  assert(ex(join(proj, '.claude', 'commands', 'conductor.md')), 'comando de proyecto de Claude escrito (detectado)');
+  assert(ex(join(proj, '.opencode', 'command', 'conductor.md')), 'comando de proyecto de OpenCode escrito (detectado, dir SINGULAR)');
+  assert(!ex(join(proj, '.github', 'skills', 'conductor', 'SKILL.md')), 'Copilot NO detectado => no se escribe su skill');
+  assert(/open:false/.test(rf(join(proj, '.claude', 'commands', 'conductor.md'), 'utf8')), 'el comando ensena el /conductor vacio educado (open:false)');
+  // TTY guionizado con "n": ninguno
+  const proj2 = join(HERE, '.tmp-initmenu-proj2');
+  rmSync(proj2, { recursive: true, force: true });
+  execFileSync(process.execPath, [BIN, 'init', proj2], { encoding: 'utf8', input: 'n\n', windowsHide: true, timeout: 30000, env: { ...env, CONDUCTOR_TTY: '1' } });
+  assert(!ex(join(proj2, '.claude')) && !ex(join(proj2, '.opencode')), '"n" = sin comandos de proyecto');
+  assert(ex(join(proj2, 'openspec', 'project.md')), 'el init OpenSpec ocurre igualmente');
+  rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true }); rmSync(proj2, { recursive: true, force: true });
+});

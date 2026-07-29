@@ -35,6 +35,7 @@ import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate } from '../provenance/secret.mjs';
 import { plumbPath } from '../core/plumb.mjs';
+import { refreshProjectMeta } from '../analysis/scaffold.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -927,6 +928,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // init v2: la app garantiza la plantilla de credenciales aunque nadie pasara por setup/init.
   // DENTRO de createAppServer (no a nivel de módulo): un import jamás debe escribir en el HOME real.
   try { ensureByokTemplate(CONDUCTOR_HOME()); } catch { /* best-effort: el panel enseña el formato igualmente */ }
+  // decisión 2026-07-29: config.yaml (espejo detectado) se refresca en cada arranque — jamás toca project.md
+  try { refreshProjectMeta(root); } catch { /* sin openspec aún: nada que refrescar */ }
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }
   for (const p of loadRegistry()) registry.set(p.id, p);

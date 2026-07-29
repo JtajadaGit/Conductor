@@ -445,34 +445,48 @@ switch (cmd) {
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
     const r = initConfig(join(rootI2, 'openspec'));
-    // /conductor en COPILOT es por-PROYECTO (no tiene comandos globales sin plugin): patrón daisy
-    // "skills mode" — .github/skills/<nombre>/SKILL.md con $ARGUMENTS ⇒ /conductor en su chat.
-    let copilotCmd = '';
-    try {
-      const skDir = join(rootI2, '.github', 'skills', 'conductor');
-      mkdirSync(skDir, { recursive: true });
-      writeFileSync(join(skDir, 'SKILL.md'), [
-        '---',
-        'name: conductor',
-        'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
-        '---',
-        'La petición del usuario: $ARGUMENTS',
-        '- Si viene VACÍA: llama a la tool MCP `conductor_app` (abre el panel web local) y devuelve su URL.',
-        '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
-        '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
-        '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
-        '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
-        '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
-        '',
-      ].join('\n'));
-      copilotCmd = `\n  /conductor (Copilot) → .github/skills/conductor/SKILL.md (por-proyecto, patrón estándar)`;
-    } catch {}
+    // /conductor POR-PROYECTO y COMMITTEABLE (decisión 2026-07-29): la integración de MÁQUINA la hace
+    // `setup`; init deja los comandos de PROYECTO — al clonar el repo, TODO el equipo hereda /conductor.
+    // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.
+    const BODY_CMD = [
+      'La petición del usuario: $ARGUMENTS',
+      '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
+      '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
+      '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
+      '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} sin narrar cada espera.',
+      '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
+      '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '',
+    ];
+    const DESC = 'Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)';
+    const homeH = process.env.CONDUCTOR_USERHOME || homedir();
+    const HOSTS_PROJ = [
+      { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'commands', 'conductor.md'), rel: '.claude/commands/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+    ];
+    let chosenH = HOSTS_PROJ.filter((h) => h.det);
+    const tty2 = process.stdin.isTTY || process.env.CONDUCTOR_TTY === '1';
+    if (tty2) {
+      const det = chosenH.map((h) => h.label).join(', ') || 'ninguno';
+      const rl2 = createInterface({ input: process.stdin, output: process.stdout });
+      const ans = (await new Promise((res) => rl2.question(`  /conductor por-proyecto (committeable — tu equipo lo hereda al clonar):\n    [1] Copilot  [2] Claude Code  [3] OpenCode  ·  Enter = detectados (${det})  ·  n = ninguno\n  → `, res))).trim().toLowerCase();
+      rl2.close();
+      if (ans === 'n') chosenH = [];
+      else if (ans) chosenH = HOSTS_PROJ.filter((h) => ans.includes(h.n));
+    }
+    let hostLines = '';
+    for (const h of chosenH) {
+      try { mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`; } catch {}
+    }
+    if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
   project.md → ${r.projectMd} (contexto del proyecto: RELLÉNALO, las fases de planificación lo leen)
   config.yaml → ${r.ymlPath} (metadata detectada: stack, estructura, scripts)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, preset, gates)
-  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${copilotCmd}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }

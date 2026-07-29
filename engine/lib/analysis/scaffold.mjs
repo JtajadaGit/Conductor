@@ -11,6 +11,8 @@ export const CONFIG_SCHEMA = {
   type: 'object',
   properties: {
     $schema: { type: 'string' },
+    _ayuda: { type: 'string', description: 'Texto de ayuda de la plantilla — el motor lo ignora.' },
+    _ejemplos: { type: 'object', description: 'Ejemplos de la plantilla — el motor los ignora.' },
     preset: { type: 'string', enum: ['quick-fix', 'visual', 'feature', 'migration'], description: 'Preset de gobierno (dial trivial→complejo): quick-fix/visual (laxo) · feature (trazabilidad+id estrictos) · migration (además spec-freeze). Fija strict/specFreeze/pausas; cualquier knob explícito gana. verify SIEMPRE presente.' },
     models: {
       type: 'object',
@@ -125,6 +127,11 @@ export const CONFIG_SCHEMA = {
 // init v2: SIN $schema — el fichero de schema ya no se escribe en el repo del usuario (apuntarlo sería
 // un enlace roto). La validación real es del motor (doctor); el autocompletado, opción del editor.
 const DEFAULT_CONFIG = {
+  _ayuda: 'Gobierno del EQUIPO (committeable). NO necesitas rellenar nada: todo tiene default. models = tu mezcla por rol/fase (la escribe el botón 💾 del panel, o tú a mano — ver _ejemplos); preset = quick-fix|visual|feature|migration; el resto de knobs en la doc. Las claves que empiezan por _ se ignoran.',
+  _ejemplos: {
+    models: { planner: 'litellm:tu-modelo-barato', coder: 'copilot:claude-sonnet-4.5', spec: 'copilot:gpt-4.1' },
+    preset: 'feature',
+  },
   models: {},
   autoApprove: false,
 };
@@ -137,6 +144,42 @@ const COPILOTIGNORE = [
   '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
   'openspec/changes/**/.conductor/',
 ].join('\n') + '\n';
+
+// REFRESCO al arrancar la app (decisión de producto 2026-07-29): config.yaml es espejo DETECTADO y
+// machine-owned — se regenera entero con fecha; si el humano quiere contexto editable, eso es project.md.
+// una sola fuente del yaml (init y refresh): machine-owned, con fecha de detección
+function buildMetaYaml(root, stk, dirs, scripts) {
+  // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
+  return [
+    '# conductor — metadata DETECTADA del proyecto (machine-owned: la app la refresca al arrancar).',
+    '# Espejo de lo que el motor VE. El contexto EDITABLE (propósito, convenciones) vive en openspec/project.md.',
+    `name: ${basename(root) || 'proyecto'}`,
+    `detected: ${JSON.stringify(new Date().toISOString().slice(0, 10))}`,
+    'stack:',
+    `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
+    stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
+    stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
+    stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
+    stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
+    dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
+    ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
+    Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
+    ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
+    '',
+  ].join('\n');
+}
+
+export function refreshProjectMeta(root) {
+  try {
+    const ymlPath = join(root, 'openspec', 'config.yaml');
+    if (!existsSync(ymlPath)) return false;
+    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch {}
+    const dirs = topDirs(root);
+    const scripts = pkgScripts(root);
+    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts));
+    return true;
+  } catch { return false; }
+}
 
 // dirs de primer nivel con señal (para structure: de config.yaml) — sin recursión, sin ejecutar nada
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'openspec']);
@@ -174,25 +217,7 @@ export function initConfig(openspecDir) {
     let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
     const dirs = topDirs(root);
     const scripts = pkgScripts(root);
-    // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
-    const yml = [
-      '# conductor — metadata DETECTADA del proyecto (init v2: motor, determinista, sin LLM).',
-      '# Espejo de lo que el motor VE (si se equivoca, corrígelo aquí y avisa). El contexto',
-      '# EDITABLE (propósito, convenciones, decisiones) vive en openspec/project.md.',
-      `name: ${basename(root) || 'proyecto'}`,
-      'stack:',
-      `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
-      stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
-      stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
-      stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
-      stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
-      dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
-      ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
-      Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
-      ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
-      '',
-    ].join('\n');
-    writeFileSync(ymlPath, yml); metadata = true;
+    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts)); metadata = true;
     // project.md: el CONTEXTO del estándar para humanos y agentes (lo que en v1 escribía la skill con LLM,
     // ahora nace determinista y editable; las fases de planificación lo leen si existe)
     const pmPath = join(openspecDir, 'project.md');

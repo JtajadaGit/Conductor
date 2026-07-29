@@ -50,12 +50,14 @@ Todos los devs de la organización tienen **GitHub Copilot Business + un proxy L
 | Pieza | Quién la consume | Para qué |
 |---|---|---|
 | `openspec/project.md` | **Fases de planificación** (inyección al prompt, cap 1800 chars, solo si el humano lo rellenó) + humanos | El contexto EDITABLE del equipo: propósito, convenciones, decisiones vivas. Es el sustituto determinista del /sdd-init de v1 (aquello lo escribía el modelo; esto nace como plantilla y lo mantiene el equipo) |
-| `openspec/config.yaml` | `isSdd` (marcador de "inicializado") + humanos | Espejo de lo que el motor DETECTA (stack, entrypoints, test, estructura, scripts): si el motor ve mal el proyecto, este fichero te lo delata. El motor NO lo relee en runtime — re-detecta (más fiable que un yaml desactualizado) |
-| `openspec/conductor.json` | `readDriveConfig` (driver, cada run) + `/api` | Gobierno del EQUIPO: modelos por rol/fase, preset, gates, pipeline. La única config ejecutable |
+| `openspec/config.yaml` | `isSdd` (marcador) + humanos; **machine-owned: la app lo REGENERA en cada arranque** (línea `detected:` con fecha) | Espejo de lo que el motor DETECTA (stack, entrypoints, test, estructura, scripts). No se edita a mano: lo tuyo va en project.md |
+| `openspec/conductor.json` | `readDriveConfig` (driver, cada run) + `/api`; lo escribe el botón 💾 del panel | Gobierno del EQUIPO: modelos por rol/fase, preset, gates. **Nace como plantilla auto-explicada** (claves `_ayuda`/`_ejemplos`, ignoradas por el motor y admitidas por el schema). NADIE está obligado a rellenarlo: todo tiene default |
 | `openspec/specs/` (+README) | `promoteSpec` al archivar (escribe) + fases de planificación (leen la spec viva) | Fuente de verdad VIVA del estándar OpenSpec |
 | `openspec/changes/` + `archive/` | Todo el ciclo de runs + el board de archive | Changes activos e histórico |
 | `~/.conductor/litellm.json` (plantilla) | `byokCreds`/selector de modelos; **garantizada por cualquier entrada** (setup, init, arranque de la app) | Credenciales fichero-first; se cifra al primer uso |
 | ~~`conductor.schema.json`~~ | ~~solo autocompletado del editor~~ | **YA NO se escribe en el repo** (era ruido git; la validación real es del motor/doctor) |
+
+**Comandos /conductor por-proyecto (init, mini-menú)**: además del árbol, `init` ofrece conectar el comando de PROYECTO de cada host — `.github/skills/conductor/SKILL.md` (Copilot) · `.claude/commands/conductor.md` (Claude Code) · `.opencode/command/conductor.md` (OpenCode). Con TTY pregunta (Enter = hosts detectados en la máquina; `n` = ninguno); en pipe/CI conecta los detectados sin preguntar. Son **committeables**: al clonar el repo, todo el equipo hereda `/conductor`. La integración de MÁQUINA (MCP + comandos globales) sigue siendo de `conductor setup` — independiente del init, como debe ser.
 
 ## Anatomía de un change (`openspec/changes/<change>/`)
 **Artefactos del estándar** (los escribe el agente; mapa `artifactOf` en orchestrate): `exploration.md` (explore) · `proposal.md` (propose) · `questions.md` (clarify; el gate cuenta `- [ ]`) · `specs/<domain>/spec.md` (spec delta) · `design.md` · `tasks.md` (el driver voltea `[ ]`→`[x]`) · `apply-report.md` (apply y fix; fix añade `## Fix Cycle`) · `test-report.md` (lo escribe el driver con el resultado real) · `verify-report.md` (en multi-lente lo compone el driver).
