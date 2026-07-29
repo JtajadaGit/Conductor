@@ -927,6 +927,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
   let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
+  let projectCtx; // cache por-run: contexto de openspec/project.md para fases de planificación (init v2)
   const approvals = []; // registro de aprobaciones humanas (provenance / AI Act) — con receipt sha de artefactos
   const decisions = []; // registro AUDITABLE de decisiones del revisor (nota, modelo en caliente, fix dirigido)
   while (!step.done) {
@@ -1025,7 +1026,22 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     }
     log(`⏳ ${phase} (${role})`);
     const isCode = phase === 'apply' || phase === 'fix';
+    // CONTEXTO DE PROYECTO (init v2): openspec/project.md → fases de PLANIFICACIÓN (el coder ya recibe
+    // codemap/stack). Cap 1800 chars (token-first). La plantilla sin rellenar (solo placeholders) no se inyecta.
+    if (!isCode && projectCtx === undefined) {
+      projectCtx = null;
+      try {
+        const pmF = join(projectRoot, 'openspec', 'project.md');
+        if (existsSync(pmF)) {
+          const txt = readFileSync(pmF, 'utf8').slice(0, 1800).trim();
+          const soloPlantilla = txt.includes('(1-3 líneas: qué hace este producto') && txt.length < 700;
+          if (txt && !soloPlantilla) projectCtx = txt;
+        }
+      } catch { /* sin contexto, sin drama */ }
+      if (projectCtx) log('📘 project.md inyectado a la planificación (contexto del proyecto)');
+    }
     let prompt = buildPrompt(step, { changeDir, projectRoot, complexity, verifiedCtx, brownfieldMap, refFiles, codeMap: codeMapCtx, codeMapFocus: codeMapFocusCtx });
+    if (!isCode && projectCtx) prompt += `\n\nPROJECT CONTEXT (openspec/project.md — maintained by the team; honor it):\n${projectCtx}`;
     if (userNote) { prompt += `\n\nUSER NOTE (from the human reviewer — MUST honor): ${userNote}`; userNote = null; }
     if (teamSkills.length) {
       // auto-match por dominio/fase ∪ las invocadas con "/nombre" (dedup por referencia — mismos objetos de teamSkills).

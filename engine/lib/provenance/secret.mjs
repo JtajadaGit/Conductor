@@ -93,6 +93,19 @@ export function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2)
 // PLANTILLA de litellm.json (la escribe `conductor setup` si no existe — el usuario ABRE y RELLENA, nunca
 // crea el fichero desde cero). Los placeholders enseñan el formato; isTemplateCreds los detecta para que la
 // plantilla SIN rellenar jamás cuente como credenciales (ni se cifra, ni pinta modelos en el selector).
+// GARANTÍA DE PLANTILLA (init v2): la crea CUALQUIER punto de entrada (setup, init, arranque de la app,
+// litellm status) — antes solo setup, y quien iba directo a init encontraba un hint hacia un fichero
+// inexistente (queja real 2026-07-29). Idempotente: jamás pisa credenciales existentes (ni legado byok.json).
+export function ensureByokTemplate(home) {
+  try {
+    const dir = home || homeDir();
+    if (existsSync(join(dir, 'litellm.json')) || existsSync(join(dir, 'byok.json'))) return false;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'litellm.json'), JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 });
+    return true;
+  } catch { return false; }
+}
+
 export const LITELLM_TEMPLATE = {
   _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se CIFRA sola al primer uso (nunca queda en claro). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
   baseUrl: 'https://TU-PROXY/v1',

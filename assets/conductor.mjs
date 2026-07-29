@@ -214,6 +214,19 @@ function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2); }
 // PLANTILLA de litellm.json (la escribe `conductor setup` si no existe — el usuario ABRE y RELLENA, nunca
 // crea el fichero desde cero). Los placeholders enseñan el formato; isTemplateCreds los detecta para que la
 // plantilla SIN rellenar jamás cuente como credenciales (ni se cifra, ni pinta modelos en el selector).
+// GARANTÍA DE PLANTILLA (init v2): la crea CUALQUIER punto de entrada (setup, init, arranque de la app,
+// litellm status) — antes solo setup, y quien iba directo a init encontraba un hint hacia un fichero
+// inexistente (queja real 2026-07-29). Idempotente: jamás pisa credenciales existentes (ni legado byok.json).
+function ensureByokTemplate(home) {
+  try {
+    const dir = home || homeDir();
+    if (existsSync(join(dir, 'litellm.json')) || existsSync(join(dir, 'byok.json'))) return false;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'litellm.json'), JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 });
+    return true;
+  } catch { return false; }
+}
+
 const LITELLM_TEMPLATE = {
   _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se CIFRA sola al primer uso (nunca queda en claro). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
   baseUrl: 'https://TU-PROXY/v1',
@@ -277,7 +290,7 @@ function decryptDpapiLegacy(enc) {
   return null;
 }
 
-return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, isTemplateCreds, byokFile, sealByokFile, LITELLM_TEMPLATE };
+return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, ensureByokTemplate, isTemplateCreds, byokFile, sealByokFile, LITELLM_TEMPLATE };
 })();
 
 // ===== lib/core/report.mjs =====
@@ -4180,8 +4193,9 @@ const CONFIG_SCHEMA = {
 
 // sin "serve": la app única :4750 ES la superficie (decisión cerrada); la mini-web por-run del CLI headless
 // queda como opt-in explícito (--serve / CONDUCTOR_SERVE=1), no como default que el scaffold reactiva.
+// init v2: SIN $schema — el fichero de schema ya no se escribe en el repo del usuario (apuntarlo sería
+// un enlace roto). La validación real es del motor (doctor); el autocompletado, opción del editor.
 const DEFAULT_CONFIG = {
-  $schema: './conductor.schema.json',
   models: {},
   autoApprove: false,
 };
@@ -4195,16 +4209,33 @@ const COPILOTIGNORE = [
   'openspec/changes/**/.conductor/',
 ].join('\n') + '\n';
 
-// escribe schema (siempre, idempotente) + conductor.json (solo si no existe — nunca pisa la config del usuario)
+// dirs de primer nivel con señal (para structure: de config.yaml) — sin recursión, sin ejecutar nada
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'openspec']);
+function topDirs(root) {
+  try {
+    return readdirSync(root).filter((d) => { try { return !d.startsWith('.') && !SKIP_DIRS.has(d) && statSync(join(root, d)).isDirectory(); } catch { return false; } }).slice(0, 12);
+  } catch { return []; }
+}
+function pkgScripts(root) {
+  try { return JSON.parse(String(readFileSync(join(root, 'package.json')))).scripts || {}; } catch { return {}; }
+}
+
+// escribe conductor.json (solo si no existe — nunca pisa la config del usuario)
 // + .copilotignore en el ROOT del proyecto (padre de openspec/, idempotente — nunca pisa el del usuario).
 function initConfig(openspecDir) {
   mkdirSync(openspecDir, { recursive: true });
-  const schemaPath = join(openspecDir, 'conductor.schema.json');
-  writeFileSync(schemaPath, JSON.stringify(CONFIG_SCHEMA, null, 2) + '\n');
   const cfgPath = join(openspecDir, 'conductor.json');
   let created = false;
   if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
   const root = dirname(resolve(openspecDir));
+  // ÁRBOL OpenSpec visible desde el minuto uno (init v2, 2026-07-29): un dev que conoce el estándar debe
+  // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
+  mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
+  mkdirSync(join(openspecDir, 'specs'), { recursive: true });
+  const specsReadme = join(openspecDir, 'specs', 'README.md');
+  if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
+  const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');
+  if (!existsSync(keep)) writeFileSync(keep, '');
   // config.yaml: metadata OpenSpec del proyecto (stack DETECTADO por el motor). Init ATÓMICO y COMPLETO (#6): un
   // fresh-init deja conductor.json (config EJECUTABLE) Y config.yaml (metadata) → "inicializado" deja de ser ambiguo
   // (antes una ruta creaba uno y otra el otro). Determinista, sin LLM. Idempotente: nunca pisa el del usuario.
@@ -4212,22 +4243,61 @@ function initConfig(openspecDir) {
   let metadata = false;
   if (!existsSync(ymlPath)) {
     let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
+    const dirs = topDirs(root);
+    const scripts = pkgScripts(root);
+    // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
     const yml = [
-      '# conductor — metadata del proyecto (generada por el motor en init; determinista, sin LLM).',
+      '# conductor — metadata DETECTADA del proyecto (init v2: motor, determinista, sin LLM).',
+      '# Espejo de lo que el motor VE (si se equivoca, corrígelo aquí y avisa). El contexto',
+      '# EDITABLE (propósito, convenciones, decisiones) vive en openspec/project.md.',
       `name: ${basename(root) || 'proyecto'}`,
-      // entrecomillado JSON: stk.summary lleva "· test: <cmd>" (con ": " embebido) y testCmd es un comando libre;
-      // sin comillas, un ": " interno rompe parsers YAML conformes. JSON.stringify → string YAML válida y escapada.
-      `stack: ${JSON.stringify(stk.summary || 'desconocido')}`,
+      'stack:',
+      `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
+      stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
+      stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
+      stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
       stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
+      dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
+      ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
+      Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
+      ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
       '',
     ].join('\n');
     writeFileSync(ymlPath, yml); metadata = true;
+    // project.md: el CONTEXTO del estándar para humanos y agentes (lo que en v1 escribía la skill con LLM,
+    // ahora nace determinista y editable; las fases de planificación lo leen si existe)
+    const pmPath = join(openspecDir, 'project.md');
+    if (!existsSync(pmPath)) {
+      writeFileSync(pmPath, [
+        `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
+        '',
+        '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
+        '',
+        '## Propósito',
+        '(1-3 líneas: qué hace este producto y para quién)',
+        '',
+        '## Stack (detectado)',
+        `- ${stk.summary || 'desconocido'}`,
+        stk.entrypoints?.length ? `- entrypoints: ${stk.entrypoints.join(', ')}` : '',
+        stk.testCmd ? `- tests: \`${stk.testCmd}\`` : '',
+        '',
+        '## Estructura',
+        ...(dirs.length ? dirs.map((d) => `- \`${d}/\``) : ['(añade aquí un mapa breve de carpetas)']),
+        '',
+        '## Convenciones',
+        '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
+        '',
+        '## Decisiones vivas',
+        '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
+        '',
+      ].filter((l) => l !== '').join('\n') + '\n');
+    }
   }
   // .copilotignore al root del proyecto (token-first determinista)
   const ignorePath = join(root, '.copilotignore');
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
-  return { schemaPath, cfgPath, created, ymlPath, metadata, ignorePath, copilotignore };
+  return { cfgPath, created, ymlPath, metadata, projectMd: join(openspecDir, 'project.md'), ignorePath, copilotignore };
 }
 
 return { initConfig, CONFIG_SCHEMA };
@@ -5431,6 +5501,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
   let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
+  let projectCtx; // cache por-run: contexto de openspec/project.md para fases de planificación (init v2)
   const approvals = []; // registro de aprobaciones humanas (provenance / AI Act) — con receipt sha de artefactos
   const decisions = []; // registro AUDITABLE de decisiones del revisor (nota, modelo en caliente, fix dirigido)
   while (!step.done) {
@@ -5529,7 +5600,22 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     }
     log(`⏳ ${phase} (${role})`);
     const isCode = phase === 'apply' || phase === 'fix';
+    // CONTEXTO DE PROYECTO (init v2): openspec/project.md → fases de PLANIFICACIÓN (el coder ya recibe
+    // codemap/stack). Cap 1800 chars (token-first). La plantilla sin rellenar (solo placeholders) no se inyecta.
+    if (!isCode && projectCtx === undefined) {
+      projectCtx = null;
+      try {
+        const pmF = join(projectRoot, 'openspec', 'project.md');
+        if (existsSync(pmF)) {
+          const txt = readFileSync(pmF, 'utf8').slice(0, 1800).trim();
+          const soloPlantilla = txt.includes('(1-3 líneas: qué hace este producto') && txt.length < 700;
+          if (txt && !soloPlantilla) projectCtx = txt;
+        }
+      } catch { /* sin contexto, sin drama */ }
+      if (projectCtx) log('📘 project.md inyectado a la planificación (contexto del proyecto)');
+    }
     let prompt = buildPrompt(step, { changeDir, projectRoot, complexity, verifiedCtx, brownfieldMap, refFiles, codeMap: codeMapCtx, codeMapFocus: codeMapFocusCtx });
+    if (!isCode && projectCtx) prompt += `\n\nPROJECT CONTEXT (openspec/project.md — maintained by the team; honor it):\n${projectCtx}`;
     if (userNote) { prompt += `\n\nUSER NOTE (from the human reviewer — MUST honor): ${userNote}`; userNote = null; }
     if (teamSkills.length) {
       // auto-match por dominio/fase ∪ las invocadas con "/nombre" (dedup por referencia — mismos objetos de teamSkills).
@@ -6288,7 +6374,7 @@ const { parseEvents, parseOtelSession } = __M['events'];
 const { listCopilotModels } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
-const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds } = __M['secret'];
+const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate } = __M['secret'];
 const { plumbPath } = __M['plumb'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -7178,6 +7264,9 @@ const DEMO_STATE = () => ({
 function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host = '127.0.0.1', version = null, onShutdown = null }) {
   const runs = new Map(); // key "<projId>/<change>" → { child, pending, stopRequested, exited, exitedAt }
   let lastReq = Date.now(); // marca para el auto-apagado por inactividad
+  // init v2: la app garantiza la plantilla de credenciales aunque nadie pasara por setup/init.
+  // DENTRO de createAppServer (no a nivel de módulo): un import jamás debe escribir en el HOME real.
+  try { ensureByokTemplate(CONDUCTOR_HOME()); } catch { /* best-effort: el panel enseña el formato igualmente */ }
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }
   for (const p of loadRegistry()) registry.set(p.id, p);
@@ -8095,7 +8184,7 @@ const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
 const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
-const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE } = __M['secret'];
+const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate } = __M['secret'];
 const { PROMPT_KEYS, instructionFor } = __M['orchestrate'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
 const { toOtlp } = __M['otlp'];
@@ -8508,7 +8597,13 @@ switch (cmd) {
       ].join('\n'));
       copilotCmd = `\n  /conductor (Copilot) → .github/skills/conductor/SKILL.md (por-proyecto, patrón estándar)`;
     } catch {}
-    console.log(`✓ proyecto inicializado (openspec/)\n  schema → ${r.schemaPath}\n  config → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'}${copilotCmd}\n  Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
+    const tpl = ensureByokTemplate();
+    console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
+  project.md → ${r.projectMd} (contexto del proyecto: RELLÉNALO, las fases de planificación lo leen)
+  config.yaml → ${r.ymlPath} (metadata detectada: stack, estructura, scripts)
+  conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, preset, gates)
+  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${copilotCmd}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }
   case 'keygen': {
@@ -9168,4 +9263,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: c0772c6f4075b31a2732f1899849c1e55fb2f8442b2e42f09cd33cccbd58e148
+// build-inputs-sha256: febb739daa9fd3030db30b1bc5d883dd490e86a431ef9d25b681f1385bc9ade1

@@ -52,7 +52,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate } from '../lib/provenance/secret.mjs';
 import { PROMPT_KEYS, instructionFor } from '../lib/pipeline/orchestrate.mjs';
 import { homedir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
@@ -467,7 +467,13 @@ switch (cmd) {
       ].join('\n'));
       copilotCmd = `\n  /conductor (Copilot) → .github/skills/conductor/SKILL.md (por-proyecto, patrón estándar)`;
     } catch {}
-    console.log(`✓ proyecto inicializado (openspec/)\n  schema → ${r.schemaPath}\n  config → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'}${copilotCmd}\n  Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
+    const tpl = ensureByokTemplate();
+    console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
+  project.md → ${r.projectMd} (contexto del proyecto: RELLÉNALO, las fases de planificación lo leen)
+  config.yaml → ${r.ymlPath} (metadata detectada: stack, estructura, scripts)
+  conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, preset, gates)
+  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${copilotCmd}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }
   case 'keygen': {

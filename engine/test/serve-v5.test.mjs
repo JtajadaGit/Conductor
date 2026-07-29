@@ -121,7 +121,7 @@ await test('models-default: crea conductor.json si falta y guarda SOLO la seccio
   eq(cfg.models.planner, 'litellm:glm-v52', 'rol guardado');
   eq(cfg.models.explore, 'litellm:deepseek-v4-flash', 'clave de FASE guardada (models.<fase> gana al rol en el driver)');
   assert(!('hacker' in (cfg.models || {})), 'claves fuera de la allowlist se descartan');
-  assert(existsSync(join(T, 'openspec', 'conductor.schema.json')), 'el schema del editor tambien queda (initConfig)');
+  assert(!existsSync(join(T, 'openspec', 'conductor.schema.json')), 'init v2: SIN schema en el repo del usuario');
   rmSync(T, { recursive: true, force: true });
 });
 
