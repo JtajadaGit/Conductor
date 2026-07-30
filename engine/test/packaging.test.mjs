@@ -88,3 +88,9 @@ await test('packaging: `conductor run` es el gesto app (case unico) y el CLI dic
   assert(src.includes('arrancando conductor v'), 'mensaje de arranque presente');
   assert(src.includes('para pararlo: conductor stop'), 'pista de apagado presente');
 });
+
+await test('packaging: engine/package.json en SINCRONIA con la raiz (el resolver de VERSION lo lee primero en dev)', () => {
+  // fosil real 2026-07-30: engine/package.json se quedo en 0.2.0 y el help del checkout decia una version falsa
+  const ep = JSON.parse(readFileSync(join(ROOT, 'engine', 'package.json'), 'utf8'));
+  eq(ep.version, pj.version, 'misma version que package.json raiz (LA fuente)');
+});

@@ -1,190 +1,180 @@
-# CONDUCTOR
+# conductor
 
-**Spec-Driven Development verificado para GitHub Copilot — pipeline conducido por código, gate sin LLM, coste real.**
+**Spec-Driven Development verificado: un driver determinista conduce a la IA fase a fase, y un gate sin LLM comprueba que lo construido cumple lo especificado — antes de dar nada por hecho.**
 
-**Versión**: 2.0.0 · **Actualización**: 2026-07-15
-
----
-
-## Tabla de Contenidos
-
-1. [¿Qué es Conductor?](#1-qué-es-conductor)
-2. [¿Cómo se instala?](#primeros-pasos)
-3. [¿Cómo se utiliza?](#la-app-de-conductor)
-4. [Verificación de la instalación](#verificación-de-la-instalación)
-5. [Coste y modelos](#coste-y-modelos)
-6. [Seguridad](#seguridad)
+**Versión** 2.0.0 · Node ≥ 20 · 0 dependencias · instalación única por npm
 
 ---
 
-## 1. ¿Qué es Conductor?
+## ¿Qué es?
 
-Conductor convierte la asistencia de IA en un **proceso de ingeniería auditable**: primero la spec, luego el código, y al final **un gate determinista comprueba que lo construido cumple lo especificado** — y lo firma. Funciona con **cualquier modelo** (incluido BYOK): la secuencia del pipeline la garantiza código, no la buena voluntad del LLM.
+conductor convierte "pedirle código a la IA" en un **proceso de ingeniería auditable**: primero la spec, luego el código contra ella, y al final un **gate determinista** (código, no un modelo) verifica coherencia spec ↔ código ↔ tests. Si no cumple, no hay GREEN — da igual lo convincente que suene el modelo.
 
-Una instalación. Cero dependencias. Cero servidores.
-
-| Sin Conductor | Con Conductor |
+| Sin conductor | Con conductor |
 |---|---|
-| La IA genera código al vuelo | Spec primero; el código se implementa contra ella |
-| "Hecho" significa "el modelo dice que está hecho" | **Gate determinista** (sin LLM) verifica coherencia spec↔código↔tests y **rompe el build** si no cumple |
-| Un modelo flojo se salta pasos | **El pipeline lo conduce código**: con cualquier modelo, las fases van en orden o no avanzan |
-| Sin evidencia | Cada run GREEN queda **sellado (firma Ed25519)** y encadenado a un **ledger de auditoría** |
-| El consumo de IA es una caja negra | **Tokens y coste por fase + tus AI Credits**, en vivo, en la app local |
-| Un solo modelo para todo | **Modelo y proveedor POR FASE** (incluso cambiándolo en caliente desde la web): planifica gratis con BYOK, codea con tu licencia premium — en el mismo run |
-| ¿Cumplimiento normativo? Suerte | **Informe AI Act por change** (modelos, aprobaciones humanas, verificación, firma) — la transparencia que la UE exige desde el 2-ago-2026, como subproducto del pipeline |
+| La IA genera código al vuelo | **Spec primero**; el código se implementa contra ella |
+| "Hecho" = "el modelo dice que está hecho" | **Gate sin LLM** verifica coherencia y trazabilidad requisito→código→test; si falta un test, **bloquea** |
+| Un modelo flojo se salta pasos | La secuencia la garantiza **código**: con cualquier modelo, las fases van en orden o no avanzan |
+| Un solo modelo para todo | **Modelo por FASE**, mezclando proveedores en el mismo run: planifica barato con tu proxy, codea con tu licencia premium |
+| El consumo es una caja negra | **Tokens y coste por fase**, estimación ANTES de lanzar (sin gastar API) y precisión del estimador medida |
+| Sin evidencia | Cada GREEN queda **sellado (Ed25519)**, encadenado a un **ledger** y con **informe AI Act** (modelos, aprobaciones humanas con hash de lo aprobado, verificación) |
+
+**Tú mandas**: el pipeline pausa para tu revisión, y en cada pausa puedes editar la spec, dar instrucciones, cambiar el modelo en caliente, rehacer una fase o parar. Nada de piloto automático.
 
 ---
 
-## Cómo funciona
+## Instalación (una vez por máquina)
 
-Dos formas de uso, mismo motor, mismo gate:
+Requisitos: **Node ≥ 20**, git, y la CLI de GitHub Copilot (`copilot`) con licencia activa. Opcional: acceso a tu proxy LiteLLM corporativo (modelos a 0 créditos premium).
 
-### ⭐ `/sdd-run` — el pipeline garantizado (recomendado)
-Pides una feature en una frase. Un **driver determinista** (código, no LLM) recorre las fases del plan — de `propose` y `spec` a `apply`, `test` (opcional, antes de verificar) y `verify` — lanzando al agente de Copilot en cada una, **pausando para tu revisión** antes de implementar y verificar, y validando con el gate. Al terminar: código + spec + informe + sello firmado.
-
-```
-/conductor:sdd-run añade un componente Counter con botones +/- y un test
-```
-
-- 🌐 **App local en vivo** (se abre sola): fases, progreso, archivos tocados, tokens, coste, botones **Aprobar** y **■ Detener**.
-- ⏸ **Pausas de revisión** por defecto antes de `apply` y `verify` (quítalas con `autoApprove: true`).
-- 🔁 **Resume**: si se corta (o lo detienes), relanzar el mismo comando continúa donde quedó **sin re-pagar** las fases hechas.
-- 🔏 Al cerrar GREEN: `provenance.json` firmado + entrada en el ledger + `dashboard.html`.
-
-### Atajos desde el chat
-Los skills (`/sdd-init`, `/sdd-explain`, `/sdd-instructions`) existen como atajos conversacionales, pero todo lo que hacen está también en la app local — que es la superficie recomendada. Y para quien no quiera la web: **`/sdd-feature <qué construir>`** corre el pipeline completo y devuelve el recibo de PR en el chat (mismo driver, mismo gate; la revisión es post-hoc en lugar de pausas).
-
----
-
-## Primeros pasos
-
-Conductor se instala como **un plugin de Copilot** — como cualquier otro que ya uses. Una instalación, un arranque:
-
-### 1. Instala el plugin (una vez)
-
-**Copilot CLI:**
 ```bash
-/plugin marketplace add <URL del repo de conductor>
-/plugin install conductor
-```
-> ⚠ Usa la URL del **repo** (la que acaba en `.git` o la raíz), NO la del navegador con `/tree/<rama>` — el instalador hace `git clone` literal y clona la **rama por defecto**. Para probar desde una copia local: `/plugin marketplace add <ruta-de-la-carpeta>`.
+# 1. Instalar
+npm i -g "git+<url-del-repo>#<rama-o-tag>"
 
-**VS Code:** activa `chat.plugins.enabled` y `chat.subagents.allowInvocationsFromSubagents` en settings, luego Command Palette → `Chat: Install Plugin from Source` → URL del repo.
+# 2. Comprobar
+conductor version          # → conductor 2.0.0
 
-> En Windows, si la des/instalación da `EBUSY`: cierra todas las sesiones de Copilot y reintenta (cada sesión mantiene vivo el MCP del plugin).
-
-**Primera vez**: al abrir el panel, pega la URL de tu proxy y tu key en el formulario — queda **cifrada AES-256-GCM en tu máquina** (jamás en claro, jamás la ve un LLM) y la app te enseña **catálogo y precios reales**.
-
-> ¿Prefieres fichero, como en tus otras herramientas? Escribe `~/.conductor/byok.json` con `{"baseUrl": "…", "apiKey": "sk-…"}` — **al primer uso conductor lo sella**: cifra la key y la versión en claro desaparece del disco.
-
-> 🔌 ¿Otro host de agentes, terminal puro o instalación por npm? Existen y están soportados (`npm i -g git+<URL-del-repo>#vX.Y.Z` → `conductor install`) — pero son la excepción, no el camino.
-
-## Verificación de la instalación
-
-Tras instalar, comprueba en menos de un minuto que todo está en su sitio:
-
-1. `/sdd-run` en cualquier repo → debe abrirse `http://127.0.0.1:4750` enfocado en ese repo.
-2. Abre `http://127.0.0.1:4750/demo` → verás un run de muestra completo (pausa del revisor, pipeline, coste) sin gastar un token.
-3. Si configuraste credenciales: el selector de modelos del panel debe listar los modelos de tu proxy (con su precio real).
-
-¿Algo falla? El panel muestra el motivo; y desde una instalación npm, `conductor doctor` diagnostica el entorno completo (proxy corporativo incluido). Log del arranque: `~/.conductor/launcher.log`.
-
-### 2. Inicializar el proyecto
-```
-/sdd-init
-```
-Detecta stack/testing/arquitectura y genera `openspec/conductor.json` (tu configuración ejecutable) + `config.yaml` (metadata del stack). También puedes inicializar desde la propia app (botón «Inicializar este proyecto»).
-
-### 3. (Opcional) Instruction files
-```
-/sdd-instructions
+# 3. Conectar tus CLIs de chat (menú interactivo; Enter = los detectados)
+conductor setup
 ```
 
-### 4. Construir
-```
-/conductor:sdd-run <tu petición>
-```
-El chat te devuelve **una URL y termina**: todo (pausas, aprobaciones, edición de spec, diffs, stop/resume, informes) pasa en la app `http://127.0.0.1:4750`. Sin chat también: `conductor` abre el panel en el repo actual, y `conductor drive <change> --request "…" --src .` corre el pipeline con las **pausas en tu consola** (aprobar/nota/modelo/rehacer/stop). Al cerrar GREEN, `conductor receipt <change>` te da la descripción del PR lista para pegar.
+`setup` conecta el comando **`/conductor`** y el servidor MCP en los CLIs que tengas (Copilot, Claude Code, OpenCode) y deja creada la **plantilla de credenciales**.
 
-### 5. Archivar
-```
-/sdd-archive
-```
-Promueve los specs a la fuente de verdad y encadena la provenance al ledger.
+### Credenciales del proxy (opcional, recomendado)
 
----
+Abre `~/.conductor/litellm.json` — la plantilla te enseña el formato:
 
-## La app de conductor
-
-Todo vive en **una app local**: `http://127.0.0.1:4750` (127.0.0.1, solo tú, **0 tokens** — código leyendo estado, sin LLM). El panel lista todos los runs del proyecto; cada run es una ruta (`/run/<nombre>`). `/sdd-run` lanza el run en la app y el chat termina ahí — el modelo de sesión ya no espera, narra ni puede estorbar. Instalable como app de escritorio (PWA) desde Chrome.
-
-**El developer manda** (en cada pausa de revisión):
-- 📄 Lee la spec/proposal con un click — y **✏️ edítala inline**: se construye TU versión.
-- 📣 **Nota para la fase** ("usa signals, no BehaviorSubject") — viaja al prompt del agente.
-- 🎛 **Modelo en caliente** solo para esa fase (`byok:`/`copilot:`) — escala a premium solo cuando lo ves.
-- ✓ Aprobar · **■ Detener** (se conserva todo; **⏯ Reanudar** desde el panel sin re-pagar fases) · **↩ Deshacer una fase** (restaura los archivos al estado previo; tu rama git no se toca).
-
-**Visibilidad total**: archivos ±en vivo con **diff al click**, 📜 registro del run, modelo/tokens/duración por fase, reintentos con motivo, consumo LiteLLM real y **AIC de tu cuenta** (con `gh`).
-
-**Review multi-lente**: el verify corre lentes en paralelo (corrección, seguridad, tests) y funde un informe por secciones.
-
-Informes permanentes por change: `dashboard.html` (run) y **`🇪🇺 aiact-report.html`** — el informe de transparencia de contenido generado por IA (modelos usados, aprobaciones humanas, verificación, firma) alineado con las obligaciones del **EU AI Act (en vigor para contenido IA el 2-ago-2026)**. La fontanería JSON vive oculta en `.conductor/`.
-
----
-
-## Coste y modelos
-
-Conductor es **token-first**: prompts mínimos, sin narración del LLM (la web informa gratis), resume sin re-pagar, anti-bucle, y telemetría de consumo por fase.
-
-**Configura modelos a tu gusto** en `openspec/conductor.json` (tuyo, en tu repo — sin secretos):
 ```json
 {
+  "baseUrl": "https://tu-proxy/v1",
+  "apiKey": "sk-…",
   "models": {
-    "planner":  "byok:qwen36-msc1",
-    "coder":    "copilot:claude-haiku-4.5",
-    "reviewer": "byok:qwen36-msc1"
-  },
-  "autoApprove": false
+    "mi-modelo": { "name": "Mi Modelo", "limit": { "context": 128000, "output": 16384 } }
+  }
 }
 ```
-- `byok:<modelo>` → tu endpoint LiteLLM (≈ $0). Credenciales por env o en `~/.conductor/byok.json` (tu HOME).
-- `copilot:<modelo>` → catálogo de tu licencia Copilot Business (consume AI Credits).
-- Sin prefijo → el proveedor con el que lanzaste la sesión.
 
-> La plataforma no permite cambiar de modelo en una sesión; **Conductor lo hace por fase**, mezclando incluso proveedores en el mismo run.
-
----
-
-## Seguridad
-
-- **Gate determinista sin LLM**: coherencia, estructura, trazabilidad spec→task→código→test, breaking-changes de contrato (OpenAPI/SQL/TS). No obedece prompts: o cumple, o FAIL.
-- **Provenance Ed25519** + ledger hash-encadenado (manipular una entrada rompe la cadena) + firma del propio motor (`selfcheck --pub`).
-- Agentes con scope estricto: **sin git, sin red, sin comandos destructivos**; reviewer read-only. El contenido del repo se trata como **datos**, no como instrucciones.
-- El motor (0 dependencias, un solo fichero) viaja dentro del plugin como servidor MCP; confinamiento de rutas con `CONDUCTOR_ROOT`.
-- Tests del proyecto: fase `test` **opcional** justo antes de `verify` (FAIL → ciclo `fix` → re-test → BLOCKED si no converge); apagada por defecto y solo ejecuta con tu consentimiento explícito. El resto va a tu CI.
+- Los `models` que declares salen **siempre** en el selector, con su nombre y sus límites.
+- **También puedes pegar tu bloque de proveedor de OpenCode tal cual** (con `options.baseURL`, timeouts…) — conductor lo entiende.
+- Al primer uso la key **se cifra sola** (AES-256-GCM) y desaparece en claro del disco. Jamás viaja por HTTP ni la ve un modelo. Alternativa por terminal: `conductor litellm login`.
 
 ---
 
-## Estructura OpenSpec
+## Por proyecto (una vez por repo)
+
+```bash
+cd tu-proyecto
+conductor init
+```
+
+Crea el árbol **OpenSpec** completo y listo:
 
 ```
 openspec/
-├── config.yaml                   Configuración del proyecto + pipeline
-├── conductor.json                (opcional) tu configuración de modelos/web/pausas
-├── specs/{dominio}/spec.md       Fuente de verdad
-├── provenance.ledger.jsonl       Ledger de auditoría (hash-chain)
-└── changes/{nombre}/
-    ├── proposal.md · specs/ · design.md · tasks.md      Artefactos SDD (legibles)
-    ├── apply-report.md · verify-report.md               Reportes del run
-    ├── dashboard.html                                   📊 informe del run (ábrelo)
-    ├── provenance.json                                  Sello firmado (CI/auditoría)
-    └── .conductor/                                      Interno (estado/telemetría) — gitignoreado
+├── project.md            ← CONTEXTO del proyecto (RELLÉNALO: las fases de planificación lo leen)
+├── config.yaml           metadata DETECTADA (stack, estructura, scripts) — la refresca la app sola
+├── conductor.json        gobierno del equipo (modelos, preset, gates) — plantilla auto-explicada, todo con default
+├── specs/                fuente de verdad VIVA (la llena el ciclo al archivar)
+└── changes/  + archive/  cambios activos e histórico
 ```
+
+`init` también ofrece (mini-menú) el comando `/conductor` **por-proyecto** para cada CLI — ficheros committeables: al clonar el repo, todo tu equipo lo hereda.
+
+---
+
+## Uso diario — dos vías, mismo motor
+
+### 🌐 La miniweb (el cockpit)
+
+```bash
+conductor        # «▶ arrancando conductor v2.0.0 …» → http://127.0.0.1:4750
+```
+
+1. **Describe la feature** en el formulario (`@fichero` para dar contexto, `/skill` para patrones de equipo, arrastra capturas).
+2. Revisa el **plan**: preset propuesto, fases, y la **estimación de tokens sin gastar API**.
+3. Elige **modelo por fase** si quieres mezcla — y 💾 para guardarla como default del equipo.
+4. **Lanza** y decide en cada pausa: 📄 artefactos (✏️ editables) · **± vs spec viva** (diff del delta contra la spec promovida) · 📣 nota para la fase · 🎛 modelo en caliente · ↺ rehacer · ✓ aprobar · ■ detener.
+5. Si el gate encuentra fallos: eliges cuáles van al **fix dirigido** y se re-verifica.
+6. En GREEN: 📋 descripción de PR · 📊 informe · 🛡 AI Act · 📃 sesión completa del agente · ⬆ **Archivar** (promueve las specs a la fuente de verdad).
+
+La app es única y local (127.0.0.1, solo tú), instalable como PWA, se apaga sola tras 120 min sin uso (`conductor stop` para pararla ya) y **jamás finge**: si el servidor no está, lo dice.
+
+### 💬 El chat (sin salir de tu CLI)
+
+```
+/conductor añade un endpoint de salud con sus tests   ← pipeline con pausas EN el chat
+/conductor                                            ← estado y ayuda, sin abrir navegador
+```
+
+Las pausas te llegan como conversación: apruebas, das instrucciones, cambias modelo o paras — mismo motor, mismo gate. Para procesos/CI existe además el modo job: la tool MCP `conductor_drive {async:true}` lanza y devuelve el identificador al instante.
+
+---
+
+## Modelos y coste
+
+- Prefijos: `litellm:<modelo>` (tu proxy, **0 créditos premium**) · `copilot:<modelo>` (catálogo real de tu licencia) · sin prefijo = el de la sesión.
+- **Mezcla libre en el mismo run**: cada fase con su modelo. La fase gana al rol (`models.spec` > `models.planner`).
+- **`fallback` (opt-in)**: modelo de reserva por rol/fase — si el primario falla por timeout/proveedor, UN intento extra con la reserva, registrado con total transparencia (timeline, AI Act, badge 🛟).
+- **Frenos reales**: `budget` (techo duro de tokens/coste por run) · `tiers` (economy/balanced/premium por fase) · timeout y reintentos acotados por fase.
+- **Verificable**: `conductor stats` muestra consumo real por proveedor/modelo, el ahorro conseguido y la **precisión del estimador** (estimado vs real medido, no prometido).
+
+```json
+// openspec/conductor.json — ejemplo mínimo (TODO es opcional)
+{
+  "models": { "planner": "litellm:mi-modelo-barato", "coder": "copilot:claude-sonnet-4.5" },
+  "preset": "feature",
+  "fallback": { "coder": "copilot:claude-haiku-4.5" }
+}
+```
+
+Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige test nuevo) · `feature` (default: trazabilidad estricta) · `migration` (además: clarify obligatorio, spec congelada, gate de datos SQL). `verify` está SIEMPRE — es innegociable.
+
+---
+
+## Por qué fiarte (calidad y seguridad)
+
+- **Gate determinista sin LLM**: coherencia, estructura, trazabilidad, tests que verifican de verdad (caza tests "huecos"), secretos hardcodeados, SQL destructivo, breaking-changes de contrato. No obedece prompts: o cumple, o FAIL.
+- **El propio harness se auto-certifica**: un golden-set de 12 escenarios (`conductor evals`, offline, 0 tokens) ejercita cada gate e invariante con su resultado esperado; el pass-rate queda **versionado en git**, y cambiar un prompt del pipeline **exige** re-certificar en verde.
+- **Provenance**: sello Ed25519 por GREEN + ledger hash-encadenado (manipular una entrada rompe la cadena) + `conductor upgrade` que reinstala de tu origen y **verifica el motor nuevo** antes de dártelo por bueno.
+- **Agentes con correa corta**: sin git, sin red, sin comandos destructivos; toolset mínimo por rol; el contenido del repo se trata como **datos**, no como instrucciones; ejecutar los tests del proyecto requiere TU consentimiento explícito.
+- **AI Act**: informe de transparencia por cambio (modelos por fase, aprobaciones humanas **con hash de lo aprobado**, verificación, firma) — la evidencia que exige la UE desde el 2-ago-2026, como subproducto del pipeline.
+
+---
+
+## Comandos de referencia
+
+| Diario | |
+|---|---|
+| `conductor` | abre la miniweb en este repo (la arranca si está apagada) |
+| `conductor init` | inicializa el proyecto (una vez por repo) |
+| `/conductor <petición>` | el pipeline en el chat de tu CLI |
+| `conductor stats` | consumo real, ahorro y precisión del estimador |
+| `conductor doctor` | autotest del entorno (credenciales, prompts, hosts, app) |
+| `conductor receipt <change>` | descripción de PR del run verificado |
+
+| Cuando lo necesites | |
+|---|---|
+| `conductor setup` | (re)conectar CLIs y regenerar la plantilla de credenciales |
+| `conductor litellm status` | estado de tus credenciales del proxy |
+| `conductor evals` | golden-set del harness (offline, 0 tokens) |
+| `conductor upgrade` | actualizar desde tu origen + verificación del motor nuevo |
+| `conductor stop` / `restart` | ciclo de vida de la app (se niega a parar con runs vivos) |
+| `conductor help --all` | la sala de máquinas completa (gates, sellos, ledger, CI…) |
+
+---
+
+## ¿Algo no va?
+
+1. `conductor doctor` — te dice qué falta y cómo arreglarlo (credenciales, hosts, proxy corporativo, bundle).
+2. `http://127.0.0.1:4750/demo` — un run de muestra completo sin gastar un token.
+3. La pantalla «conductor está apagado» no es un error: es la app siendo honesta; arráncala con `conductor`.
+4. Credenciales: el panel muestra el MOTIVO exacto (plantilla sin rellenar, key rechazada por el proxy…) — nunca inventa modelos.
+5. Log de arranque: `.conductor/launcher.log` en tu proyecto.
 
 ---
 
 ## Requisitos
 
-- GitHub Copilot CLI (v1.0.60+) o VS Code con Copilot Chat, con licencia activa.
-- Node.js ≥ 18 (el mismo que requiere Copilot CLI; el motor de Conductor no añade nada más).
-- Opcional: API key de LiteLLM (BYOK ≈ coste cero) · `gh` CLI para ver tu uso de Copilot en la web.
+- **Node.js ≥ 20** y git.
+- **GitHub Copilot CLI** con licencia activa (el ejecutor de las fases). Los CLIs de chat (Copilot, Claude Code, OpenCode) son vías opcionales al mismo motor.
+- Opcional: key de tu proxy LiteLLM (modelos a 0 créditos premium) · `gh` CLI para ver tus AI Credits en la web.
