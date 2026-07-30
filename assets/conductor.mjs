@@ -256,15 +256,37 @@ function byokFile(home = homeDir()) {
 // pista de rotación dentro; la key en claro desaparece del disco. Si el cifrado no verifica round-trip,
 // NO se toca nada (mejor plaintext utilizable que credenciales rotas). Un byok.json legado en claro se
 // sella Y MIGRA a litellm.json en el mismo gesto. Devuelve true solo si selló.
+// COMPAT DE FORMA (2026-07-29): el dev puede PEGAR su bloque de proveedor de OpenCode tal cual
+// ({options:{baseURL, apiKey, timeout…}, models:{…}}) — o el nuestro plano ({baseUrl, apiKey, models}).
+// Normaliza a plano: baseUrl (acepta baseURL y options.*), apiKey/apiKeyEnc (top u options), timeout total.
+function normalizeByokShape(j) {
+  if (!j || typeof j !== 'object') return j;
+  const o = (j.options && typeof j.options === 'object') ? j.options : {};
+  const out = { ...j };
+  out.baseUrl = j.baseUrl || j.baseURL || o.baseURL || o.baseUrl || undefined;
+  if (!out.apiKey && typeof o.apiKey === 'string' && o.apiKey) out.apiKey = o.apiKey;
+  if (!out.apiKeyEnc && typeof o.apiKeyEnc === 'string') out.apiKeyEnc = o.apiKeyEnc;
+  const t = Number(j.timeout ?? o.timeout);
+  out.timeout = Number.isFinite(t) && t > 0 ? t : undefined;
+  return out;
+}
+
+
 function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
-    if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
+    const plain = (j && typeof j === 'object') ? (j.apiKey || (j.options && typeof j.options === 'object' ? j.options.apiKey : null)) : null;
+    if (!j || typeof j !== 'object' || !plain || j.apiKeyEnc) return false; // nada en claro que sellar
     if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
-    const enc = encryptSecret(j.apiKey);
-    if (!enc || decryptSecret(enc) !== j.apiKey) return false;
+    const enc = encryptSecret(plain);
+    if (!enc || decryptSecret(enc) !== plain) return false;
     const { apiKey, ...rest } = j;
+    if (rest.options && typeof rest.options === 'object' && rest.options.apiKey) {
+      // bloque estilo OpenCode pegado tal cual: la key sale de options (cifrada al top); el resto de options
+      // (timeouts…) se conserva — sellar jamás destruye la config del dev
+      rest.options = { ...rest.options }; delete rest.options.apiKey;
+    }
     const target = join(home, 'litellm.json');
     const sealed = { ...rest, apiKeyEnc: enc, _rotar: 'para cambiar la key: sustituye apiKeyEnc por "apiKey": "sk-…" y conductor la re-cifra al primer uso' };
     writeFileSync(target, JSON.stringify(sealed, null, 2), { mode: 0o600 });
@@ -290,7 +312,7 @@ function decryptDpapiLegacy(enc) {
   return null;
 }
 
-return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, ensureByokTemplate, isTemplateCreds, byokFile, sealByokFile, LITELLM_TEMPLATE };
+return { canEncrypt, encryptSecret, decryptSecret, isPortableBlob, ensureByokTemplate, isTemplateCreds, byokFile, normalizeByokShape, sealByokFile, LITELLM_TEMPLATE };
 })();
 
 // ===== lib/core/report.mjs =====
@@ -4636,7 +4658,7 @@ const { priceOf, metaOf } = __M['cost'];
 const { budgetContextFiles, summarizeArtifact } = __M['estimate'];
 const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
-const { decryptSecret, sealByokFile, byokFile, isTemplateCreds } = __M['secret'];
+const { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } = __M['secret'];
 const { plumbPath } = __M['plumb'];
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
@@ -4848,10 +4870,10 @@ function byokCreds(env = process.env) {
   }
   try {
     const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
+    const j = normalizeByokShape(JSON.parse(readFileSync(byokFile(home), 'utf8')));
     if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
-    // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
-    // key en claro (fichero escrito a mano por el dev) → SELLAR al primer toque (best-effort, 1 vez/proceso)
+    // apiKeyEnc = key cifrada (formato nuevo); apiKey = texto plano (a mano o bloque OpenCode pegado)
+    // key en claro → SELLAR al primer toque (best-effort, 1 vez/proceso; entiende options.apiKey)
     if (j.apiKey && !_byokSealedD) { _byokSealedD = true; try { sealByokFile(home); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
     // límites del proveedor (algunos proxies corporativos los EXIGEN por env): viajan con las credenciales
@@ -6399,7 +6421,7 @@ const { parseEvents, parseOtelSession } = __M['events'];
 const { listCopilotModels } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
-const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate } = __M['secret'];
+const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } = __M['secret'];
 const { plumbPath } = __M['plumb'];
 const { refreshProjectMeta } = __M['scaffold'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
@@ -6953,13 +6975,13 @@ function byokCredsLocal() {
   const env = process.env;
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
-    const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    const j = normalizeByokShape(JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8')));
     if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
-    // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
+    // apiKeyEnc = key cifrada; apiKey = texto plano (a mano o bloque OpenCode pegado) → se SELLA al primer
     // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
     if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
-    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai' };
+    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai', timeout: j.timeout };
   } catch {}
   return null;
 }
@@ -9305,4 +9327,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: c3eb712f557e8f93d145db27781770efc19a21b5ef2f4265c4b35bb5afa54a48
+// build-inputs-sha256: 0edc485bbf46f2a3df2070f88a4b81047fea8e16473b318f5bfd5fbbfb7bd06b

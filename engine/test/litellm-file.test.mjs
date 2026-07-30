@@ -96,3 +96,32 @@ await test('litellm-plantilla: la plantilla de setup SIN rellenar jamas cuenta c
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+await test('litellm-compat: el bloque de proveedor de OpenCode PEGADO TAL CUAL funciona (options.baseURL/apiKey/timeouts) y el sellado lo respeta', async () => {
+  const { sealByokFile, normalizeByokShape } = await import('../lib/provenance/secret.mjs');
+  const { byokDeclaredModels } = await import('../lib/serving/serve.mjs');
+  const home = join(HERE, '.tmp-litellm-ocshape');
+  rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
+  const prev = process.env.CONDUCTOR_HOME;
+  process.env.CONDUCTOR_HOME = home;
+  try {
+    writeFileSync(join(home, 'litellm.json'), JSON.stringify({
+      npm: '@ai-sdk/openai-compatible', name: 'LiteLLM',
+      options: { baseURL: 'https://proxy.corp', apiKey: 'sk-real-abc', headerTimeout: 15000, chunkTimeout: 60000, timeout: 300000 },
+      models: { 'glm-v52': { name: 'GLM 5.2', limit: { context: 250000, output: 16384 } } },
+    }));
+    const c = byokCreds({ CONDUCTOR_HOME: home });
+    eq(c.baseUrl, 'https://proxy.corp', 'baseURL (camel, sin /v1, dentro de options) se normaliza');
+    eq(c.apiKey, 'sk-real-abc', 'la key sale de options');
+    eq(byokDeclaredModels().ids, ['glm-v52'], 'los models del bloque salen en el selector');
+    assert(sealByokFile(home), 'sella tambien con la key dentro de options');
+    const j = JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8'));
+    assert(j.apiKeyEnc && !j.apiKey && !(j.options || {}).apiKey, 'key cifrada al top; en claro no queda en NINGUN sitio');
+    eq(j.options.timeout, 300000, 'los timeouts del dev sobreviven al sellado');
+    eq(byokCreds({ CONDUCTOR_HOME: home }).apiKey, 'sk-real-abc', 're-lectura tras sellar');
+    eq(normalizeByokShape({ baseURL: 'https://x' }).baseUrl, 'https://x', 'alias baseURL tambien al top-level');
+  } finally {
+    if (prev === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = prev;
+    rmSync(home, { recursive: true, force: true });
+  }
+});

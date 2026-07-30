@@ -135,15 +135,37 @@ export function byokFile(home = homeDir()) {
 // pista de rotación dentro; la key en claro desaparece del disco. Si el cifrado no verifica round-trip,
 // NO se toca nada (mejor plaintext utilizable que credenciales rotas). Un byok.json legado en claro se
 // sella Y MIGRA a litellm.json en el mismo gesto. Devuelve true solo si selló.
+// COMPAT DE FORMA (2026-07-29): el dev puede PEGAR su bloque de proveedor de OpenCode tal cual
+// ({options:{baseURL, apiKey, timeout…}, models:{…}}) — o el nuestro plano ({baseUrl, apiKey, models}).
+// Normaliza a plano: baseUrl (acepta baseURL y options.*), apiKey/apiKeyEnc (top u options), timeout total.
+export function normalizeByokShape(j) {
+  if (!j || typeof j !== 'object') return j;
+  const o = (j.options && typeof j.options === 'object') ? j.options : {};
+  const out = { ...j };
+  out.baseUrl = j.baseUrl || j.baseURL || o.baseURL || o.baseUrl || undefined;
+  if (!out.apiKey && typeof o.apiKey === 'string' && o.apiKey) out.apiKey = o.apiKey;
+  if (!out.apiKeyEnc && typeof o.apiKeyEnc === 'string') out.apiKeyEnc = o.apiKeyEnc;
+  const t = Number(j.timeout ?? o.timeout);
+  out.timeout = Number.isFinite(t) && t > 0 ? t : undefined;
+  return out;
+}
+
+
 export function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
-    if (!j || typeof j !== 'object' || !j.apiKey || j.apiKeyEnc) return false; // nada en claro que sellar
+    const plain = (j && typeof j === 'object') ? (j.apiKey || (j.options && typeof j.options === 'object' ? j.options.apiKey : null)) : null;
+    if (!j || typeof j !== 'object' || !plain || j.apiKeyEnc) return false; // nada en claro que sellar
     if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
-    const enc = encryptSecret(j.apiKey);
-    if (!enc || decryptSecret(enc) !== j.apiKey) return false;
+    const enc = encryptSecret(plain);
+    if (!enc || decryptSecret(enc) !== plain) return false;
     const { apiKey, ...rest } = j;
+    if (rest.options && typeof rest.options === 'object' && rest.options.apiKey) {
+      // bloque estilo OpenCode pegado tal cual: la key sale de options (cifrada al top); el resto de options
+      // (timeouts…) se conserva — sellar jamás destruye la config del dev
+      rest.options = { ...rest.options }; delete rest.options.apiKey;
+    }
     const target = join(home, 'litellm.json');
     const sealed = { ...rest, apiKeyEnc: enc, _rotar: 'para cambiar la key: sustituye apiKeyEnc por "apiKey": "sk-…" y conductor la re-cifra al primer uso' };
     writeFileSync(target, JSON.stringify(sealed, null, 2), { mode: 0o600 });

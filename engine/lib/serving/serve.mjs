@@ -33,7 +33,7 @@ import { parseEvents, parseOtelSession } from '../core/events.mjs';
 import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
-import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate } from '../provenance/secret.mjs';
+import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } from '../provenance/secret.mjs';
 import { plumbPath } from '../core/plumb.mjs';
 import { refreshProjectMeta } from '../analysis/scaffold.mjs';
 
@@ -588,13 +588,13 @@ function byokCredsLocal() {
   const env = process.env;
   if (env.COPILOT_PROVIDER_BASE_URL && env.COPILOT_PROVIDER_API_KEY) return { baseUrl: env.COPILOT_PROVIDER_BASE_URL, apiKey: env.COPILOT_PROVIDER_API_KEY };
   try {
-    const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
+    const j = normalizeByokShape(JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8')));
     if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
-    // apiKeyEnc = key cifrada; apiKey = texto plano (hábito-de-fichero del dev o legacy) → se SELLA al primer
+    // apiKeyEnc = key cifrada; apiKey = texto plano (a mano o bloque OpenCode pegado) → se SELLA al primer
     // toque (cifra y reescribe; la key en claro desaparece del disco). Best-effort, una vez por proceso.
     if (j.apiKey && !_byokSealed) { _byokSealed = true; try { sealByokFile(CONDUCTOR_HOME()); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
-    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai' };
+    if (j.baseUrl && apiKey) return { baseUrl: j.baseUrl, apiKey, type: j.type || 'openai', timeout: j.timeout };
   } catch {}
   return null;
 }

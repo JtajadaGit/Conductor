@@ -37,7 +37,7 @@ import { priceOf, metaOf } from '../core/cost.mjs';
 import { budgetContextFiles, summarizeArtifact } from '../core/estimate.mjs';
 import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
-import { decryptSecret, sealByokFile, byokFile, isTemplateCreds } from '../provenance/secret.mjs';
+import { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } from '../provenance/secret.mjs';
 import { plumbPath } from '../core/plumb.mjs';
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
@@ -249,10 +249,10 @@ export function byokCreds(env = process.env) {
   }
   try {
     const home = env.CONDUCTOR_HOME || join(homedir(), '.conductor');
-    const j = JSON.parse(readFileSync(byokFile(home), 'utf8'));
+    const j = normalizeByokShape(JSON.parse(readFileSync(byokFile(home), 'utf8')));
     if (isTemplateCreds(j)) return null; // plantilla de setup sin rellenar ≠ credenciales
-    // apiKeyEnc = key cifrada con DPAPI (formato nuevo); apiKey = texto plano legacy (retrocompat)
-    // key en claro (fichero escrito a mano por el dev) → SELLAR al primer toque (best-effort, 1 vez/proceso)
+    // apiKeyEnc = key cifrada (formato nuevo); apiKey = texto plano (a mano o bloque OpenCode pegado)
+    // key en claro → SELLAR al primer toque (best-effort, 1 vez/proceso; entiende options.apiKey)
     if (j.apiKey && !_byokSealedD) { _byokSealedD = true; try { sealByokFile(home); } catch {} }
     const apiKey = j.apiKey || (j.apiKeyEnc ? decryptSecret(j.apiKeyEnc) : null);
     // límites del proveedor (algunos proxies corporativos los EXIGEN por env): viajan con las credenciales
