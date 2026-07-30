@@ -137,6 +137,10 @@ export const CONFIG_SCHEMA = {
 // `conductor doctor`, panel), NO un _ayuda de 300 chars dentro del JSON del usuario.
 // (_ayuda/_ejemplos siguen ACEPTADOS por el schema: los repos que ya los tienen no dejan de validar.)
 const DEFAULT_CONFIG = {
+  // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
+  // se puede configurar ("me tengo que imaginar cómo funciona" — feedback real). La doc completa, en
+  // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
+  _ayuda: 'TODO es opcional (hay default para todo). Mandos: models (por rol o por FASE — la fase gana), preset, rules, pipeline, checks, preconditions, pauseAt, fallback, tiers, budget… Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
   models: {},
   rules: {},
   autoApprove: false,

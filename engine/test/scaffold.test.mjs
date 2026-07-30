@@ -29,7 +29,7 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   assert(/openspec\/changes\/\*\*\/\.conductor\//.test(readFileSync(join(TMP, '.gitignore'), 'utf8')), '.gitignore excluye la fontanería del run');
   const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
   assert(!cfg.$schema, 'config SIN $schema colgante (no hay fichero al lado)');
-  assert(!cfg._ayuda && !cfg._ejemplos, 'config SIN texto de ayuda embebido (la doc es el schema, no el fichero del usuario)');
+  assert(typeof cfg._ayuda === 'string' && cfg._ayuda.includes('conductor config'), 'el config que NACE se explica solo: UNA linea _ayuda que apunta a `conductor config` (feedback real: el fichero mudo obligaba a imaginar los mandos)');
   assert(cfg.rules && typeof cfg.rules === 'object', 'config nace con rules (gobierno por fase, descubrible y vacío)');
   // el usuario edita su config y su .copilotignore → re-init NO los pisa (el schema sí se refresca)
   writeFileSync(r.cfgPath, JSON.stringify({ serve: false }));

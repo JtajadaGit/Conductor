@@ -4300,6 +4300,10 @@ const CONFIG_SCHEMA = {
 // `conductor doctor`, panel), NO un _ayuda de 300 chars dentro del JSON del usuario.
 // (_ayuda/_ejemplos siguen ACEPTADOS por el schema: los repos que ya los tienen no dejan de validar.)
 const DEFAULT_CONFIG = {
+  // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
+  // se puede configurar ("me tengo que imaginar cómo funciona" — feedback real). La doc completa, en
+  // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
+  _ayuda: 'TODO es opcional (hay default para todo). Mandos: models (por rol o por FASE — la fase gana), preset, rules, pipeline, checks, preconditions, pauseAt, fallback, tiers, budget… Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
   models: {},
   rules: {},
   autoApprove: false,
@@ -9112,6 +9116,19 @@ switch (cmd) {
     }
     bad('litellm login (interactivo, key oculta) | litellm save (desde el entorno, CI) | litellm status  — o edita ~/.conductor/litellm.json a mano: {"baseUrl": "https://…/v1", "apiKey": "sk-…", "models": {"<id>": {"limit": {"context": 250000, "output": 16384}}}} (se cifra al primer uso; los models declarados salen SIEMPRE en el selector)');
   }
+  case 'config': { // la doc de openspec/conductor.json por fin con PUERTA: el schema explicado, mando a mando
+    const wrap = (s, w) => { const out = []; let ln = ''; for (const word of String(s).split(/\s+/)) { if ((ln + ' ' + word).trim().length > w) { out.push(ln); ln = word; } else ln = (ln ? ln + ' ' : '') + word; } if (ln) out.push(ln); return out; };
+    console.log('openspec/conductor.json — gobierno del EQUIPO (committeable). TODO es opcional: hay default para todo.\n');
+    for (const [k, v] of Object.entries(CONFIG_SCHEMA.properties || {})) {
+      if (k.startsWith('_') || k === '$schema') continue;
+      const tipo = v.enum ? v.enum.join(' | ') : (v.type || (v.oneOf ? 'boolean | array' : ''));
+      console.log(`  ${k}${tipo ? `  (${tipo})` : ''}`);
+      for (const ln of wrap(v.description || '', 100)) console.log(`      ${ln}`);
+    }
+    console.log('\nEjemplo mínimo: {"models": {"coder": "copilot:claude-sonnet-4.5"}, "preset": "feature"}');
+    console.log('La FASE gana al rol: {"models": {"spec": "copilot:claude-opus-4.8", "explore": "litellm:mi-barato"}}');
+    process.exit(0);
+  }
   case 'init': // por-PROYECTO (el `daisy init` nuestro): crea openspec/ listo para lanzar — idempotente
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
@@ -9773,6 +9790,7 @@ function printHelp() {
   EL BUCLE DIARIO
     run  (o sin comando)                 abre la miniweb en este repo (la arranca si está apagada)
     init [dir]                           inicializa el proyecto (crea openspec/ — una vez por repo)
+    config                               los mandos de openspec/conductor.json, explicados uno a uno
     receipt <changeDir>                  recibo de PR (markdown) del run verificado
     stats                                tokens, coste REAL y ahorro por proveedor/modelo
     doctor                               autotest del entorno (proxy, app, bundle)
@@ -9879,4 +9897,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 0748421dae618eaed725c21b29d5ece2bcc9e455813aa64ef335285674e4471c
+// build-inputs-sha256: 593aa0ece7f00f4a43f47b899b2d6edecb47eb9e6ae3fa4631e8613d5e45af66

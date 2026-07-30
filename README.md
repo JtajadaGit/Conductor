@@ -72,8 +72,7 @@ Crea el árbol **OpenSpec** completo y listo:
 ```
 openspec/
 ├── project.md            ← CONTEXTO del proyecto (RELLÉNALO: las fases de planificación lo leen)
-├── config.yaml           metadata DETECTADA (stack, estructura, scripts) — la refresca la app sola
-├── conductor.json        gobierno del equipo (modelos, preset, gates) — plantilla auto-explicada, todo con default
+├── conductor.json        gobierno del equipo (modelos, preset, gates) — mínimo a propósito: TODO es opcional
 ├── specs/                fuente de verdad VIVA (la llena el ciclo al archivar)
 └── changes/  + archive/  cambios activos e histórico
 ```

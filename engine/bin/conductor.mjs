@@ -455,6 +455,19 @@ switch (cmd) {
     }
     bad('litellm login (interactivo, key oculta) | litellm save (desde el entorno, CI) | litellm status  — o edita ~/.conductor/litellm.json a mano: {"baseUrl": "https://…/v1", "apiKey": "sk-…", "models": {"<id>": {"limit": {"context": 250000, "output": 16384}}}} (se cifra al primer uso; los models declarados salen SIEMPRE en el selector)');
   }
+  case 'config': { // la doc de openspec/conductor.json por fin con PUERTA: el schema explicado, mando a mando
+    const wrap = (s, w) => { const out = []; let ln = ''; for (const word of String(s).split(/\s+/)) { if ((ln + ' ' + word).trim().length > w) { out.push(ln); ln = word; } else ln = (ln ? ln + ' ' : '') + word; } if (ln) out.push(ln); return out; };
+    console.log('openspec/conductor.json — gobierno del EQUIPO (committeable). TODO es opcional: hay default para todo.\n');
+    for (const [k, v] of Object.entries(CONFIG_SCHEMA.properties || {})) {
+      if (k.startsWith('_') || k === '$schema') continue;
+      const tipo = v.enum ? v.enum.join(' | ') : (v.type || (v.oneOf ? 'boolean | array' : ''));
+      console.log(`  ${k}${tipo ? `  (${tipo})` : ''}`);
+      for (const ln of wrap(v.description || '', 100)) console.log(`      ${ln}`);
+    }
+    console.log('\nEjemplo mínimo: {"models": {"coder": "copilot:claude-sonnet-4.5"}, "preset": "feature"}');
+    console.log('La FASE gana al rol: {"models": {"spec": "copilot:claude-opus-4.8", "explore": "litellm:mi-barato"}}');
+    process.exit(0);
+  }
   case 'init': // por-PROYECTO (el `daisy init` nuestro): crea openspec/ listo para lanzar — idempotente
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
@@ -1116,6 +1129,7 @@ function printHelp() {
   EL BUCLE DIARIO
     run  (o sin comando)                 abre la miniweb en este repo (la arranca si está apagada)
     init [dir]                           inicializa el proyecto (crea openspec/ — una vez por repo)
+    config                               los mandos de openspec/conductor.json, explicados uno a uno
     receipt <changeDir>                  recibo de PR (markdown) del run verificado
     stats                                tokens, coste REAL y ahorro por proveedor/modelo
     doctor                               autotest del entorno (proxy, app, bundle)
