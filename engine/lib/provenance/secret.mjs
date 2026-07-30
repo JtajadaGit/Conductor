@@ -155,6 +155,9 @@ export function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
+    // opt-out EXPLÍCITO del dev ("seal": false — paridad con su config de OpenCode): la key se queda en
+    // claro y es SU decisión informada; `litellm status` lo refleja sin alarma. Por defecto SIEMPRE se sella.
+    if (j && typeof j === 'object' && j.seal === false) return false;
     const plain = (j && typeof j === 'object') ? (j.apiKey || (j.options && typeof j.options === 'object' ? j.options.apiKey : null)) : null;
     if (!j || typeof j !== 'object' || !plain || j.apiKeyEnc) return false; // nada en claro que sellar
     if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)

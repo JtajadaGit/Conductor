@@ -85,3 +85,41 @@ await test('sdk-runner: sin @github/copilot-sdk instalado → error claro (el dr
   try { await createSdkRunner({}); } catch (e) { msg = e.message; }
   assert(/copilot-sdk no está instalado/.test(msg), `mensaje accionable: ${msg}`);
 });
+
+await test('catalogo: pickHighestVersionDir compara semver numerico (1.0.100 > 1.0.70 > 1.0.9) y filtra basura', async () => {
+  const { pickHighestVersionDir } = await import('../lib/pipeline/sdk-runner.mjs');
+  eq(pickHighestVersionDir(['1.0.64', '1.0.70', '1.0.9']), '1.0.70', 'numerico, no lexicografico');
+  eq(pickHighestVersionDir(['1.0.70', '1.0.100']), '1.0.100', 'tramo de 3 digitos gana');
+  eq(pickHighestVersionDir(['temp', '.DS_Store']), null, 'sin versiones => null');
+  eq(pickHighestVersionDir([]), null);
+});
+
+await test('catalogo: el SDK del CLI AUTO-ACTUALIZADO tiene prioridad (bug 7-vs-21: el sdk viejo del npm filtraba modelos nuevos)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'pipeline', 'sdk-runner.mjs'), 'utf8');
+  assert(/autoUpdatedSdkEntry/.test(src) && /cand\.unshift\(auto\)/.test(src), 'el candidato auto-actualizado va PRIMERO en la resolucion del catalogo');
+});
+
+await test('catalogo: metadata VIVA — getAvailableModels (la ficha del SEAT) manda; las constantes son solo red', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'pipeline', 'sdk-runner.mjs'), 'utf8');
+  const iFn = src.indexOf("if(typeof m.getAvailableModels==='function'){");
+  const iConst = src.indexOf('if(!v.length&&Array.isArray(m.HELP_VISIBLE_MODELS)');
+  assert(iFn > 0 && iConst > iFn, 'la via autoritativa va ANTES que las constantes en el script del subproceso');
+  assert(/model_picker_price_category/.test(src), 'captura la categoria de precio del picker (la moneda AI credits)');
+  const mod = await import('../lib/pipeline/sdk-runner.mjs');
+  assert(typeof mod.listCopilotCatalog === 'function' && typeof mod.listCopilotModels === 'function', 'catalogo rico + wrapper compat de ids');
+});
+
+await test('tiers: tierFromPriceCategory mapea la categoria VIVA del picker y rechaza basura (la heuristica queda de red)', async () => {
+  const { tierFromPriceCategory } = await import('../lib/core/tiers.mjs');
+  eq(tierFromPriceCategory('low'), 'economy');
+  eq(tierFromPriceCategory('Medium'), 'balanced', 'case-insensitive');
+  eq(tierFromPriceCategory('high'), 'premium');
+  eq(tierFromPriceCategory('gratis'), null, 'categoria desconocida => null (decide la heuristica)');
+  eq(tierFromPriceCategory(undefined), null);
+});

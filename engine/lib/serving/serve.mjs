@@ -15,7 +15,7 @@ import { KNOWN_PHASES } from '../pipeline/orchestrate.mjs';
 import { PRESET_NAMES } from '../pipeline/presets.mjs';
 import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
-import { classifyTier } from '../core/tiers.mjs';
+import { classifyTier, tierFromPriceCategory } from '../core/tiers.mjs';
 import { setLivePrices, setLiveMeta, metaOf, priceOf } from '../core/cost.mjs';
 import { renderAiact } from './aiact.mjs';
 // UI ÚNICA = Vite (assets/ui), servida por ui-static. Este fallback mínimo solo aparece si la UI no está
@@ -30,7 +30,7 @@ import { explain, renderSpec, renderTasks } from '../analysis/explain.mjs';
 import { initConfig } from '../analysis/scaffold.mjs';
 import { aggregateStats } from '../core/stats.mjs';
 import { parseEvents, parseOtelSession } from '../core/events.mjs';
-import { listCopilotModels } from '../pipeline/sdk-runner.mjs';
+import { listCopilotCatalog } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } from '../provenance/secret.mjs';
@@ -575,7 +575,7 @@ let _models = { at: 0, data: null };
 let _modelsInflight = null; // dedup anti-STAMPEDE: una ráfaga de /api/models concurrente comparte UN solo fetch a LiteLLM (antes cada llamada disparaba su propio fetch de 5s → 50 lecturas tardaban ~9s)
 // catálogo REAL de modelos Copilot vía el SDK (client.listModels), cacheado y rellenado en BACKGROUND.
 // NUNCA una lista inventada: si el SDK/runtime no responde, el picker muestra SOLO lo OBSERVADO en runs.
-let _copilotCat = { at: 0, models: [], fetching: false };
+let _copilotCat = { at: 0, models: [], info: {}, fetching: false }; // info[id] = ficha viva del SDK {name,vendor,cat,ctx,out,preview}
 // CATÁLOGO Copilot para el picker, derivado de la tabla PRICE MANTENIDA — ÚNICA fuente de verdad de los
 // modelos que conductor de verdad conoce (los que tienen precio+tier definidos por el equipo en cost.mjs).
 // NO se inventan ni transcriben ids: solo lo que está en PRICE (ids reales; dash→punto para el formato del
@@ -774,7 +774,7 @@ async function _computeAvailableModels(registry) {
     let sdkBundle = null; try { sdkBundle = [join(resolve(process.argv[1]), '..', 'copilot-sdk.mjs')].find(existsSync) || null; } catch {}
     // fallo (máquina cargada, gh lento…) → reintento en ~60s, NO el ciclo completo de 10 min: si el primer
     // intento del arranque moría, el panel se quedaba en "observados" 10 minutos aunque el catálogo ya saliera.
-    listCopilotModels({ sdkBundle }).then((ids) => { if (ids.length) { _copilotCat.models = ids; _models.at = 0; _copilotCat.at = Date.now(); } else { _copilotCat.at = Date.now() - 540000; } }).catch(() => { _copilotCat.at = Date.now() - 540000; }).finally(() => { _copilotCat.fetching = false; });
+    listCopilotCatalog({ sdkBundle }).then((cat) => { if (cat.length) { _copilotCat.models = cat.map((o) => o.id); _copilotCat.info = Object.fromEntries(cat.map((o) => [o.id, o])); _models.at = 0; _copilotCat.at = Date.now(); } else { _copilotCat.at = Date.now() - 540000; } }).catch(() => { _copilotCat.at = Date.now() - 540000; }).finally(() => { _copilotCat.fetching = false; });
   }
   // anti-fuga de familia Copilot en el grupo BYOK: un run mal configurado o una cache vieja pudo
   // marcar provider:'byok' sobre un modelo Copilot (claude/gpt/gemini/o-series). El grupo BYOK es SOLO
@@ -787,6 +787,9 @@ async function _computeAvailableModels(registry) {
   // tier por modelo (economy|balanced|premium) → el panel arma el preset "Optimizar coste" sin adivinar
   const tiers = {};
   for (const id of [...byokIds, ...copilotIds]) tiers[id] = classifyTier(id);
+  // los Copilot con FICHA viva usan su categoría de precio real (el picker oficial manda); la heurística
+  // por nombre queda solo para ids sin ficha (observados de runs viejos)
+  for (const id of copilotIds) { const t = tierFromPriceCategory(_copilotCat.info[id]?.cat); if (t) tiers[id] = t; }
   // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
   const prices = {};
   for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
@@ -794,7 +797,18 @@ async function _computeAvailableModels(registry) {
   // Los declarados en litellm.json rellenan los huecos que el proxy no reporta (el proxy, si habla, manda).
   const meta = {};
   for (const id of byokIds) { const m = metaOf(id) || declared.meta[id]; if (m) meta[id] = m; }
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, names: declared.names || {}, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  // ficha viva de los Copilot: límites reales + nombre display + vendor (agrupación) + categoría de AI
+  // credits (low/medium/high — el MISMO rótulo del picker oficial; LiteLLM = 0 créditos por definición,
+  // lo dice la UI como texto, no como número inventado)
+  const names = { ...(declared.names || {}) }, vendors = {}, credits = {};
+  for (const id of copilotIds) {
+    const i = _copilotCat.info[id]; if (!i) continue;
+    if ((i.ctx || i.out) && !meta[id]) meta[id] = { ...(i.ctx ? { maxIn: i.ctx } : {}), ...(i.out ? { maxOut: i.out } : {}) };
+    if (i.name) names[id] = i.name;
+    if (i.vendor) vendors[id] = i.vendor;
+    if (i.cat) credits[id] = i.cat;
+  }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, names, vendors, credits, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 

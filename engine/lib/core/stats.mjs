@@ -45,6 +45,8 @@ export function aggregateStats(projects) {
   const byProvider = Object.create(null); // provider -> acumulado (sin prototipo: un modelo "toString" no colisiona)
   const byModel = Object.create(null); // model -> acumulado
   const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
+  const byDay = new Map(); // "fecha|provider|model" — la MISMA granularidad (día × modelo) que las herramientas
+  // de consumo corporativas: ellas ponen el €, esto pone el "en qué" (tokens y peticiones de ese día)
   const perProject = [];
   let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0, unpriced = 0;
   // T3: precisión del estimador — acumula est vs real SOLO en fases con tokens medidos y estimación presente
@@ -82,6 +84,12 @@ export function aggregateStats(projects) {
         }
         if (contributed) estAcc.runs++;
       }
+      // fecha del run para el corte por día: 1º dato ISO del timeline; si no hay, mtime del fichero (honesto:
+      // aproxima al día de cierre del run, suficiente para conciliar consumos diarios)
+      let day = null;
+      const iso = tl.startedAt || tl.at || tl.approvals?.[0]?.at || tl.decisions?.[0]?.at || null;
+      if (iso) { const d = new Date(iso); if (!isNaN(d)) day = d.toISOString().slice(0, 10); }
+      if (!day) { try { day = new Date(statSync(plumbPath(ch.dir, 'timeline.json')).mtimeMs).toISOString().slice(0, 10); } catch {} }
       const sr = tl.selfRepair || (Array.isArray(tl.phases) ? { fixCycles: tl.phases.filter((p) => p && p.phase === 'fix').length, recovered: v === 'GREEN' && tl.phases.some((p) => p && p.phase === 'fix') } : {});
       if (Number(sr.fixCycles) > 0) { fixRuns++; if (sr.recovered) recoveredRuns++; }
       for (const ph of tl.phases) {
@@ -100,6 +108,7 @@ export function aggregateStats(projects) {
         bp.calls++; bp.in += i; bp.out += o; bp.cost += c; bp.naive += nc; if (ph.model || ph.modelReported) bp.models.add(m);
         const bm = (byModel[m] ||= { model: m, providers: new Set(), calls: 0, in: 0, out: 0, cost: 0, naive: 0 });
         bm.calls++; bm.in += i; bm.out += o; bm.cost += c; bm.naive += nc; bm.providers.add(prov);
+        if (day) { const dk = `${day}|${prov}|${m}`; const bd = byDay.get(dk) || byDay.set(dk, { date: day, provider: prov, model: m, calls: 0, in: 0, out: 0 }).get(dk); bd.calls++; bd.in += i; bd.out += o; }
         if (ph.phase) { const mpk = `${m}|${ph.phase}`; const mp = (byModelPhase.has(mpk) ? byModelPhase.get(mpk) : byModelPhase.set(mpk, { model: m, phase: ph.phase, calls: 0, green: 0, in: 0, out: 0 }).get(mpk)); mp.calls++; mp.in += i; mp.out += o; if (v === 'GREEN') mp.green++; }
       }
     }
@@ -116,6 +125,8 @@ export function aggregateStats(projects) {
     ? { runs: estAcc.runs, phases: estAcc.phases, dev_pct: Math.round(((estAcc.real / estAcc.est) - 1) * 100), mape_pct: Math.round((estAcc.absErr / estAcc.phases) * 100) }
     : null; // sin datos no se inventa precisión (honestidad)
   return {
+    // corte por día (máx 120 filas, recientes primero) — cruzable 1:1 con el informe diario de consumo de la org
+    byDay: [...byDay.values()].sort((a, b) => b.date.localeCompare(a.date) || a.model.localeCompare(b.model)).slice(0, 120),
     estimator,
     projects_scanned: list.length,
     runs, green, failed, stopped, aborted, running, phases: phasesTotal,

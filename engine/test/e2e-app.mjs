@@ -62,6 +62,8 @@ try {
   if (!mods.tiers || typeof mods.tiers !== 'object') fail('/api/models sin mapa tiers');
   const VALID_TIERS = ['economy', 'balanced', 'premium'];
   for (const [id, t] of Object.entries(mods.tiers)) if (!VALID_TIERS.includes(t)) fail(`/api/models tiers[${id}]=${t} no es economy|balanced|premium`);
+  // metadata viva del catálogo: mapas credits (AI credits low/medium/high) y vendors SIEMPRE presentes (vacíos sin catálogo)
+  if (!mods.credits || typeof mods.credits !== 'object' || !mods.vendors || typeof mods.vendors !== 'object') fail('/api/models sin mapas credits/vendors');
   ok('/api/models responde con catálogo dinámico (byok+copilot+tiers+fuentes)');
 
   // launch

@@ -54,7 +54,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
-import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate } from '../lib/provenance/secret.mjs';
+import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate, normalizeByokShape } from '../lib/provenance/secret.mjs';
 import { PROMPT_KEYS, instructionFor } from '../lib/pipeline/orchestrate.mjs';
 import { homedir, tmpdir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
@@ -433,12 +433,24 @@ switch (cmd) {
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
-      const sealedNow = sealByokFile(home);
+      const sealedNow = sealByokFile(home); // no-op si el dev puso "seal": false (su decisión informada)
       const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
-      let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); tpl = isTemplateCreds(j); fileOk = !tpl && !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = (!tpl && j.models) ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false, optOut = false, keyTx = '';
+      try {
+        const j = JSON.parse(readFileSync(fRead, 'utf8'));
+        tpl = isTemplateCreds(j); optOut = j.seal === false;
+        const nj = normalizeByokShape(j);
+        fileOk = !tpl && !!(nj.baseUrl && (nj.apiKey || nj.apiKeyEnc)); enc = !!nj.apiKeyEnc; portable = enc && String(nj.apiKeyEnc).startsWith('c2:');
+        nDecl = (!tpl && j.models) ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0;
+        // TRANSPARENCIA: enseña QUÉ key hay dentro (últimos 4 + huella sha corta) — verificable contra la que
+        // te dio tu org SIN imprimirla entera jamás. Si rotas la key y la huella no cambia… pegaste la vieja.
+        const k = !tpl ? String(nj.apiKey || (nj.apiKeyEnc ? decryptSecret(nj.apiKeyEnc) || '' : '')) : '';
+        if (k) keyTx = ` · key …${k.slice(-4)} (huella ${createHash('sha256').update(k).digest('hex').slice(0, 6)})`;
+      } catch {}
       if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
-      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
-      console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
+      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
+        : (optOut ? 'EN CLARO por decisión tuya ("seal": false)' : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)');
+      console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + keyTx + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
     }
     bad('litellm login (interactivo, key oculta) | litellm save (desde el entorno, CI) | litellm status  — o edita ~/.conductor/litellm.json a mano: {"baseUrl": "https://…/v1", "apiKey": "sk-…", "models": {"<id>": {"limit": {"context": 250000, "output": 16384}}}} (se cifra al primer uso; los models declarados salen SIEMPRE en el selector)');
@@ -672,7 +684,7 @@ switch (cmd) {
         const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : (e.name.endsWith('.mjs') ? [join(d, e.name)] : []));
         const files = walk(libDir).sort();
         files.push(join(libDir, '..', 'bin', 'conductor.mjs'));
-        const cur = createHashSync(files.map((f) => readFileSync(f, 'utf8')).join(' '));
+        const cur = createHashSync(files.map((f) => readFileSync(f, 'utf8')).join('\0'));
         console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);
       } else { console.log('  bundle vs lib/: (no comprobable fuera del repo)'); }
     } catch { console.log('  bundle vs lib/: (no comprobable)'); }
@@ -1173,6 +1185,13 @@ function printStats(r, single) {
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
   if (st.estimator) console.log(`\n  ESTIMADOR   ${st.estimator.phases} fase(s) medidas en ${st.estimator.runs} run(s) · desviación total ${st.estimator.dev_pct > 0 ? '+' : ''}${st.estimator.dev_pct}% · error medio por fase (MAPE) ${st.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
+  if (st.byDay?.length) {
+    // el corte día × modelo — la MISMA granularidad que el informe de consumo de tu org: allí ves el €,
+    // aquí el "en qué se fue" (peticiones y tokens de ese día, por modelo y proveedor)
+    console.log('\n  POR DÍA (cruzable con el informe de consumo de tu organización)');
+    for (const d of st.byDay.slice(0, 14)) console.log(`    ${d.date}  ${d.provider === 'byok' ? 'LiteLLM' : 'Copilot'}  ${d.model}  ·  ${d.calls} petición(es) · ↓ ${d.in.toLocaleString('es')} ↑ ${d.out.toLocaleString('es')} tokens`);
+    if (st.byDay.length > 14) console.log(`    … y ${st.byDay.length - 14} fila(s) más (conductor stats --json para todas)`);
+  }
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
     const label = p.provider === 'byok' ? 'LiteLLM (BYOK · tu proxy)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;

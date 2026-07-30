@@ -276,6 +276,9 @@ function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
+    // opt-out EXPLÍCITO del dev ("seal": false — paridad con su config de OpenCode): la key se queda en
+    // claro y es SU decisión informada; `litellm status` lo refleja sin alarma. Por defecto SIEMPRE se sella.
+    if (j && typeof j === 'object' && j.seal === false) return false;
     const plain = (j && typeof j === 'object') ? (j.apiKey || (j.options && typeof j.options === 'object' ? j.options.apiKey : null)) : null;
     if (!j || typeof j !== 'object' || !plain || j.apiKeyEnc) return false; // nada en claro que sellar
     if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
@@ -2101,6 +2104,8 @@ function aggregateStats(projects) {
   const byProvider = Object.create(null); // provider -> acumulado (sin prototipo: un modelo "toString" no colisiona)
   const byModel = Object.create(null); // model -> acumulado
   const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
+  const byDay = new Map(); // "fecha|provider|model" — la MISMA granularidad (día × modelo) que las herramientas
+  // de consumo corporativas: ellas ponen el €, esto pone el "en qué" (tokens y peticiones de ese día)
   const perProject = [];
   let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0, unpriced = 0;
   // T3: precisión del estimador — acumula est vs real SOLO en fases con tokens medidos y estimación presente
@@ -2138,6 +2143,12 @@ function aggregateStats(projects) {
         }
         if (contributed) estAcc.runs++;
       }
+      // fecha del run para el corte por día: 1º dato ISO del timeline; si no hay, mtime del fichero (honesto:
+      // aproxima al día de cierre del run, suficiente para conciliar consumos diarios)
+      let day = null;
+      const iso = tl.startedAt || tl.at || tl.approvals?.[0]?.at || tl.decisions?.[0]?.at || null;
+      if (iso) { const d = new Date(iso); if (!isNaN(d)) day = d.toISOString().slice(0, 10); }
+      if (!day) { try { day = new Date(statSync(plumbPath(ch.dir, 'timeline.json')).mtimeMs).toISOString().slice(0, 10); } catch {} }
       const sr = tl.selfRepair || (Array.isArray(tl.phases) ? { fixCycles: tl.phases.filter((p) => p && p.phase === 'fix').length, recovered: v === 'GREEN' && tl.phases.some((p) => p && p.phase === 'fix') } : {});
       if (Number(sr.fixCycles) > 0) { fixRuns++; if (sr.recovered) recoveredRuns++; }
       for (const ph of tl.phases) {
@@ -2156,6 +2167,7 @@ function aggregateStats(projects) {
         bp.calls++; bp.in += i; bp.out += o; bp.cost += c; bp.naive += nc; if (ph.model || ph.modelReported) bp.models.add(m);
         const bm = (byModel[m] ||= { model: m, providers: new Set(), calls: 0, in: 0, out: 0, cost: 0, naive: 0 });
         bm.calls++; bm.in += i; bm.out += o; bm.cost += c; bm.naive += nc; bm.providers.add(prov);
+        if (day) { const dk = `${day}|${prov}|${m}`; const bd = byDay.get(dk) || byDay.set(dk, { date: day, provider: prov, model: m, calls: 0, in: 0, out: 0 }).get(dk); bd.calls++; bd.in += i; bd.out += o; }
         if (ph.phase) { const mpk = `${m}|${ph.phase}`; const mp = (byModelPhase.has(mpk) ? byModelPhase.get(mpk) : byModelPhase.set(mpk, { model: m, phase: ph.phase, calls: 0, green: 0, in: 0, out: 0 }).get(mpk)); mp.calls++; mp.in += i; mp.out += o; if (v === 'GREEN') mp.green++; }
       }
     }
@@ -2172,6 +2184,8 @@ function aggregateStats(projects) {
     ? { runs: estAcc.runs, phases: estAcc.phases, dev_pct: Math.round(((estAcc.real / estAcc.est) - 1) * 100), mape_pct: Math.round((estAcc.absErr / estAcc.phases) * 100) }
     : null; // sin datos no se inventa precisión (honestidad)
   return {
+    // corte por día (máx 120 filas, recientes primero) — cruzable 1:1 con el informe diario de consumo de la org
+    byDay: [...byDay.values()].sort((a, b) => b.date.localeCompare(a.date) || a.model.localeCompare(b.model)).slice(0, 120),
     estimator,
     projects_scanned: list.length,
     runs, green, failed, stopped, aborted, running, phases: phasesTotal,
@@ -3144,7 +3158,15 @@ function tierModel(phase, cfg = {}, ctx = {}) {
   return { model: tiers[tier] || tiers.balanced || tiers.economy || '', tier };
 }
 
-return { classifyTier, phaseTier, tierModel };
+// tier desde la CATEGORÍA DE PRECIO del picker oficial de Copilot (model_picker_price_category, catálogo
+// vivo del SDK): si mañana un modelo cambia de categoría, su tier le sigue SOLO — sin tocar código. La
+// heurística por nombre (classifyTier) queda de red para ids sin ficha. Pura, exportada para test.
+function tierFromPriceCategory(cat) {
+  const c = String(cat || '').toLowerCase();
+  return c === 'low' ? 'economy' : c === 'medium' ? 'balanced' : c === 'high' ? 'premium' : null;
+}
+
+return { classifyTier, phaseTier, tierModel, tierFromPriceCategory };
 })();
 
 // ===== lib/sysops/otlp.mjs =====
@@ -6477,6 +6499,43 @@ const requireNode = createRequire(import.meta.url);
 // el propio SDK lo lanza con node — verificado en su dist/client.js).
 // MEMO por-proceso: `npm root -g` es un execSync que BLOQUEA el event loop hasta 8s (aun disparado desde el
 // refresco de catálogo en background). El path del CLI global no cambia en la vida del proceso → se resuelve UNA
+// SDK del CLI AUTO-ACTUALIZADO (la fuente del catálogo REAL): el binario npm es solo un lanzador; el CLI
+// de verdad vive versionado en su dir de paquetes y se actualiza solo. Elegimos la versión MÁS ALTA presente
+// (comparación numérica por tramos, no lexicográfica: 1.0.100 > 1.0.70). Puro y exportado para test.
+function pickHighestVersionDir(names = []) {
+  const vs = (names || []).filter((n) => /^\d+(\.\d+)*$/.test(String(n)));
+  if (!vs.length) return null;
+  return vs.sort((a, b) => {
+    const A = a.split('.').map(Number), B = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(A.length, B.length); i++) { const d = (A[i] || 0) - (B[i] || 0); if (d) return d; }
+    return 0;
+  }).pop();
+}
+
+function autoUpdatedSdkEntry(env = process.env) {
+  try {
+    const { existsSync, readdirSync } = requireNode('node:fs');
+    const { join } = requireNode('node:path');
+    const { homedir } = requireNode('node:os');
+    const bases = [];
+    if (env.LOCALAPPDATA) bases.push(join(env.LOCALAPPDATA, 'copilot', 'pkg'));
+    bases.push(join(homedir(), '.local', 'share', 'copilot', 'pkg'));           // posix XDG
+    bases.push(join(homedir(), 'Library', 'Application Support', 'copilot', 'pkg')); // macOS
+    for (const base of bases) {
+      if (!existsSync(base)) continue;
+      for (const plat of readdirSync(base)) {
+        const platDir = join(base, plat);
+        let vers = []; try { vers = readdirSync(platDir); } catch { continue; }
+        const v = pickHighestVersionDir(vers);
+        if (!v) continue;
+        const entry = join(platDir, v, 'sdk', 'index.js');
+        if (existsSync(entry)) return entry;
+      }
+    }
+  } catch { /* sin CLI auto-actualizado: caer a las otras vías */ }
+  return null;
+}
+
 // vez (el server es largo → antes se congelaba cada ~10 min). undefined = sin computar; el env override no memoiza.
 let _cliPathMemo;
 function resolveCliPath(env = process.env) {
@@ -6511,6 +6570,10 @@ async function copilotCatalogFromCli(env = process.env) {
     const { execFile } = requireNode('node:child_process');
     const { pathToFileURL } = await import('node:url');
     const cand = [join(dirname(cliPath), 'sdk', 'index.js'), join(dirname(cliPath), '..', 'sdk', 'index.js')];
+    // el CLI real AUTO-ACTUALIZADO manda: su SDK conoce el catálogo del picker de HOY (el del npm-global
+    // envejece y FILTRA modelos nuevos — bug real: 7 vs 21 modelos con el mismo token)
+    const auto = autoUpdatedSdkEntry(env);
+    if (auto) cand.unshift(auto);
     // ROBUSTO: resuelve el subpath-export "@github/copilot/sdk" por el mapa de exports del PROPIO paquete (no depende
     // de adivinar dist/sdk/…). Es LA fuente del catálogo (HELP_VISIBLE_MODELS); si el guess de arriba falla, esto acierta.
     try { cand.unshift(createRequire(pathToFileURL(cliPath).href).resolve('@github/copilot/sdk')); } catch {}
@@ -6531,10 +6594,11 @@ async function copilotCatalogFromCli(env = process.env) {
       "const e=process.env.__C_SDK_ENTRY;",
       "import(e).then(async m=>{",
       "  const auto=m.AUTO_MODEL_ID; let v=[];",
-      "  const pick=r=>{const a=Array.isArray(r)?r:(r&&Array.isArray(r.models)?r.models:[]);return a.map(x=>typeof x==='string'?x:(x&&(x.id||x.name))).filter(Boolean);};",
-      "  if(Array.isArray(m.HELP_VISIBLE_MODELS)&&m.HELP_VISIBLE_MODELS.length) v=m.HELP_VISIBLE_MODELS;",
-      "  else if(Array.isArray(m.SUPPORTED_MODELS)&&m.SUPPORTED_MODELS.length) v=m.SUPPORTED_MODELS;",
-      "  else if(typeof m.getAvailableModels==='function'){",
+      "  const pick=r=>Array.isArray(r)?r:(r&&Array.isArray(r.models)?r.models:[]);",
+      // ORDEN: getAvailableModels PRIMERO — es el catálogo del SEAT real (filtrado por licencia) y trae la
+      // FICHA completa por modelo (nombre, vendor, categoría de precio, límites). Las constantes
+      // HELP_VISIBLE_MODELS/SUPPORTED_MODELS son strings pelados sin filtrar → solo red de seguridad.
+      "  if(typeof m.getAvailableModels==='function'){",
       // token del ENTORNO primero (vía limpia, sin parsear el almacén del CLI): setups Copilot Business suelen
       // exportar COPILOT_API_TOKEN/COPILOT_GITHUB_TOKEN → con {type:'token'} devuelve el CATÁLOGO REAL completo.
       "    let tok=process.env.COPILOT_API_TOKEN||process.env.COPILOT_GITHUB_TOKEN||process.env.GH_COPILOT_TOKEN||'';",
@@ -6548,10 +6612,20 @@ async function copilotCatalogFromCli(env = process.env) {
       "      try{ const got=pick(await m.getAvailableModels(ai)); if(got.length){ v=got; break; } }catch{}",
       "    }",
       "  }",
+      "  if(!v.length&&Array.isArray(m.HELP_VISIBLE_MODELS)&&m.HELP_VISIBLE_MODELS.length) v=m.HELP_VISIBLE_MODELS;",
+      "  if(!v.length&&Array.isArray(m.SUPPORTED_MODELS)&&m.SUPPORTED_MODELS.length) v=m.SUPPORTED_MODELS;",
       // M16: delimitar con sentinel — si el SDK escribe un banner/deprecación a stdout al importarse, el
       // JSON.parse del padre fallaba y el catálogo degradaba a [] en silencio. Ahora se extrae el tramo entre
       // sentinels, ignorando cualquier ruido previo/posterior en stdout.
-      "  process.stdout.write('<<CDCT>>'+JSON.stringify((v||[]).filter(x=>x&&x!==auto))+'<<TCDC>>');",
+      // METADATA por modelo, la MISMA que usa el picker oficial: nombre display, vendor (agrupación real),
+      // model_picker_price_category (low/medium/high — la moneda en AI credits), contexto y tope de salida.
+      // CLIs viejos daban strings → quedan como {id} pelado; nada se inventa.
+      "  const norm=x=>{if(typeof x==='string')return {id:x};if(!x)return null;const L=(x.capabilities&&x.capabilities.limits)||{};const o={id:x.id||x.name};if(!o.id)return null;",
+      "    if(typeof x.name==='string'&&x.name&&x.name!==o.id)o.name=x.name;if(typeof x.vendor==='string'&&x.vendor)o.vendor=x.vendor;",
+      "    if(typeof x.model_picker_price_category==='string'&&x.model_picker_price_category)o.cat=x.model_picker_price_category;",
+      "    if(Number(L.max_context_window_tokens)>0)o.ctx=Number(L.max_context_window_tokens);if(Number(L.max_output_tokens)>0)o.out=Number(L.max_output_tokens);",
+      "    if(x.preview===true)o.preview=true;return o;};",
+      "  process.stdout.write('<<CDCT>>'+JSON.stringify((v||[]).map(norm).filter(x=>x&&x.id&&x.id!==auto))+'<<TCDC>>');",
       "}).catch(()=>process.stdout.write('<<CDCT>>[]<<TCDC>>'))",
     ].join('\n');
     const out = await new Promise((res) => {
@@ -6567,7 +6641,8 @@ async function copilotCatalogFromCli(env = process.env) {
     });
     const m = String(out).match(/<<CDCT>>([\s\S]*?)<<TCDC>>/); // extrae SOLO el tramo entre sentinels (ignora banners del SDK)
     const arr = JSON.parse(m ? m[1] : '[]');
-    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string' && x) : [];
+    // entradas = OBJETOS {id, name?, vendor?, cat?, ctx?, out?, preview?} — la metadata viaja CON el id
+    return Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object' && typeof x.id === 'string' && x.id) : [];
   } catch { return []; }
 }
 
@@ -6654,7 +6729,7 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
 // CATÁLOGO REAL de modelos Copilot: lo que el SDK reporta (client.listModels()), NUNCA una lista inventada.
 // Resuelve el SDK como createSdkRunner; si no está disponible o el runtime no arranca, devuelve [] (sin fake,
 // nada de seeds). Con timeout para no colgar al llamador. El llamador (serve) lo usa en BACKGROUND + cache.
-async function listCopilotModels({ sdk, sdkBundle, env = process.env, timeoutMs = 12000 } = {}) {
+async function listCopilotCatalog({ sdk, sdkBundle, env = process.env, timeoutMs = 12000 } = {}) {
   // 1) PRIMARIA: constantes del CLI instalado (rápida, sin runtime/auth/JSON-RPC, version-matched con el
   // CLI del usuario). Es la lista que el propio Copilot muestra en su selector.
   try { const fast = await copilotCatalogFromCli(env); if (fast.length) return fast; } catch {}
@@ -6675,12 +6750,17 @@ async function listCopilotModels({ sdk, sdkBundle, env = process.env, timeoutMs 
         client.listModels(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('listModels timeout')), timeoutMs)),
       ]);
-      return (Array.isArray(models) ? models : []).map((m) => m && (m.id || m.name)).filter(Boolean);
+      return (Array.isArray(models) ? models : []).map((m) => { const id = m && (m.id || m.name); return id ? { id, ...(m.name && m.id && m.name !== m.id ? { name: m.name } : {}) } : null; }).filter(Boolean);
     } finally { try { await client.stop?.(); } catch {} }
   } catch { return []; }
 }
 
-return { resolveCliPath, copilotCatalogFromCli, createSdkRunner, listCopilotModels };
+// compat: SOLO los ids (string[]) — la vista clásica para quien no necesita la metadata.
+async function listCopilotModels(opts = {}) {
+  return (await listCopilotCatalog(opts)).map((o) => o.id);
+}
+
+return { pickHighestVersionDir, autoUpdatedSdkEntry, resolveCliPath, copilotCatalogFromCli, createSdkRunner, listCopilotCatalog, listCopilotModels };
 })();
 
 // ===== lib/serving/serve.mjs =====
@@ -6702,7 +6782,7 @@ const { KNOWN_PHASES } = __M['orchestrate'];
 const { PRESET_NAMES } = __M['presets'];
 const { resolvePlan, PHASE_ACTION } = __M['plan'];
 const { loadPolicy } = __M['policy'];
-const { classifyTier } = __M['tiers'];
+const { classifyTier, tierFromPriceCategory } = __M['tiers'];
 const { setLivePrices, setLiveMeta, metaOf, priceOf } = __M['cost'];
 const { renderAiact } = __M['aiact'];
 // UI ÚNICA = Vite (assets/ui), servida por ui-static. Este fallback mínimo solo aparece si la UI no está
@@ -6717,7 +6797,7 @@ const { explain, renderSpec, renderTasks } = __M['explain'];
 const { initConfig } = __M['scaffold'];
 const { aggregateStats } = __M['stats'];
 const { parseEvents, parseOtelSession } = __M['events'];
-const { listCopilotModels } = __M['sdk-runner'];
+const { listCopilotCatalog } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } = __M['secret'];
@@ -7261,7 +7341,7 @@ let _models = { at: 0, data: null };
 let _modelsInflight = null; // dedup anti-STAMPEDE: una ráfaga de /api/models concurrente comparte UN solo fetch a LiteLLM (antes cada llamada disparaba su propio fetch de 5s → 50 lecturas tardaban ~9s)
 // catálogo REAL de modelos Copilot vía el SDK (client.listModels), cacheado y rellenado en BACKGROUND.
 // NUNCA una lista inventada: si el SDK/runtime no responde, el picker muestra SOLO lo OBSERVADO en runs.
-let _copilotCat = { at: 0, models: [], fetching: false };
+let _copilotCat = { at: 0, models: [], info: {}, fetching: false }; // info[id] = ficha viva del SDK {name,vendor,cat,ctx,out,preview}
 // CATÁLOGO Copilot para el picker, derivado de la tabla PRICE MANTENIDA — ÚNICA fuente de verdad de los
 // modelos que conductor de verdad conoce (los que tienen precio+tier definidos por el equipo en cost.mjs).
 // NO se inventan ni transcriben ids: solo lo que está en PRICE (ids reales; dash→punto para el formato del
@@ -7460,7 +7540,7 @@ async function _computeAvailableModels(registry) {
     let sdkBundle = null; try { sdkBundle = [join(resolve(process.argv[1]), '..', 'copilot-sdk.mjs')].find(existsSync) || null; } catch {}
     // fallo (máquina cargada, gh lento…) → reintento en ~60s, NO el ciclo completo de 10 min: si el primer
     // intento del arranque moría, el panel se quedaba en "observados" 10 minutos aunque el catálogo ya saliera.
-    listCopilotModels({ sdkBundle }).then((ids) => { if (ids.length) { _copilotCat.models = ids; _models.at = 0; _copilotCat.at = Date.now(); } else { _copilotCat.at = Date.now() - 540000; } }).catch(() => { _copilotCat.at = Date.now() - 540000; }).finally(() => { _copilotCat.fetching = false; });
+    listCopilotCatalog({ sdkBundle }).then((cat) => { if (cat.length) { _copilotCat.models = cat.map((o) => o.id); _copilotCat.info = Object.fromEntries(cat.map((o) => [o.id, o])); _models.at = 0; _copilotCat.at = Date.now(); } else { _copilotCat.at = Date.now() - 540000; } }).catch(() => { _copilotCat.at = Date.now() - 540000; }).finally(() => { _copilotCat.fetching = false; });
   }
   // anti-fuga de familia Copilot en el grupo BYOK: un run mal configurado o una cache vieja pudo
   // marcar provider:'byok' sobre un modelo Copilot (claude/gpt/gemini/o-series). El grupo BYOK es SOLO
@@ -7473,6 +7553,9 @@ async function _computeAvailableModels(registry) {
   // tier por modelo (economy|balanced|premium) → el panel arma el preset "Optimizar coste" sin adivinar
   const tiers = {};
   for (const id of [...byokIds, ...copilotIds]) tiers[id] = classifyTier(id);
+  // los Copilot con FICHA viva usan su categoría de precio real (el picker oficial manda); la heurística
+  // por nombre queda solo para ids sin ficha (observados de runs viejos)
+  for (const id of copilotIds) { const t = tierFromPriceCategory(_copilotCat.info[id]?.cat); if (t) tiers[id] = t; }
   // precio efectivo por modelo para el panel ($/1M in/out) — null = DESCONOCIDO (la UI lo dice, no inventa 0)
   const prices = {};
   for (const id of [...byokIds, ...copilotIds]) { const p = priceOf(id); prices[id] = p.known ? { in: p.in, out: p.out } : null; }
@@ -7480,7 +7563,18 @@ async function _computeAvailableModels(registry) {
   // Los declarados en litellm.json rellenan los huecos que el proxy no reporta (el proxy, si habla, manda).
   const meta = {};
   for (const id of byokIds) { const m = metaOf(id) || declared.meta[id]; if (m) meta[id] = m; }
-  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, names: declared.names || {}, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
+  // ficha viva de los Copilot: límites reales + nombre display + vendor (agrupación) + categoría de AI
+  // credits (low/medium/high — el MISMO rótulo del picker oficial; LiteLLM = 0 créditos por definición,
+  // lo dice la UI como texto, no como número inventado)
+  const names = { ...(declared.names || {}) }, vendors = {}, credits = {};
+  for (const id of copilotIds) {
+    const i = _copilotCat.info[id]; if (!i) continue;
+    if ((i.ctx || i.out) && !meta[id]) meta[id] = { ...(i.ctx ? { maxIn: i.ctx } : {}), ...(i.out ? { maxOut: i.out } : {}) };
+    if (i.name) names[id] = i.name;
+    if (i.vendor) vendors[id] = i.vendor;
+    if (i.cat) credits[id] = i.cat;
+  }
+  _models.data = { byok: byokIds, copilot: copilotIds, tiers, prices, meta, names, vendors, credits, byokSource, copilotSource: _copilotCat.models.length ? 'catálogo real del CLI de Copilot' : 'observados en tus runs (catálogo del CLI aún no disponible)', copilotPending: !_copilotCat.models.length, byokCreds: !!creds, byokUrl: creds ? String(creds.baseUrl || '') : '', byokCachedAt, byokReason };
   return _models.data;
 }
 
@@ -8619,7 +8713,7 @@ const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
 const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
-const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate } = __M['secret'];
+const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate, normalizeByokShape } = __M['secret'];
 const { PROMPT_KEYS, instructionFor } = __M['orchestrate'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
 const { toOtlp } = __M['otlp'];
@@ -8996,12 +9090,24 @@ switch (cmd) {
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
-      const sealedNow = sealByokFile(home);
+      const sealedNow = sealByokFile(home); // no-op si el dev puso "seal": false (su decisión informada)
       const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
-      let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false; try { const j = JSON.parse(readFileSync(fRead, 'utf8')); tpl = isTemplateCreds(j); fileOk = !tpl && !!(j.baseUrl && (j.apiKey || j.apiKeyEnc)); enc = !!j.apiKeyEnc; portable = enc && String(j.apiKeyEnc).startsWith('c2:'); nDecl = (!tpl && j.models) ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0; } catch {}
+      let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false, optOut = false, keyTx = '';
+      try {
+        const j = JSON.parse(readFileSync(fRead, 'utf8'));
+        tpl = isTemplateCreds(j); optOut = j.seal === false;
+        const nj = normalizeByokShape(j);
+        fileOk = !tpl && !!(nj.baseUrl && (nj.apiKey || nj.apiKeyEnc)); enc = !!nj.apiKeyEnc; portable = enc && String(nj.apiKeyEnc).startsWith('c2:');
+        nDecl = (!tpl && j.models) ? (Array.isArray(j.models) ? j.models.length : Object.keys(j.models).length) : 0;
+        // TRANSPARENCIA: enseña QUÉ key hay dentro (últimos 4 + huella sha corta) — verificable contra la que
+        // te dio tu org SIN imprimirla entera jamás. Si rotas la key y la huella no cambia… pegaste la vieja.
+        const k = !tpl ? String(nj.apiKey || (nj.apiKeyEnc ? decryptSecret(nj.apiKeyEnc) || '' : '')) : '';
+        if (k) keyTx = ` · key …${k.slice(-4)} (huella ${createHash('sha256').update(k).digest('hex').slice(0, 6)})`;
+      } catch {}
       if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
-      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO')) : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)';
-      console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
+      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
+        : (optOut ? 'EN CLARO por decisión tuya ("seal": false)' : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)');
+      console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + keyTx + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
     }
     bad('litellm login (interactivo, key oculta) | litellm save (desde el entorno, CI) | litellm status  — o edita ~/.conductor/litellm.json a mano: {"baseUrl": "https://…/v1", "apiKey": "sk-…", "models": {"<id>": {"limit": {"context": 250000, "output": 16384}}}} (se cifra al primer uso; los models declarados salen SIEMPRE en el selector)');
@@ -9235,7 +9341,7 @@ switch (cmd) {
         const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : (e.name.endsWith('.mjs') ? [join(d, e.name)] : []));
         const files = walk(libDir).sort();
         files.push(join(libDir, '..', 'bin', 'conductor.mjs'));
-        const cur = createHashSync(files.map((f) => readFileSync(f, 'utf8')).join(' '));
+        const cur = createHashSync(files.map((f) => readFileSync(f, 'utf8')).join('\0'));
         console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);
       } else { console.log('  bundle vs lib/: (no comprobable fuera del repo)'); }
     } catch { console.log('  bundle vs lib/: (no comprobable)'); }
@@ -9736,6 +9842,13 @@ function printStats(r, single) {
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
   if (st.estimator) console.log(`\n  ESTIMADOR   ${st.estimator.phases} fase(s) medidas en ${st.estimator.runs} run(s) · desviación total ${st.estimator.dev_pct > 0 ? '+' : ''}${st.estimator.dev_pct}% · error medio por fase (MAPE) ${st.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
+  if (st.byDay?.length) {
+    // el corte día × modelo — la MISMA granularidad que el informe de consumo de tu org: allí ves el €,
+    // aquí el "en qué se fue" (peticiones y tokens de ese día, por modelo y proveedor)
+    console.log('\n  POR DÍA (cruzable con el informe de consumo de tu organización)');
+    for (const d of st.byDay.slice(0, 14)) console.log(`    ${d.date}  ${d.provider === 'byok' ? 'LiteLLM' : 'Copilot'}  ${d.model}  ·  ${d.calls} petición(es) · ↓ ${d.in.toLocaleString('es')} ↑ ${d.out.toLocaleString('es')} tokens`);
+    if (st.byDay.length > 14) console.log(`    … y ${st.byDay.length - 14} fila(s) más (conductor stats --json para todas)`);
+  }
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
     const label = p.provider === 'byok' ? 'LiteLLM (BYOK · tu proxy)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
@@ -9766,4 +9879,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: df51bdc2d475704f7aa6f090de628ebfa093b2a2ee5df3103f3542c2154e023c
+// build-inputs-sha256: 0748421dae618eaed725c21b29d5ece2bcc9e455813aa64ef335285674e4471c

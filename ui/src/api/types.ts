@@ -133,7 +133,10 @@ export interface ModelsResponse {
   byok: string[];
   copilot: string[];
   tiers?: Record<string, string>; // id de modelo → 'economy' | 'balanced' | 'premium' (presets de coste)
-  names?: Record<string, string>; // id → nombre legible declarado en litellm.json ("deepseek-v4-flash" → "DeepSeek v4 flash")
+  names?: Record<string, string>; // id → nombre legible (declarado en litellm.json, o display name del catálogo Copilot)
+  meta?: Record<string, { maxIn?: number; maxOut?: number }>; // límites REALES por modelo (ventana de contexto / salida)
+  vendors?: Record<string, string>; // id Copilot → vendor real del catálogo (Anthropic/OpenAI/Google/…)
+  credits?: Record<string, string>; // id Copilot → categoría de AI credits del picker oficial (low/medium/high)
   byokSource: string;
   copilotSource: string;
   copilotPending?: boolean; // true = el catálogo REAL del CLI aún no llegó; la lista son solo modelos observados
@@ -165,7 +168,7 @@ export interface SessionSummary {
 }
 export interface SessionEvents { total: number; offset: number; limit: number; summary: SessionSummary; events: SessionEvent[]; noTrace?: boolean; }
 
-export interface ModelsByRole { planner?: string; coder?: string; reviewer?: string; all?: string; }
+export interface ModelsByRole { planner?: string; coder?: string; reviewer?: string; all?: string; [phase: string]: string | undefined; } // claves de FASE admitidas: models.<fase> gana al rol en el motor
 export interface LaunchBody {
   request: string;
   name: string;

@@ -113,10 +113,11 @@ Las pausas te llegan como conversación: apruebas, das instrucciones, cambias mo
 ## Modelos y coste
 
 - Prefijos: `litellm:<modelo>` (tu proxy, **0 créditos premium**) · `copilot:<modelo>` (catálogo real de tu licencia) · sin prefijo = el de la sesión.
-- **Mezcla libre en el mismo run**: cada fase con su modelo. La fase gana al rol (`models.spec` > `models.planner`).
+- **Catálogo 100% vivo**: la lista de Copilot sale del SDK del CLI auto-actualizado — TODOS los modelos de TU licencia, con su nombre oficial, ventana de contexto y **categoría de AI credits** (la misma del picker oficial). Si mañana cambian los modelos, la lista cambia sola.
+- **Mezcla libre en el mismo run**: cada fase con su modelo. La fase gana al rol (`models.spec` > `models.planner`) — en la web, «Por fase (avanzado)». Regla práctica: `spec` y `verify` con el más capaz (un error de spec se propaga a todo; verify decide el GREEN), `explore`/`tasks` con el económico, `apply` en el medio con `fallback`.
 - **`fallback` (opt-in)**: modelo de reserva por rol/fase — si el primario falla por timeout/proveedor, UN intento extra con la reserva, registrado con total transparencia (timeline, AI Act, badge 🛟).
-- **Frenos reales**: `budget` (techo duro de tokens/coste por run) · `tiers` (economy/balanced/premium por fase) · timeout y reintentos acotados por fase.
-- **Verificable**: `conductor stats` muestra consumo real por proveedor/modelo, el ahorro conseguido y la **precisión del estimador** (estimado vs real medido, no prometido).
+- **Frenos reales**: `budget` (techo duro de tokens/coste por run) · `tiers` (economy/balanced/premium — el tier de cada modelo Copilot sale de su categoría de precio REAL, no de una tabla) · timeout y reintentos acotados por fase.
+- **Verificable**: `conductor stats` muestra consumo real por proveedor/modelo, el ahorro, la **precisión del estimador** (estimado vs real medido) y un corte **POR DÍA** (día × modelo × proveedor: peticiones y tokens) — cruzable 1:1 con el informe de consumo de tu organización: allí ves el €, aquí en qué se fue.
 
 ```json
 // openspec/conductor.json — ejemplo mínimo (TODO es opcional)

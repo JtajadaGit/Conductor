@@ -46,6 +46,8 @@ export class PanelScreen extends CElement {
   @state() private mPlanner = '';
   @state() private mCoder = '';
   @state() private mReviewer = '';
+  // fila avanzada POR FASE: models.<fase> gana al rol en el motor (modelForPhase) — la web expone ese poder
+  @state() private mPhases: Record<string, string> = {};
   @state() private preset = ''; // preset de MODELO/coste activo: '' | 'cost' | 'quality' | 'clear' (resalta el botón elegido)
   @state() private busy = false;
   @state() private error = '';
@@ -205,6 +207,7 @@ export class PanelScreen extends CElement {
     if (this.mPlanner) models.planner = this.mPlanner;
     if (this.mCoder) models.coder = this.mCoder;
     if (this.mReviewer) models.reviewer = this.mReviewer;
+    for (const [ph, v] of Object.entries(this.mPhases)) if (v) models[ph] = v; // la fase gana al rol
     try {
       const r = await this.api.launch({
         request: this.req, name: kebab(this.name), complexity: this.complexity, auto: this.auto,
@@ -306,12 +309,28 @@ export class PanelScreen extends CElement {
   // tier → peso para ordenar (premium=3, balanced=2, economy=1; desconocido = balanced)
   private tierRank(t?: string): number { return t === 'premium' ? 3 : t === 'economy' ? 1 : 2; }
 
+  // fases direccionables una a una (el orden del pipeline); la fase gana al rol (models.<fase> en conductor.json)
+  private static readonly PHASES = ['explore', 'clarify', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify', 'fix'] as const;
+
+  // etiqueta de opción con la FICHA VIVA del catálogo: nombre oficial + ventana de contexto + AI credits.
+  // LiteLLM = 0 créditos por definición (no pasa por Copilot); la categoría low/medium/high es la MISMA del
+  // picker oficial — nada inventado, si el catálogo no la trae no se muestra.
+  private modelLabel(id: string, prov: 'copilot' | 'byok'): string {
+    const m = this.models;
+    const name = m?.names?.[id] ?? id;
+    const ctx = m?.meta?.[id]?.maxIn ?? 0;
+    const ctxTx = ctx >= 1_000_000 ? `${+(ctx / 1_000_000).toFixed(1).replace(/\.0$/, '')}M ctx` : ctx > 0 ? `${Math.round(ctx / 1000)}k ctx` : '';
+    const catTx = prov === 'byok' ? '0 créditos' : ({ low: 'créditos bajos', medium: 'créditos medios', high: 'créditos altos' } as Record<string, string>)[m?.credits?.[id] ?? ''] ?? '';
+    const extra = [ctxTx, catTx].filter(Boolean).join(' · ');
+    return extra ? `${name} — ${extra}` : name;
+  }
+
   // PRESETS de modelo por fase. "Optimizar coste" es el pilar de la herramienta hecho un clic: el Coder
   // (la fase que más tokens gasta) va al modelo LiteLLM gratis, el Reviewer (gate innegociable) a un Copilot
   // capaz pero no al tier más caro, y el Planner a un Copilot económico. El experto puede ajustar después.
   private applyPreset(kind: 'cost' | 'quality' | 'clear'): void {
     this.preset = kind; // marca el preset activo (estado visible en los botones)
-    if (kind === 'clear') { this.mPlanner = ''; this.mCoder = ''; this.mReviewer = ''; return; }
+    if (kind === 'clear') { this.mPlanner = ''; this.mCoder = ''; this.mReviewer = ''; this.mPhases = {}; return; }
     const m = this.models; if (!m) return;
     const tiers = m.tiers ?? {};
     const cop = [...m.copilot];
@@ -347,6 +366,7 @@ export class PanelScreen extends CElement {
     if (this.mPlanner) models.planner = this.mPlanner;
     if (this.mCoder) models.coder = this.mCoder;
     if (this.mReviewer) models.reviewer = this.mReviewer;
+    for (const [ph, v] of Object.entries(this.mPhases)) if (v) models[ph] = v; // los defaults por FASE también viajan al repo
     this.savingDefaults = true; this.saveDefaultsMsg = '';
     try {
       const r = await this.api.modelsDefault(models, this.projId || undefined);
@@ -567,10 +587,17 @@ export class PanelScreen extends CElement {
               ${this.roleSelect('Coder', this.mCoder, (v) => { this.mCoder = v; this.preset = ''; })}
               ${this.roleSelect('Reviewer', this.mReviewer, (v) => { this.mReviewer = v; this.preset = ''; })}
             </div>
+            <details class="adv-phases">
+              <summary class="muted" style="cursor:pointer;font-size:.78rem;margin-top:.5rem">Por fase (avanzado) — la fase gana al rol</summary>
+              <div class="phase-grid" style="margin-top:.45rem">
+                ${PanelScreen.PHASES.map((ph) => this.roleSelect(ph, this.mPhases[ph] ?? '', (v) => { this.mPhases = { ...this.mPhases, [ph]: v }; this.preset = ''; }))}
+              </div>
+              <p class="muted" style="font-size:.7rem;margin:.4rem 0 0">spec y verify agradecen el modelo más capaz (un error de spec se propaga a todo; verify decide el GREEN) · explore/tasks van sobrados con el económico.</p>
+            </details>
             ${this.mixNote()}
             <!-- B5: defaults en el REPO, la web los cambia — persiste la mezcla en openspec/conductor.json -->
             <div class="frow" style="margin-top:.55rem;align-items:center">
-              <button type="button" class="btn sm sec" ?disabled=${this.savingDefaults || !(this.mPlanner || this.mCoder || this.mReviewer)} @click=${() => void this.saveModelsDefault()} title="Escribe esta mezcla en openspec/conductor.json — será el default del EQUIPO para este proyecto (committeable)">${this.savingDefaults ? '…' : '💾 Guardar como default del proyecto'}</button>
+              <button type="button" class="btn sm sec" ?disabled=${this.savingDefaults || !(this.mPlanner || this.mCoder || this.mReviewer || Object.values(this.mPhases).some(Boolean))} @click=${() => void this.saveModelsDefault()} title="Escribe esta mezcla en openspec/conductor.json — será el default del EQUIPO para este proyecto (committeable)">${this.savingDefaults ? '…' : '💾 Guardar como default del proyecto'}</button>
               ${this.saveDefaultsMsg ? html`<span class="inst-msg ${this.saveDefaultsMsg.startsWith('✓') ? 'ok' : 'bad'}" role="status" aria-live="polite" style="margin-top:0">${this.saveDefaultsMsg}</span>` : nothing}
             </div>
           </div>
@@ -655,11 +682,13 @@ export class PanelScreen extends CElement {
   // no mostramos ruido: cada fase usa el modelo recomendado y el resumen quedaría vacío/confuso.
   private launchModelSummary(): TemplateResult | typeof nothing {
     const lbl = (v: string): string => v.replace(/^(byok|copilot):/, '');
-    const all = [this.mPlanner, this.mCoder, this.mReviewer];
-    if (!all.some(Boolean)) return nothing;
-    const txt = all.every((v) => v === all[0])
-      ? lbl(all[0])
-      : `planner ${lbl(this.mPlanner) || '—'} · coder ${lbl(this.mCoder) || '—'} · reviewer ${lbl(this.mReviewer) || '—'}`;
+    const phPicked = Object.entries(this.mPhases).filter(([, v]) => v);
+    const chosen = [this.mPlanner, this.mCoder, this.mReviewer, ...phPicked.map(([, v]) => v)].filter(Boolean);
+    if (!chosen.length) return nothing;
+    const phTxt = phPicked.map(([k, v]) => `${k} ${lbl(v)}`).join(' · ');
+    const txt = chosen.every((v) => v === chosen[0]) && !phTxt
+      ? lbl(chosen[0])
+      : [[this.mPlanner, this.mCoder, this.mReviewer].some(Boolean) ? `planner ${lbl(this.mPlanner) || '—'} · coder ${lbl(this.mCoder) || '—'} · reviewer ${lbl(this.mReviewer) || '—'}` : '', phTxt].filter(Boolean).join(' · ');
     return html`<span class="lm-model" title="modelo elegido por fase — cámbialo en «Modelo por fase»">Modelo: <b>${txt}</b></span>`;
   }
 
@@ -667,7 +696,7 @@ export class PanelScreen extends CElement {
   // coste (pilar mezcla qwen/Copilot). Determinista, sin LLM, client-side. Solo aparece si hay mezcla real.
   private mixNote(): TemplateResult | typeof nothing {
     const prov = (s: string): string => !s ? '' : s.startsWith('byok:') ? 'LiteLLM' : s.startsWith('copilot:') ? 'Copilot' : 'sesión';
-    const set = [...new Set([this.mPlanner, this.mCoder, this.mReviewer].map(prov).filter(Boolean))];
+    const set = [...new Set([this.mPlanner, this.mCoder, this.mReviewer, ...Object.values(this.mPhases)].map(prov).filter(Boolean))];
     if (set.length < 2) return nothing;
     return html`<div class="muted" style="font-size:.72rem;margin-top:.5rem">proveedores: ${set.join(' + ')}</div>`;
   }
@@ -679,18 +708,26 @@ export class PanelScreen extends CElement {
     const cop = m?.copilot ?? [];
     const byok = m?.byok ?? [];
     const creds = !!m?.byokCreds;
-    // agrupa los modelos Copilot por familia (Claude/GPT/Gemini) → picker de 18 escaneable, más nuevos arriba
+    // agrupa por el VENDOR REAL del catálogo vivo (Anthropic/OpenAI/Google/…); la heurística por prefijo
+    // queda de red para ids observados sin ficha. Dentro de cada grupo: los más capaces (tier) arriba.
     const fam = (o: string): string => o.startsWith('claude') ? 'Claude' : o.startsWith('gpt') ? 'GPT' : o.startsWith('gemini') ? 'Gemini' : 'Otros';
-    const groups = (['Claude', 'GPT', 'Gemini', 'Otros'] as const)
-      .map((g) => [g, cop.filter((o) => fam(o) === g).sort((a, b) => b.localeCompare(a))] as const)
+    const vend = (o: string): string => m?.vendors?.[o] ?? fam(o);
+    const tiers = m?.tiers ?? {};
+    const VORDER = ['Anthropic', 'Claude', 'OpenAI', 'GPT', 'Google', 'Gemini'];
+    const gnames = [...new Set(cop.map(vend))].sort((a, b) => {
+      const ia = VORDER.indexOf(a), ib = VORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    const groups = gnames
+      .map((g) => [g, cop.filter((o) => vend(o) === g).sort((a, b) => this.tierRank(tiers[b]) - this.tierRank(tiers[a]) || b.localeCompare(a))] as const)
       .filter(([, xs]) => xs.length);
     // HONESTIDAD del catálogo: si el CLI aún no reportó su lista real, se declara (· vistos en tus runs)
     // y jamás se rellena con modelos inventados; sin nada observado, el estado vacío lo dice claro.
     const pend = m?.copilotPending;
     return html`<label class="fl" style="flex:1">${label}<select .value=${value} title=${m ? `Copilot: ${m.copilotSource} · LiteLLM: ${m.byokSource}` : ''} @change=${(e: Event) => set((e.target as HTMLSelectElement).value)}>
       <option value="">Recomendado (conductor elige)</option>
-      ${groups.length ? groups.map(([g, xs]) => html`<optgroup label="Copilot · ${g}${pend ? ' · vistos en tus runs' : ''}">${xs.map((o) => html`<option value="copilot:${o}">${o}</option>`)}</optgroup>`) : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
-      ${creds && byok.length ? html`<optgroup label="LiteLLM">${byok.map((o) => html`<option value="byok:${o}">${m?.names?.[o] ?? o}</option>`)}</optgroup>` : nothing}
+      ${groups.length ? groups.map(([g, xs]) => html`<optgroup label="Copilot · ${g}${pend ? ' · vistos en tus runs' : ''}">${xs.map((o) => html`<option value="copilot:${o}">${this.modelLabel(o, 'copilot')}</option>`)}</optgroup>`) : html`<option value="" disabled>catálogo Copilot aún no disponible</option>`}
+      ${creds && byok.length ? html`<optgroup label="LiteLLM · 0 créditos">${byok.map((o) => html`<option value="byok:${o}">${this.modelLabel(o, 'byok')}</option>`)}</optgroup>` : nothing}
     </select></label>`;
   }
 

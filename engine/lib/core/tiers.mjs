@@ -49,3 +49,11 @@ export function tierModel(phase, cfg = {}, ctx = {}) {
   const tier = phaseTier(phase, cfg, ctx);
   return { model: tiers[tier] || tiers.balanced || tiers.economy || '', tier };
 }
+
+// tier desde la CATEGORÍA DE PRECIO del picker oficial de Copilot (model_picker_price_category, catálogo
+// vivo del SDK): si mañana un modelo cambia de categoría, su tier le sigue SOLO — sin tocar código. La
+// heurística por nombre (classifyTier) queda de red para ids sin ficha. Pura, exportada para test.
+export function tierFromPriceCategory(cat) {
+  const c = String(cat || '').toLowerCase();
+  return c === 'low' ? 'economy' : c === 'medium' ? 'balanced' : c === 'high' ? 'premium' : null;
+}

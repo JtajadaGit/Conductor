@@ -162,3 +162,31 @@ await test('stats: byModelPhase cruza modelo x fase con conteo y green rate', as
   eq(sonnetVerify.calls, 1, 'sonnet verify: 1 llamada');
   eq(sonnetVerify.green, 1, 'sonnet verify: 1 GREEN');
 });
+
+await test('stats: corte POR DIA (dia x proveedor x modelo) — la granularidad del informe de consumo corporativo', async () => {
+  fresh();
+  const root = join(TMP, 'proj-dias');
+  writeTL(root, 'feat-d', {
+    verdict: 'GREEN', startedAt: '2026-07-22T09:30:00.000Z', total_ms: 1000, phases: [
+      { phase: 'spec', model: 'claude-sonnet-4-6', provider: 'copilot', tokens: { in: 100, out: 50 }, ok: true },
+      { phase: 'apply', model: 'claude-sonnet-4-6', provider: 'copilot', tokens: { in: 200, out: 100 }, ok: true },
+      { phase: 'verify', model: 'qwen36-msc1', provider: 'byok', tokens: { in: 40, out: 10 }, ok: true },
+    ],
+  });
+  const r = aggregateStats([{ root }]);
+  eq(r.byDay.length, 2, 'dos filas: copilot y byok del MISMO dia');
+  const cop = r.byDay.find((d) => d.provider === 'copilot');
+  eq(cop.date, '2026-07-22', 'la fecha sale del startedAt ISO del timeline');
+  eq(cop.calls, 2, 'las 2 fases copilot del dia se agregan');
+  eq(cop.in, 300); eq(cop.out, 150);
+  eq(r.byDay.find((d) => d.provider === 'byok').model, 'qwen36-msc1');
+});
+
+await test('stats: run sin fecha ISO usa el mtime del timeline (aprox honesta) — jamas se cae del corte diario', async () => {
+  fresh();
+  const root = join(TMP, 'proj-mtime');
+  writeTL(root, 'feat-m', { verdict: 'GREEN', phases: [{ phase: 'spec', model: 'claude-haiku-4-5', provider: 'copilot', tokens: { in: 10, out: 5 }, ok: true }] });
+  const r = aggregateStats([{ root }]);
+  eq(r.byDay.length, 1, 'una fila aunque el timeline no traiga fecha');
+  assert(/^\d{4}-\d{2}-\d{2}$/.test(r.byDay[0].date), 'fecha valida (del mtime)');
+});

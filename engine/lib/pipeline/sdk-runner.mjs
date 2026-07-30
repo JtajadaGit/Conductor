@@ -19,6 +19,43 @@ const requireNode = createRequire(import.meta.url);
 // el propio SDK lo lanza con node — verificado en su dist/client.js).
 // MEMO por-proceso: `npm root -g` es un execSync que BLOQUEA el event loop hasta 8s (aun disparado desde el
 // refresco de catálogo en background). El path del CLI global no cambia en la vida del proceso → se resuelve UNA
+// SDK del CLI AUTO-ACTUALIZADO (la fuente del catálogo REAL): el binario npm es solo un lanzador; el CLI
+// de verdad vive versionado en su dir de paquetes y se actualiza solo. Elegimos la versión MÁS ALTA presente
+// (comparación numérica por tramos, no lexicográfica: 1.0.100 > 1.0.70). Puro y exportado para test.
+export function pickHighestVersionDir(names = []) {
+  const vs = (names || []).filter((n) => /^\d+(\.\d+)*$/.test(String(n)));
+  if (!vs.length) return null;
+  return vs.sort((a, b) => {
+    const A = a.split('.').map(Number), B = b.split('.').map(Number);
+    for (let i = 0; i < Math.max(A.length, B.length); i++) { const d = (A[i] || 0) - (B[i] || 0); if (d) return d; }
+    return 0;
+  }).pop();
+}
+
+export function autoUpdatedSdkEntry(env = process.env) {
+  try {
+    const { existsSync, readdirSync } = requireNode('node:fs');
+    const { join } = requireNode('node:path');
+    const { homedir } = requireNode('node:os');
+    const bases = [];
+    if (env.LOCALAPPDATA) bases.push(join(env.LOCALAPPDATA, 'copilot', 'pkg'));
+    bases.push(join(homedir(), '.local', 'share', 'copilot', 'pkg'));           // posix XDG
+    bases.push(join(homedir(), 'Library', 'Application Support', 'copilot', 'pkg')); // macOS
+    for (const base of bases) {
+      if (!existsSync(base)) continue;
+      for (const plat of readdirSync(base)) {
+        const platDir = join(base, plat);
+        let vers = []; try { vers = readdirSync(platDir); } catch { continue; }
+        const v = pickHighestVersionDir(vers);
+        if (!v) continue;
+        const entry = join(platDir, v, 'sdk', 'index.js');
+        if (existsSync(entry)) return entry;
+      }
+    }
+  } catch { /* sin CLI auto-actualizado: caer a las otras vías */ }
+  return null;
+}
+
 // vez (el server es largo → antes se congelaba cada ~10 min). undefined = sin computar; el env override no memoiza.
 let _cliPathMemo;
 export function resolveCliPath(env = process.env) {
@@ -53,6 +90,10 @@ export async function copilotCatalogFromCli(env = process.env) {
     const { execFile } = requireNode('node:child_process');
     const { pathToFileURL } = await import('node:url');
     const cand = [join(dirname(cliPath), 'sdk', 'index.js'), join(dirname(cliPath), '..', 'sdk', 'index.js')];
+    // el CLI real AUTO-ACTUALIZADO manda: su SDK conoce el catálogo del picker de HOY (el del npm-global
+    // envejece y FILTRA modelos nuevos — bug real: 7 vs 21 modelos con el mismo token)
+    const auto = autoUpdatedSdkEntry(env);
+    if (auto) cand.unshift(auto);
     // ROBUSTO: resuelve el subpath-export "@github/copilot/sdk" por el mapa de exports del PROPIO paquete (no depende
     // de adivinar dist/sdk/…). Es LA fuente del catálogo (HELP_VISIBLE_MODELS); si el guess de arriba falla, esto acierta.
     try { cand.unshift(createRequire(pathToFileURL(cliPath).href).resolve('@github/copilot/sdk')); } catch {}
@@ -73,10 +114,11 @@ export async function copilotCatalogFromCli(env = process.env) {
       "const e=process.env.__C_SDK_ENTRY;",
       "import(e).then(async m=>{",
       "  const auto=m.AUTO_MODEL_ID; let v=[];",
-      "  const pick=r=>{const a=Array.isArray(r)?r:(r&&Array.isArray(r.models)?r.models:[]);return a.map(x=>typeof x==='string'?x:(x&&(x.id||x.name))).filter(Boolean);};",
-      "  if(Array.isArray(m.HELP_VISIBLE_MODELS)&&m.HELP_VISIBLE_MODELS.length) v=m.HELP_VISIBLE_MODELS;",
-      "  else if(Array.isArray(m.SUPPORTED_MODELS)&&m.SUPPORTED_MODELS.length) v=m.SUPPORTED_MODELS;",
-      "  else if(typeof m.getAvailableModels==='function'){",
+      "  const pick=r=>Array.isArray(r)?r:(r&&Array.isArray(r.models)?r.models:[]);",
+      // ORDEN: getAvailableModels PRIMERO — es el catálogo del SEAT real (filtrado por licencia) y trae la
+      // FICHA completa por modelo (nombre, vendor, categoría de precio, límites). Las constantes
+      // HELP_VISIBLE_MODELS/SUPPORTED_MODELS son strings pelados sin filtrar → solo red de seguridad.
+      "  if(typeof m.getAvailableModels==='function'){",
       // token del ENTORNO primero (vía limpia, sin parsear el almacén del CLI): setups Copilot Business suelen
       // exportar COPILOT_API_TOKEN/COPILOT_GITHUB_TOKEN → con {type:'token'} devuelve el CATÁLOGO REAL completo.
       "    let tok=process.env.COPILOT_API_TOKEN||process.env.COPILOT_GITHUB_TOKEN||process.env.GH_COPILOT_TOKEN||'';",
@@ -90,10 +132,20 @@ export async function copilotCatalogFromCli(env = process.env) {
       "      try{ const got=pick(await m.getAvailableModels(ai)); if(got.length){ v=got; break; } }catch{}",
       "    }",
       "  }",
+      "  if(!v.length&&Array.isArray(m.HELP_VISIBLE_MODELS)&&m.HELP_VISIBLE_MODELS.length) v=m.HELP_VISIBLE_MODELS;",
+      "  if(!v.length&&Array.isArray(m.SUPPORTED_MODELS)&&m.SUPPORTED_MODELS.length) v=m.SUPPORTED_MODELS;",
       // M16: delimitar con sentinel — si el SDK escribe un banner/deprecación a stdout al importarse, el
       // JSON.parse del padre fallaba y el catálogo degradaba a [] en silencio. Ahora se extrae el tramo entre
       // sentinels, ignorando cualquier ruido previo/posterior en stdout.
-      "  process.stdout.write('<<CDCT>>'+JSON.stringify((v||[]).filter(x=>x&&x!==auto))+'<<TCDC>>');",
+      // METADATA por modelo, la MISMA que usa el picker oficial: nombre display, vendor (agrupación real),
+      // model_picker_price_category (low/medium/high — la moneda en AI credits), contexto y tope de salida.
+      // CLIs viejos daban strings → quedan como {id} pelado; nada se inventa.
+      "  const norm=x=>{if(typeof x==='string')return {id:x};if(!x)return null;const L=(x.capabilities&&x.capabilities.limits)||{};const o={id:x.id||x.name};if(!o.id)return null;",
+      "    if(typeof x.name==='string'&&x.name&&x.name!==o.id)o.name=x.name;if(typeof x.vendor==='string'&&x.vendor)o.vendor=x.vendor;",
+      "    if(typeof x.model_picker_price_category==='string'&&x.model_picker_price_category)o.cat=x.model_picker_price_category;",
+      "    if(Number(L.max_context_window_tokens)>0)o.ctx=Number(L.max_context_window_tokens);if(Number(L.max_output_tokens)>0)o.out=Number(L.max_output_tokens);",
+      "    if(x.preview===true)o.preview=true;return o;};",
+      "  process.stdout.write('<<CDCT>>'+JSON.stringify((v||[]).map(norm).filter(x=>x&&x.id&&x.id!==auto))+'<<TCDC>>');",
       "}).catch(()=>process.stdout.write('<<CDCT>>[]<<TCDC>>'))",
     ].join('\n');
     const out = await new Promise((res) => {
@@ -109,7 +161,8 @@ export async function copilotCatalogFromCli(env = process.env) {
     });
     const m = String(out).match(/<<CDCT>>([\s\S]*?)<<TCDC>>/); // extrae SOLO el tramo entre sentinels (ignora banners del SDK)
     const arr = JSON.parse(m ? m[1] : '[]');
-    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string' && x) : [];
+    // entradas = OBJETOS {id, name?, vendor?, cat?, ctx?, out?, preview?} — la metadata viaja CON el id
+    return Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object' && typeof x.id === 'string' && x.id) : [];
   } catch { return []; }
 }
 
@@ -196,7 +249,7 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
 // CATÁLOGO REAL de modelos Copilot: lo que el SDK reporta (client.listModels()), NUNCA una lista inventada.
 // Resuelve el SDK como createSdkRunner; si no está disponible o el runtime no arranca, devuelve [] (sin fake,
 // nada de seeds). Con timeout para no colgar al llamador. El llamador (serve) lo usa en BACKGROUND + cache.
-export async function listCopilotModels({ sdk, sdkBundle, env = process.env, timeoutMs = 12000 } = {}) {
+export async function listCopilotCatalog({ sdk, sdkBundle, env = process.env, timeoutMs = 12000 } = {}) {
   // 1) PRIMARIA: constantes del CLI instalado (rápida, sin runtime/auth/JSON-RPC, version-matched con el
   // CLI del usuario). Es la lista que el propio Copilot muestra en su selector.
   try { const fast = await copilotCatalogFromCli(env); if (fast.length) return fast; } catch {}
@@ -217,7 +270,12 @@ export async function listCopilotModels({ sdk, sdkBundle, env = process.env, tim
         client.listModels(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('listModels timeout')), timeoutMs)),
       ]);
-      return (Array.isArray(models) ? models : []).map((m) => m && (m.id || m.name)).filter(Boolean);
+      return (Array.isArray(models) ? models : []).map((m) => { const id = m && (m.id || m.name); return id ? { id, ...(m.name && m.id && m.name !== m.id ? { name: m.name } : {}) } : null; }).filter(Boolean);
     } finally { try { await client.stop?.(); } catch {} }
   } catch { return []; }
+}
+
+// compat: SOLO los ids (string[]) — la vista clásica para quien no necesita la metadata.
+export async function listCopilotModels(opts = {}) {
+  return (await listCopilotCatalog(opts)).map((o) => o.id);
 }
