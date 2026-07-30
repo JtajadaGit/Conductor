@@ -47,6 +47,8 @@ export function aggregateStats(projects) {
   const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
   const perProject = [];
   let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0, unpriced = 0;
+  // T3: precisión del estimador — acumula est vs real SOLO en fases con tokens medidos y estimación presente
+  const estAcc = { runs: 0, phases: 0, est: 0, real: 0, absErr: 0 };
   let msTotal = 0, msRuns = 0, tin = 0, tout = 0, cost = 0, naive = 0;
   let fixRuns = 0, recoveredRuns = 0; // self-repair: runs que tuvieron ≥1 ciclo fix y cuántos acabaron GREEN
 
@@ -65,6 +67,21 @@ export function aggregateStats(projects) {
       if (Number.isFinite(tl.total_ms) && tl.total_ms > 0) { msTotal += tl.total_ms; msRuns++; }
       // self-repair: el ciclo fix→verify recuperó el run sin humano (mide los "dientes" del gate). Timelines
       // antiguos sin selfRepair: fallback a contar las fases 'fix' presentes (recovered ≈ acabó GREEN).
+      if (tl.estimate && Array.isArray(tl.estimate.phases)) {
+        const em = new Map(tl.estimate.phases.map((p) => [p.phase, p]));
+        const seenE = new Set(); let contributed = false;
+        for (const ph of tl.phases) {
+          if (!ph || seenE.has(ph.phase) || !ph.tokens || !em.has(ph.phase)) continue;
+          seenE.add(ph.phase);
+          const e = em.get(ph.phase);
+          const est = (Number(e.estIn) || 0) + (Number(e.estOut) || 0);
+          const real = (Number(ph.tokens.in) || 0) + (Number(ph.tokens.out) || 0);
+          if (est <= 0 || real <= 0) continue;
+          estAcc.phases++; estAcc.est += est; estAcc.real += real; estAcc.absErr += Math.abs(real - est) / est;
+          contributed = true;
+        }
+        if (contributed) estAcc.runs++;
+      }
       const sr = tl.selfRepair || (Array.isArray(tl.phases) ? { fixCycles: tl.phases.filter((p) => p && p.phase === 'fix').length, recovered: v === 'GREEN' && tl.phases.some((p) => p && p.phase === 'fix') } : {});
       if (Number(sr.fixCycles) > 0) { fixRuns++; if (sr.recovered) recoveredRuns++; }
       for (const ph of tl.phases) {
@@ -95,7 +112,11 @@ export function aggregateStats(projects) {
   }
 
   const saved = Math.max(0, naive - cost); // L24: nunca "ahorro" negativo en la tarjeta de ahorro
+  const estimator = estAcc.phases
+    ? { runs: estAcc.runs, phases: estAcc.phases, dev_pct: Math.round(((estAcc.real / estAcc.est) - 1) * 100), mape_pct: Math.round((estAcc.absErr / estAcc.phases) * 100) }
+    : null; // sin datos no se inventa precisión (honestidad)
   return {
+    estimator,
     projects_scanned: list.length,
     runs, green, failed, stopped, aborted, running, phases: phasesTotal,
     mean_ms: msRuns ? Math.round(msTotal / msRuns) : 0,

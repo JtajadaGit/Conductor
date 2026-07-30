@@ -35,7 +35,6 @@ import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } from '../provenance/secret.mjs';
 import { plumbPath } from '../core/plumb.mjs';
-import { refreshProjectMeta } from '../analysis/scaffold.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -328,6 +327,7 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     phases: tl?.phases ?? [],
     plan: st?.phases ?? [],
     current: cur,
+    estimate: tl?.estimate ?? null, // T3: preflight persistido — la UI compara est vs real por fase
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
     hasDashboard: existsSync(join(changeDir, 'dashboard.html')),
@@ -928,8 +928,8 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // init v2: la app garantiza la plantilla de credenciales aunque nadie pasara por setup/init.
   // DENTRO de createAppServer (no a nivel de módulo): un import jamás debe escribir en el HOME real.
   try { ensureByokTemplate(CONDUCTOR_HOME()); } catch { /* best-effort: el panel enseña el formato igualmente */ }
-  // decisión 2026-07-29: config.yaml (espejo detectado) se refresca en cada arranque — jamás toca project.md
-  try { refreshProjectMeta(root); } catch { /* sin openspec aún: nada que refrescar */ }
+  // (2026-07-30) SIN refresco de config.yaml al arrancar: el espejo detectado ya no existe — el stack se
+  // detecta en cada run (detectStack) y se enseña en el panel. Un dato derivado no se versiona.
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }
   for (const p of loadRegistry()) registry.set(p.id, p);
@@ -1376,6 +1376,29 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const raw = fileDiff(proj.root, u.searchParams.get('p') || '', changeDir);
           const body = raw != null ? scrubSecrets(raw, process.env, scrubExtra()) : null;
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
+        }
+        if (action === 'specdiff') {
+          // T6: delta del change vs la spec VIVA (openspec/specs/<dom>/spec.md). Solo el DOMINIO viaja del
+          // cliente y se sanea a [a-z0-9-]; las rutas se construyen server-side (confinadas por construcción).
+          const dom = String(u.searchParams.get('d') || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
+          const head = join(changeDir, 'specs', dom, 'spec.md');
+          if (!dom || !existsSync(head)) return json(404, { ok: false, error: 'sin spec delta para ese dominio' });
+          const base = join(proj.root, 'openspec', 'specs', dom, 'spec.md');
+          let body;
+          if (!existsSync(base)) {
+            body = `+++ spec NUEVA (no existe aún openspec/specs/${dom}/spec.md — se promoverá al archivar)\n` + readFileSync(head, 'utf8').split('\n').map((l) => '+ ' + l).join('\n');
+          } else {
+            // exit 1 = HAY diff (git diff --no-index) — capturar stdout del "error"; timeout corto; sin shell
+            try {
+              const out = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', '--no-index', '--unified=3', '--', base, head], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+              body = out || '(sin diferencias: el delta coincide con la spec viva)';
+            } catch (e) {
+              body = (e && e.stdout) ? String(e.stdout) : null;
+            }
+          }
+          if (body == null) return json(500, { ok: false, error: 'diff no disponible (¿git en PATH?)' });
+          res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+          return res.end(scrubSecrets(body, process.env, scrubExtra()));
         }
         if (action === 'files') {
           // resumen de CAMBIOS del run (experiencia Git): changeset real vs HEAD; sin git → ficheros de las fases del timeline.

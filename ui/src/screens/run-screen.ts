@@ -246,7 +246,7 @@ export class RunScreen extends CElement {
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
       ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><svg class="why-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.3v4.4M8 11.0v.05" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span><b>Por qué:</b> ${s.reason}</span></div>` : nothing}
       ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (antes de verify): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
-      ${s.done ? (() => { const arts = this.reviewArtifacts(s); return arts.length ? html`<div class="decision-arts" style="margin:0 0 .9rem"><span class="ctx-lbl">Artefactos</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}<button type="button" class="lnk" title="abrir verify-report.md" @click=${() => this.viewArtifact('verify-report.md')}>📄 verify-report.md</button></div>` : nothing; })() : nothing}
+      ${s.done ? (() => { const arts = this.reviewArtifacts(s); return arts.length ? html`<div class="decision-arts" style="margin:0 0 .9rem"><span class="ctx-lbl">Artefactos</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}<button type="button" class="lnk" title="abrir verify-report.md" @click=${() => this.viewArtifact('verify-report.md')}>📄 verify-report.md</button>${this.specDomain(s) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(s)!)}>± vs spec viva</button>` : nothing}</div>` : nothing; })() : nothing}
       ${this.requestBox(s)}
       ${this.phaseId ? this.phaseDetail(s) : nothing}
       ${s.pending ? this.pendingCard(s.pending, s) : nothing}
@@ -282,6 +282,20 @@ export class RunScreen extends CElement {
 
   // artefactos YA producidos por fases previas — la pausa dice "revisa los artefactos" pero antes no enlazaba
   // ninguno: "editar la spec" era inalcanzable sin bajar a la barra de fases. Aquí, a un clic (viewArtifact = editable).
+  // T6: dominio de la spec delta (specs/<dom>/spec.md escrita por la fase spec) — null si no hay
+  private specDomain(s: RunState): string | null {
+    for (const p of s.phases) {
+      if (p.phase !== 'spec' || !Array.isArray(p.files)) continue;
+      const f = p.files.find((x) => /specs[\\/].+[\\/]spec\.md$/i.test(x.p));
+      if (f) { const m = f.p.replace(/\\/g, '/').match(/specs\/([^/]+)\/spec\.md$/i); if (m) return m[1]; }
+    }
+    return null;
+  }
+
+  private viewSpecDiff(dom: string): void {
+    window.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'specdiff', path: dom } }));
+  }
+
   private reviewArtifacts(s: RunState): Array<{ label: string; path: string }> {
     const FIXED: Record<string, string> = { explore: 'exploration.md', propose: 'proposal.md', clarify: 'questions.md', design: 'design.md', tasks: 'tasks.md', apply: 'apply-report.md' };
     const out: Array<{ label: string; path: string }> = [];
@@ -319,7 +333,7 @@ export class RunScreen extends CElement {
         </div>
       </header>
       <div class="decision-body">
-        ${arts.length ? html`<div class="decision-arts"><span class="ctx-lbl">Revisar</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}</div>` : nothing}
+        ${arts.length ? html`<div class="decision-arts"><span class="ctx-lbl">Revisar</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}${this.specDomain(this.s!) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(this.s!)!)}>± vs spec viva</button>` : nothing}</div>` : nothing}
         ${fnd.length ? html`<ul class="decision-findings">${fnd.map((f, i) => html`
           <li>
             <label><input type="checkbox" .checked=${this.selected.has(i)} @change=${(e: Event) => this.toggleSel(i, (e.target as HTMLInputElement).checked)}>
@@ -427,6 +441,14 @@ export class RunScreen extends CElement {
     </details>`;
   }
 
+  // T3: fila de estimación preflight de una fase (null si el run no la persistió — runs antiguos)
+  private estFor(phase: string): { estIn: number; estOut: number } | null {
+    const rows = this.s?.estimate?.phases;
+    if (!Array.isArray(rows)) return null;
+    const r = rows.find((x) => x.phase === phase);
+    return r ? { estIn: r.estIn, estOut: r.estOut } : null;
+  }
+
   private phaseCard(p: Phase): TemplateResult {
     return html`<div class="ph ${p.ok ? 'done' : 'bad'}">
       <div class="row">
@@ -434,10 +456,11 @@ export class RunScreen extends CElement {
         <span class="role">${p.role}</span>
         ${p.model ? html`<span class="badge prov-${p.provider ?? 'none'}">${modelIcon(p.model, p.provider)} ${p.model}</span>` : nothing}
         ${p.modelMismatch ? html`<span class="badge warn" title="pedido ${p.modelRequested ?? '?'} → el proveedor reportó ${p.modelReported ?? '?'}">⚠ modelo</span>` : nothing}
+        ${p.fallback ? html`<span class="badge warn" title="pedido ${p.fallback.from} → reserva ${p.fallback.to} tras ${p.fallback.afterKind} (opt-in fallback)">🛟 fallback</span>` : nothing}
         ${p.attempts > 1 ? html`<span class="badge">${p.attempts}×</span>` : nothing}
         ${Array.isArray(p.lenses) && p.lenses.length ? html`<span class="badge">${p.lenses.length} lentes</span>` : nothing}
         ${p.resumed ? html`<span class="badge">⏯ heredada</span>` : nothing}
-        <span class="right">${secs(p.ms)}${p.tokens ? html` · ↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}` : nothing}</span>
+        <span class="right">${secs(p.ms)}${p.tokens ? html` · ↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}` : nothing}${this.estFor(p.phase) ? html` <span class="muted" title="estimación preflight (sin API)">· est ↓${fmt(this.estFor(p.phase)!.estIn)} ↑${fmt(this.estFor(p.phase)!.estOut)}</span>` : nothing}</span>
       </div>
       ${this.fileList(p.files)}
       ${this.phaseContext(p)}

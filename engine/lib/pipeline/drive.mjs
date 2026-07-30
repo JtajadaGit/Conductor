@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { join, resolve, dirname, relative, isAbsolute } from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { start, next, resolvePhases, redoPlanning, KNOWN_PHASES } from './orchestrate.mjs';
+import { start, next, resolvePhases, redoPlanning, KNOWN_PHASES, renderRulesBlock } from './orchestrate.mjs';
 import { resolvePreset } from './presets.mjs';
 import { checkCoherence, parseReport } from '../gates/coherence.mjs';
 import { checkArtifacts } from '../gates/artifacts.mjs';
@@ -34,7 +34,7 @@ import { buildVerifiedIndex, buildBrownfieldMap } from '../analysis/atlas.mjs';
 import { buildCodeMap, renderCodeMap } from '../analysis/codemap.mjs';
 import { tierModel } from '../core/tiers.mjs';
 import { priceOf, metaOf } from '../core/cost.mjs';
-import { budgetContextFiles, summarizeArtifact } from '../core/estimate.mjs';
+import { budgetContextFiles, summarizeArtifact, estimateRun } from '../core/estimate.mjs';
 import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
 import { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } from '../provenance/secret.mjs';
@@ -520,7 +520,7 @@ export function buildPrompt(step, { changeDir, projectRoot, complexity, verified
       `${writeNow} Do NOT write an apply-report; the pipeline records what you changed automatically.`;
   }
   if (isCode) {
-    const fix = step.findings ? `\nThe deterministic gate FAILED with: ${(step.findings || []).map((f) => f.message).join(' | ')}. Fix exactly these.` : '';
+    const fix = step.findings ? `\nThe deterministic gate FAILED with: ${capFindings(step.findings).join(' | ')}. Fix exactly these.` : '';
     return `${sentinels}\n${guard}\n${step.instruction}\n` +
       `Project root: ${projectRoot}\nThe proposal/spec/tasks are under: ${changeDir} (read spec.md if you need the requirements; do not look for source files that don't exist yet).\n${refFiles}${focusCtx}` +
       `${writeNow} Put one comment "@conductor REQ-SLUG" (in each file's comment syntax) referencing the requirement it fulfills. ` +
@@ -608,10 +608,19 @@ function captureBaseTree(projectRoot, changeDir) {
 // RETRY-DELTA (puro, testeable): el mensaje del reintento según el PROGRESO REAL del intento anterior.
 // Con ficheros parciales (p.ej. timeout tras escribir la fuente pero no el test): completa, no re-crees —
 // ahorra re-pagar la implementación entera. Sin nada escrito: el empujón contundente de siempre.
+// T7: hallazgos del gate CAPADOS para prompts (token-first): máx N mensajes de L chars + '…y K más'.
+// Puro y exportado para test. El gate conserva la lista completa — esto solo gobierna lo que VIAJA al modelo.
+export function capFindings(findings = [], max = 12, len = 300) {
+  const msgs = (findings || []).map((f) => String(f && f.message || f || '').slice(0, len)).filter(Boolean);
+  if (msgs.length <= max) return msgs;
+  return [...msgs.slice(0, max), `…y ${msgs.length - max} hallazgo(s) más (ver verify-report.md)`];
+}
+
 export function retryHint(files = [], doneTasks = []) {
-  const done = doneTasks.length ? `\n\nTASKS ALREADY DONE (do NOT re-implement — completed in the previous attempt):\n${doneTasks.map((l) => `  ${l}`).join('\n')}` : '';
+  const capList = (arr, mk) => arr.length > 40 ? [...arr.slice(0, 40).map(mk), `  …y ${arr.length - 40} más`] : arr.map(mk);
+  const done = doneTasks.length ? `\n\nTASKS ALREADY DONE (do NOT re-implement — completed in the previous attempt):\n${capList(doneTasks, (l) => `  ${l}`).join('\n')}` : '';
   if (files.length) {
-    return `\n\n⚠ EL INTENTO ANTERIOR quedó a medias pero SÍ dejó ${files.length} fichero(s) escritos:\n${files.map((f) => `  ${f.p}`).join('\n')}\nNO los re-crees ni los reescribas desde cero. COMPLETA solo lo que falta (típicamente el TEST del código ya escrito y las tareas sin marcar): \`edit\` sobre lo existente, \`create\` solo para lo nuevo. Ve directo, sin explorar.${done}`;
+    return `\n\n⚠ EL INTENTO ANTERIOR quedó a medias pero SÍ dejó ${files.length} fichero(s) escritos:\n${capList(files, (f) => `  ${f.p}`).join('\n')}\nNO los re-crees ni los reescribas desde cero. COMPLETA solo lo que falta (típicamente el TEST del código ya escrito y las tareas sin marcar): \`edit\` sobre lo existente, \`create\` solo para lo nuevo. Ve directo, sin explorar.${done}`;
   }
   return `\n\n⚠ EL INTENTO ANTERIOR NO ESCRIBIÓ NINGÚN FICHERO. No leas, no explores, no uses \`view\`. Usa el tool \`create\` AHORA para escribir el fichero de código y su test, y para.${done}`;
 }
@@ -749,6 +758,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   } catch { /* sin mapa (repo sin JS/TS o ilegible) — cero regresión */ }
   if (codeMapCtx) log('🕸 mapa de relaciones inyectado (imports/exports/usedBy — el modelo no re-descubre dependencias leyendo ficheros)');
   let skillsLogged = false;
+  const rulesLogged = new Set(); // una línea de log por FASE con reglas (no por intento/reintento)
   // conductor.json NO se valida contra CONFIG_SCHEMA en runtime → se clampan aquí los valores que causan daño real:
   // timeoutSeconds<=0 daba tmo negativo (truthy) → TODA fase timeout al primer tick; maxRetries enorme → burn de
   // AI Credits en reintentos casi-infinitos. Solo un timeoutSeconds POSITIVO cuenta; maxRetries se acota a 0..3 (schema).
@@ -786,6 +796,20 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   // configurable-pauseat: dónde pausa la revisión es del proyecto. Si openspec/conductor.json define
   // "pauseAt" (subconjunto de fases), gana sobre el default que pase el llamador. La fase "fix" SIEMPRE pausa.
   const pauseEff = Array.isArray(cfg.pauseAt) ? cfg.pauseAt.filter((p) => KNOWN_PHASES.includes(p)) : (preset?.pauseAt ?? pauseAt); // KNOWN_PHASES = lista canónica de orchestrate
+
+  // ESTIMADO-vs-REAL (T3 2026-07-29): el preflight del panel se PERSISTE en el timeline para poder medir
+  // la precisión del estimador contra los tokens reales (OTel). En RESUME se reusa el estimado ORIGINAL —
+  // recalcular con artefactos ya escritos falsearía la comparación. Telemetría pura: jamás toca el gate.
+  let runEstimate = null;
+  // un timeline previo = run anterior (resume): su estimate ORIGINAL manda (sin depender del flag,
+  // que se inicializa más abajo — TDZ)
+  try { runEstimate = JSON.parse(readSafe(plumbPath(changeDir, 'timeline.json')) || '{}').estimate || null; } catch { /* fresco */ }
+  if (!runEstimate) {
+    try {
+      const e = estimateRun({ changeDir, complexity, domain, request, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : null });
+      runEstimate = { phases: e.phases, totalIn: e.totalIn, totalOut: e.totalOut };
+    } catch { /* estimador best-effort: sin él, simplemente no hay comparación */ }
+  }
 
   // TIMEOUT DE REVISIÓN HUMANA (R-A3): en headless/CI/--auto nadie atiende la pausa → el run colgaría
   // indefinidamente. Política cfg.onReviewTimeout: 'wait' (def · sin timeout = cero regresión) | 'continue'
@@ -882,7 +906,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   if (!resumed) captureBaseTree(projectRoot, changeDir);
   // `reason` (2º arg, solo en verdicts terminales): el porqué humano del BLOCKED/ABORTED/STOPPED — la UI lo
   // pinta bajo la pill; sin esto el run moría con una pill muda y el motivo solo vivía en el return/log.
-  const writeTimeline = (verdict, reason) => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  const writeTimeline = (verdict, reason) => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, estimate: runEstimate || undefined, fallbackUsed: timeline.some((p) => p.fallback) || undefined, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(plumbPath(changeDir, 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
@@ -903,7 +927,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       const trace = !isMicro && existsSync(projectRoot) ? buildTrace(changeDir, projectRoot) : null;
       const out = join(changeDir, 'dashboard.html');
       writeReportData(gates, trace);
-      writeFileSync(out, renderDashboard({ change: changeDir, gates, trace, timeline: { verdict, phases: timeline, approvals } }));
+      writeFileSync(out, renderDashboard({ change: changeDir, gates, trace, timeline: { verdict, phases: timeline, approvals, estimate: runEstimate || undefined } }));
       log(`📊 informe: ${out}`);
     } catch {}
   };
@@ -980,7 +1004,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         if (sel.length) {
           step.findings = sel;
           // la instrucción de orchestrate embebe TODOS los hallazgos → realinearla con la selección
-          step.instruction = (step.instruction || '').split(' Hallazgos:')[0] + ' Hallazgos: ' + sel.map((f) => f.message).join(' | ');
+          step.instruction = (step.instruction || '').split(' Hallazgos:')[0] + ' Hallazgos: ' + capFindings(sel).join(' | ');
           log(`▶ fix dirigido: ${sel.length} hallazgo(s) seleccionados`);
         }
       }
@@ -1042,6 +1066,12 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     }
     let prompt = buildPrompt(step, { changeDir, projectRoot, complexity, verifiedCtx, brownfieldMap, refFiles, codeMap: codeMapCtx, codeMapFocus: codeMapFocusCtx });
     if (!isCode && projectCtx) prompt += `\n\nPROJECT CONTEXT (openspec/project.md — maintained by the team; honor it):\n${projectCtx}`;
+    // REGLAS DE EQUIPO por fase (conductor.json → rules). A diferencia de project.md, aplican TAMBIÉN a
+    // apply/fix: "en apply usa componentes standalone" es justo el caso de uso principal.
+    {
+      const rblk = renderRulesBlock(cfg.rules, phase);
+      if (rblk) { prompt += rblk; if (!rulesLogged.has(phase)) { rulesLogged.add(phase); log(`📏 reglas de equipo inyectadas en "${phase}"`); } }
+    }
     if (userNote) { prompt += `\n\nUSER NOTE (from the human reviewer — MUST honor): ${userNote}`; userNote = null; }
     if (teamSkills.length) {
       // auto-match por dominio/fase ∪ las invocadas con "/nombre" (dedup por referencia — mismos objetos de teamSkills).
@@ -1058,7 +1088,8 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     if (!model && cfg.tiers) { const t = tierModel(phase, cfg, { request }); model = t.model; tierUsed = t.tier; if (tierUsed) log(`🎚 tier ${tierUsed} → ${model || '(de la sesión)'}`); }
     if (hotModel) log(`🎛 cambio de modelo aplicado a "${phase}"`);
     hotModel = null;
-    const mspec = parseModelSpec(model); // para telemetría: modelo limpio + proveedor (byok/copilot)
+    let mspec = parseModelSpec(model); // para telemetría: modelo limpio + proveedor (byok/copilot)
+    const primarySpec = mspec; // el PEDIDO original — modelRequested lo conserva aunque entre el fallback
     // ALLOWLIST DE MODELOS EN EL DRIVER (R-G4, defensa en profundidad): el boundary HTTP de serve ya filtra,
     // pero el modelo-en-caliente, el runner CLI y el SDK lo esquivaban. Solo si hay openspec/policy.json con
     // allowedModels NO vacía (modelAllowed() pasa cualquier modelo si la lista está vacía/ausente → sin policy
@@ -1165,11 +1196,25 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     // (imprescindible para las fases con allowlist 'write', que no tienen shell para mkdir)
     if (!isCode && step.write_to_abs) { try { mkdirSync(dirname(step.write_to_abs), { recursive: true }); } catch {} }
     let ok = false, attempt = 0, capturedFiles = [], lensTok = null, rawOut = '', lastFailureKind = null;
+    // FAILOVER opt-in (T2 2026-07-29): cfg.fallback[fase] || cfg.fallback[rol] = modelo de RESERVA. Solo
+    // tras agotar los reintentos con fallo NO atribuible al contenido; UN intento extra, jamás un bucle.
+    const fbStr = (cfg.fallback && typeof cfg.fallback === 'object') ? (cfg.fallback[phase] || cfg.fallback[role] || null) : null;
+    let fallbackInfo = null;
 
-    while (!ok && attempt <= maxRetries) {
+    while (!ok && (attempt <= maxRetries || (!fallbackInfo && fbStr && lastFailureKind && lastFailureKind !== 'error' && parseModelSpec(fbStr).model !== mspec.model))) {
+      if (attempt > maxRetries) {
+        // pasada EXTRA de reserva — con las MISMAS guardas de gobierno que el primario
+        const fbSpec = parseModelSpec(fbStr);
+        const fbVetado = projPolicy && fbSpec.model && !modelAllowed(fbSpec.model, projPolicy);
+        const fbSinCreds = isProdRunner && fbSpec.provider === 'byok' && !hasByokCreds && cfg.byokFallback !== true;
+        if (fbVetado || fbSinCreds) { log(`⚠ fallback "${fbStr}" omitido (${fbVetado ? 'no está en allowedModels de policy.json' : 'byok sin credenciales'}) — la fase queda como estaba`); break; }
+        fallbackInfo = { from: mspec.model || '(sesión)', to: fbSpec.model, afterKind: lastFailureKind };
+        log(`🛟 failover "${phase}": ${attempt} intento(s) con ${mspec.model || '(sesión)'} agotados (${lastFailureKind}) → 1 intento con ${fbSpec.model} (opt-in "fallback")`);
+        model = fbStr; mspec = fbSpec;
+      }
       attempt++;
       // lastError solo persiste entre REINTENTOS de la misma fase (nunca entre fases)
-      currentInfo = { phase, role, model: mspec.model || null, provider: mspec.provider, attempt, maxAttempts: maxRetries + 1, startedAt: Date.now(), timeoutMs: tmo, lastError: (currentInfo?.phase === phase ? currentInfo?.lastError : null) || null };
+      currentInfo = { phase, role, model: mspec.model || null, provider: mspec.provider, attempt, maxAttempts: maxRetries + 1 + (fbStr && !fallbackInfo ? 0 : (fallbackInfo ? 1 : 0)), startedAt: Date.now(), timeoutMs: tmo, lastError: (currentInfo?.phase === phase ? currentInfo?.lastError : null) || null };
       writeTimeline('running'); // publica la fase en curso (la mini-web la pinta viva)
       let r;
       if (phase === 'verify' && lenses.length > 1) {
@@ -1317,7 +1362,7 @@ ${readSafe(x.lp).trim()}`);
     if (cfg.rawCapture !== false && rawOut && rawOut.trim()) {
       try { const rd = plumbPath(changeDir, 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
     }
-    timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
+    timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: primarySpec.model || null, fallback: fallbackInfo || undefined, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
     writeTimeline('running'); // incremental: la mini-web en vivo (serve) lee esto tras cada fase
     if (!ok) { const why = `la fase "${phase}" no produjo su artefacto tras ${maxRetries + 1} intentos — la secuencia no se salta; revisa el modelo elegido o el registro del run`; log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED', why); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, reason: why, trail, timeline }; }

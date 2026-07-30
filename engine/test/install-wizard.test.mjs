@@ -52,10 +52,10 @@ await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectado
   const env = { ...process.env, CONDUCTOR_USERHOME: home, CONDUCTOR_HOME: join(home, '.conductor') };
   // pipe (sin TTY): conecta los DETECTADOS sin preguntar (CI/scripts jamas se cuelgan)
   execFileSync(process.execPath, [BIN, 'init', proj], { encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 30000, env });
-  assert(ex(join(proj, '.claude', 'commands', 'conductor.md')), 'comando de proyecto de Claude escrito (detectado)');
+  assert(ex(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md')), 'skill de proyecto de Claude escrita (estándar Agent Skills; OpenCode también la descubre)');
   assert(ex(join(proj, '.opencode', 'command', 'conductor.md')), 'comando de proyecto de OpenCode escrito (detectado, dir SINGULAR)');
   assert(!ex(join(proj, '.github', 'skills', 'conductor', 'SKILL.md')), 'Copilot NO detectado => no se escribe su skill');
-  assert(/open:false/.test(rf(join(proj, '.claude', 'commands', 'conductor.md'), 'utf8')), 'el comando ensena el /conductor vacio educado (open:false)');
+  assert(/open:false/.test(rf(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md'), 'utf8')), 'la skill ensena el /conductor vacio educado (open:false)');
   // TTY guionizado con "n": ninguno
   const proj2 = join(HERE, '.tmp-initmenu-proj2');
   rmSync(proj2, { recursive: true, force: true });

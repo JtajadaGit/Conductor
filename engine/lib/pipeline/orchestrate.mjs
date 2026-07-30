@@ -62,6 +62,33 @@ DEFAULT_INSTRUCTION['micro-apply'] = 'CODER. MICRO MODE — tiny task, no spec b
 // fábrica engine/lib/pipeline y en bundle assets/) > defaults embebidos. Cache POR DIR resuelto (jamás
 // cache global sin clave — trampa multi-run). Un .md ilegible NO tumba el run: cae al default.
 export const PROMPT_KEYS = Object.keys(DEFAULT_INSTRUCTION);
+
+// ── REGLAS DE EQUIPO (openspec/conductor.json → rules) ────────────────────────────────────────────────
+// Gobierno DECLARATIVO por fase: el punto de extensión que evita forkear el motor para cambiar cómo
+// trabaja una fase ("en apply usa componentes standalone", "en spec no escribas escenarios para la
+// AUSENCIA de una regla"). Se concatenan al prompt de la fase, DESPUÉS de la instrucción del motor.
+// SEGURIDAD: una regla es SOLO TEXTO y jamás se ejecuta. conductor.json es committeable, así que un PR
+// puede cambiarla; por eso el camino de ejecutar comandos sigue siendo "checks", que exige consentimiento
+// explícito por-run (toggle del panel o CONDUCTOR_ALLOW_CHECKS=1). No mezclar nunca ambos caminos.
+const RULE_MAXLEN = 240; // por regla
+const RULES_MAX = 10;    // por fase — una lista infinita ahoga la instrucción del motor (token-first)
+export function rulesFor(rules, phase) {
+  if (!rules || typeof rules !== 'object' || Array.isArray(rules) || !phase) return [];
+  const pick = (k) => (Array.isArray(rules[k]) ? rules[k] : []);
+  const out = [];
+  for (const r of [...pick('all'), ...pick(phase)]) {
+    if (typeof r !== 'string') continue;
+    const clean = r.replace(/\s+/g, ' ').trim().slice(0, RULE_MAXLEN);
+    if (clean && !out.includes(clean)) out.push(clean); // "all" + fase pueden repetir la misma regla
+    if (out.length >= RULES_MAX) break;
+  }
+  return out;
+}
+export function renderRulesBlock(rules, phase) {
+  const rs = rulesFor(rules, phase);
+  if (!rs.length) return '';
+  return `\n\nTEAM RULES for phase "${phase}" (openspec/conductor.json — the team set these; honor them):\n${rs.map((r) => `- ${r}`).join('\n')}`;
+}
 const _promptCache = new Map();
 const promptBody = (txt) => {
   const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(txt);

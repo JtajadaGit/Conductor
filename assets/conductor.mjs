@@ -2103,6 +2103,8 @@ function aggregateStats(projects) {
   const byModelPhase = new Map(); // "${model}|${phase}" -> { model, phase, calls, green, in, out }
   const perProject = [];
   let runs = 0, green = 0, failed = 0, stopped = 0, aborted = 0, running = 0, phasesTotal = 0, unpriced = 0;
+  // T3: precisión del estimador — acumula est vs real SOLO en fases con tokens medidos y estimación presente
+  const estAcc = { runs: 0, phases: 0, est: 0, real: 0, absErr: 0 };
   let msTotal = 0, msRuns = 0, tin = 0, tout = 0, cost = 0, naive = 0;
   let fixRuns = 0, recoveredRuns = 0; // self-repair: runs que tuvieron ≥1 ciclo fix y cuántos acabaron GREEN
 
@@ -2121,6 +2123,21 @@ function aggregateStats(projects) {
       if (Number.isFinite(tl.total_ms) && tl.total_ms > 0) { msTotal += tl.total_ms; msRuns++; }
       // self-repair: el ciclo fix→verify recuperó el run sin humano (mide los "dientes" del gate). Timelines
       // antiguos sin selfRepair: fallback a contar las fases 'fix' presentes (recovered ≈ acabó GREEN).
+      if (tl.estimate && Array.isArray(tl.estimate.phases)) {
+        const em = new Map(tl.estimate.phases.map((p) => [p.phase, p]));
+        const seenE = new Set(); let contributed = false;
+        for (const ph of tl.phases) {
+          if (!ph || seenE.has(ph.phase) || !ph.tokens || !em.has(ph.phase)) continue;
+          seenE.add(ph.phase);
+          const e = em.get(ph.phase);
+          const est = (Number(e.estIn) || 0) + (Number(e.estOut) || 0);
+          const real = (Number(ph.tokens.in) || 0) + (Number(ph.tokens.out) || 0);
+          if (est <= 0 || real <= 0) continue;
+          estAcc.phases++; estAcc.est += est; estAcc.real += real; estAcc.absErr += Math.abs(real - est) / est;
+          contributed = true;
+        }
+        if (contributed) estAcc.runs++;
+      }
       const sr = tl.selfRepair || (Array.isArray(tl.phases) ? { fixCycles: tl.phases.filter((p) => p && p.phase === 'fix').length, recovered: v === 'GREEN' && tl.phases.some((p) => p && p.phase === 'fix') } : {});
       if (Number(sr.fixCycles) > 0) { fixRuns++; if (sr.recovered) recoveredRuns++; }
       for (const ph of tl.phases) {
@@ -2151,7 +2168,11 @@ function aggregateStats(projects) {
   }
 
   const saved = Math.max(0, naive - cost); // L24: nunca "ahorro" negativo en la tarjeta de ahorro
+  const estimator = estAcc.phases
+    ? { runs: estAcc.runs, phases: estAcc.phases, dev_pct: Math.round(((estAcc.real / estAcc.est) - 1) * 100), mape_pct: Math.round((estAcc.absErr / estAcc.phases) * 100) }
+    : null; // sin datos no se inventa precisión (honestidad)
   return {
+    estimator,
     projects_scanned: list.length,
     runs, green, failed, stopped, aborted, running, phases: phasesTotal,
     mean_ms: msRuns ? Math.round(msTotal / msRuns) : 0,
@@ -3601,6 +3622,33 @@ DEFAULT_INSTRUCTION['micro-apply'] = 'CODER. MICRO MODE — tiny task, no spec b
 // fábrica engine/lib/pipeline y en bundle assets/) > defaults embebidos. Cache POR DIR resuelto (jamás
 // cache global sin clave — trampa multi-run). Un .md ilegible NO tumba el run: cae al default.
 const PROMPT_KEYS = Object.keys(DEFAULT_INSTRUCTION);
+
+// ── REGLAS DE EQUIPO (openspec/conductor.json → rules) ────────────────────────────────────────────────
+// Gobierno DECLARATIVO por fase: el punto de extensión que evita forkear el motor para cambiar cómo
+// trabaja una fase ("en apply usa componentes standalone", "en spec no escribas escenarios para la
+// AUSENCIA de una regla"). Se concatenan al prompt de la fase, DESPUÉS de la instrucción del motor.
+// SEGURIDAD: una regla es SOLO TEXTO y jamás se ejecuta. conductor.json es committeable, así que un PR
+// puede cambiarla; por eso el camino de ejecutar comandos sigue siendo "checks", que exige consentimiento
+// explícito por-run (toggle del panel o CONDUCTOR_ALLOW_CHECKS=1). No mezclar nunca ambos caminos.
+const RULE_MAXLEN = 240; // por regla
+const RULES_MAX = 10;    // por fase — una lista infinita ahoga la instrucción del motor (token-first)
+function rulesFor(rules, phase) {
+  if (!rules || typeof rules !== 'object' || Array.isArray(rules) || !phase) return [];
+  const pick = (k) => (Array.isArray(rules[k]) ? rules[k] : []);
+  const out = [];
+  for (const r of [...pick('all'), ...pick(phase)]) {
+    if (typeof r !== 'string') continue;
+    const clean = r.replace(/\s+/g, ' ').trim().slice(0, RULE_MAXLEN);
+    if (clean && !out.includes(clean)) out.push(clean); // "all" + fase pueden repetir la misma regla
+    if (out.length >= RULES_MAX) break;
+  }
+  return out;
+}
+function renderRulesBlock(rules, phase) {
+  const rs = rulesFor(rules, phase);
+  if (!rs.length) return '';
+  return `\n\nTEAM RULES for phase "${phase}" (openspec/conductor.json — the team set these; honor them):\n${rs.map((r) => `- ${r}`).join('\n')}`;
+}
 const _promptCache = new Map();
 const promptBody = (txt) => {
   const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(txt);
@@ -3933,7 +3981,7 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
   return stepFor(changeDir, s);
 }
 
-return { instructionFor, phaseCondMet, resolvePhases, start, redoPlanning, liveSpecIds, next, KNOWN_PHASES, stateFile, PROMPT_KEYS };
+return { rulesFor, renderRulesBlock, instructionFor, phaseCondMet, resolvePhases, start, redoPlanning, liveSpecIds, next, KNOWN_PHASES, stateFile, PROMPT_KEYS };
 })();
 
 // ===== lib/pipeline/ttypause.mjs =====
@@ -4097,7 +4145,6 @@ __M['scaffold'] = (function(){
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 
 
-const { detectStack } = __M['stack'];
 const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'conductor — configuración de usuario',
@@ -4116,6 +4163,11 @@ const CONFIG_SCHEMA = {
         reviewer: { type: 'string', examples: ['litellm:deepseek-v4-flash'] },
       },
       additionalProperties: { type: 'string' },
+    },
+    rules: {
+      type: 'object',
+      description: 'Reglas del EQUIPO inyectadas al prompt de una fase (gobierno DECLARATIVO: cambia cómo trabaja una fase sin forkear el motor). Clave = fase conocida o "all"; valor = lista de instrucciones en lenguaje natural. Ej: {"spec":["Un requisito por comportamiento observable; no escribas escenarios para la AUSENCIA de una regla"],"apply":["Componentes standalone; signals para estado local"]}. Tope 10 reglas/fase y 240 chars/regla (token-first). SOLO TEXTO: una regla JAMÁS ejecuta nada — los comandos viven en "checks", que exigen consentimiento explícito por-run (anti-RCE).',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
     },
     pipeline: {
       type: 'array',
@@ -4152,6 +4204,7 @@ const CONFIG_SCHEMA = {
     strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
+    fallback: { type: 'object', additionalProperties: { type: 'string' }, description: 'OPT-IN. Modelo de RESERVA por rol (planner/coder/reviewer) o por FASE (la fase gana). Tras agotar maxRetries con fallo NO atribuible al contenido (timeout/proveedor/crash/no-progreso), UN único intento extra con este modelo. Queda registrado honesto en timeline y AI Act. Ej: {"coder":"copilot:claude-sonnet-4.5"}.' },
     byokFallback: { type: 'boolean', default: false, description: 'true = si se pide byok: sin credenciales, permite caer al catálogo Business (gasta créditos). Por defecto se BLOQUEA.' },
     rawCapture: { type: 'boolean', default: true, description: 'Guardar la salida CRUDA del modelo por fase en .conductor/raw/ (scrubbeada, tope 40k). false la desactiva. Siempre fue leída en runtime; ahora está declarada.' },
     preconditions: {
@@ -4219,13 +4272,14 @@ const CONFIG_SCHEMA = {
 // queda como opt-in explícito (--serve / CONDUCTOR_SERVE=1), no como default que el scaffold reactiva.
 // init v2: SIN $schema — el fichero de schema ya no se escribe en el repo del usuario (apuntarlo sería
 // un enlace roto). La validación real es del motor (doctor); el autocompletado, opción del editor.
+// El fichero que nace en el repo del usuario es la SUPERFICIE de la herramienta: cada línea se paga en
+// code review. Nace con las 3 claves que un equipo toca de verdad — models (la escribe el 💾 del panel),
+// rules (gobierno por fase) y autoApprove. La documentación de los ~40 knobs es CONFIG_SCHEMA (motor,
+// `conductor doctor`, panel), NO un _ayuda de 300 chars dentro del JSON del usuario.
+// (_ayuda/_ejemplos siguen ACEPTADOS por el schema: los repos que ya los tienen no dejan de validar.)
 const DEFAULT_CONFIG = {
-  _ayuda: 'Gobierno del EQUIPO (committeable). NO necesitas rellenar nada: todo tiene default. models = tu mezcla por rol/fase (la escribe el botón 💾 del panel, o tú a mano — ver _ejemplos); preset = quick-fix|visual|feature|migration; el resto de knobs en la doc. Las claves que empiezan por _ se ignoran.',
-  _ejemplos: {
-    models: { planner: 'litellm:tu-modelo-barato', coder: 'copilot:claude-sonnet-4.5', spec: 'copilot:gpt-4.1' },
-    preset: 'feature',
-  },
   models: {},
+  rules: {},
   autoApprove: false,
 };
 
@@ -4238,51 +4292,25 @@ const COPILOTIGNORE = [
   'openspec/changes/**/.conductor/',
 ].join('\n') + '\n';
 
-// REFRESCO al arrancar la app (decisión de producto 2026-07-29): config.yaml es espejo DETECTADO y
-// machine-owned — se regenera entero con fecha; si el humano quiere contexto editable, eso es project.md.
-// una sola fuente del yaml (init y refresh): machine-owned, con fecha de detección
-function buildMetaYaml(root, stk, dirs, scripts) {
-  // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
-  return [
-    '# conductor — metadata DETECTADA del proyecto (machine-owned: la app la refresca al arrancar).',
-    '# Espejo de lo que el motor VE. El contexto EDITABLE (propósito, convenciones) vive en openspec/project.md.',
-    `name: ${basename(root) || 'proyecto'}`,
-    `detected: ${JSON.stringify(new Date().toISOString().slice(0, 10))}`,
-    'stack:',
-    `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
-    stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
-    stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
-    stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
-    stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
-    dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
-    ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
-    Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
-    ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
-    '',
-  ].join('\n');
-}
+// openspec/config.yaml YA NO SE GENERA (2026-07-30). Era un ESPEJO de lo detectado que se reescribía en
+// cada arranque y que NADIE parseaba (su único consumidor era un existsSync de isSdd) — 20 líneas de diff
+// diario en el repo del usuario a cambio de cero información. Un dato derivado no se versiona: se
+// recalcula (detectStack en cada run) y se enseña en el panel. Los repos que ya lo tienen lo conservan y
+// isSdd() lo sigue reconociendo: cero regresión, simplemente deja de nacer y de refrescarse.
 
-function refreshProjectMeta(root) {
+// .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
+// MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
+// commiteada en el repo del usuario. Append IDEMPOTENTE: jamás reescribe el .gitignore existente.
+const GITIGNORE_LINE = 'openspec/changes/**/.conductor/';
+function ensureGitignore(root) {
+  const p = join(root, '.gitignore');
   try {
-    const ymlPath = join(root, 'openspec', 'config.yaml');
-    if (!existsSync(ymlPath)) return false;
-    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch {}
-    const dirs = topDirs(root);
-    const scripts = pkgScripts(root);
-    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts));
+    const prev = existsSync(p) ? readFileSync(p, 'utf8') : '';
+    if (prev.split(/\r?\n/).some((l) => l.trim() === GITIGNORE_LINE)) return false;
+    const sep = prev === '' ? '' : (prev.endsWith('\n') ? '\n' : '\n\n');
+    writeFileSync(p, `${prev}${sep}# conductor — fontanería del run (estado de máquina, no del repo)\n${GITIGNORE_LINE}\n`);
     return true;
   } catch { return false; }
-}
-
-// dirs de primer nivel con señal (para structure: de config.yaml) — sin recursión, sin ejecutar nada
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'openspec']);
-function topDirs(root) {
-  try {
-    return readdirSync(root).filter((d) => { try { return !d.startsWith('.') && !SKIP_DIRS.has(d) && statSync(join(root, d)).isDirectory(); } catch { return false; } }).slice(0, 12);
-  } catch { return []; }
-}
-function pkgScripts(root) {
-  try { return JSON.parse(String(readFileSync(join(root, 'package.json')))).scripts || {}; } catch { return {}; }
 }
 
 // escribe conductor.json (solo si no existe — nunca pisa la config del usuario)
@@ -4301,53 +4329,42 @@ function initConfig(openspecDir) {
   if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
   const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');
   if (!existsSync(keep)) writeFileSync(keep, '');
-  // config.yaml: metadata OpenSpec del proyecto (stack DETECTADO por el motor). Init ATÓMICO y COMPLETO (#6): un
-  // fresh-init deja conductor.json (config EJECUTABLE) Y config.yaml (metadata) → "inicializado" deja de ser ambiguo
-  // (antes una ruta creaba uno y otra el otro). Determinista, sin LLM. Idempotente: nunca pisa el del usuario.
-  const ymlPath = join(openspecDir, 'config.yaml');
-  let metadata = false;
-  if (!existsSync(ymlPath)) {
-    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
-    const dirs = topDirs(root);
-    const scripts = pkgScripts(root);
-    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts)); metadata = true;
-    // project.md: el CONTEXTO del estándar para humanos y agentes (lo que en v1 escribía la skill con LLM,
-    // ahora nace determinista y editable; las fases de planificación lo leen si existe)
-    const pmPath = join(openspecDir, 'project.md');
-    if (!existsSync(pmPath)) {
-      writeFileSync(pmPath, [
-        `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
-        '',
-        '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
-        '',
-        '## Propósito',
-        '(1-3 líneas: qué hace este producto y para quién)',
-        '',
-        '## Stack (detectado)',
-        `- ${stk.summary || 'desconocido'}`,
-        stk.entrypoints?.length ? `- entrypoints: ${stk.entrypoints.join(', ')}` : '',
-        stk.testCmd ? `- tests: \`${stk.testCmd}\`` : '',
-        '',
-        '## Estructura',
-        ...(dirs.length ? dirs.map((d) => `- \`${d}/\``) : ['(añade aquí un mapa breve de carpetas)']),
-        '',
-        '## Convenciones',
-        '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
-        '',
-        '## Decisiones vivas',
-        '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
-        '',
-      ].filter((l) => l !== '').join('\n') + '\n');
-    }
+  // project.md: el CONTEXTO del estándar para humanos y agentes. SIN stack ni estructura: eso es DERIVADO y
+  // aquí se escribía UNA sola vez (nada lo refrescaba nunca) mientras drive.mjs lo inyecta al planner con
+  // "honor it" — o sea, la única fuente de contexto PODRIDO que llegaba al prompt. El stack se detecta en
+  // cada run y se enseña en el panel. Aquí queda solo lo que un humano sabe y una máquina no puede deducir.
+  // (Antes colgaba del `if (!existsSync(config.yaml))`: un repo con yaml pero sin project.md no lo recibía
+  //  jamás. Ahora es independiente e idempotente.)
+  const pmPath = join(openspecDir, 'project.md');
+  let projectMdCreated = false;
+  if (!existsSync(pmPath)) {
+    writeFileSync(pmPath, [
+      `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
+      '',
+      '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
+      '> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.',
+      '',
+      '## Propósito',
+      '(1-3 líneas: qué hace este producto y para quién)',
+      '',
+      '## Convenciones',
+      '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
+      '',
+      '## Decisiones vivas',
+      '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
+      '',
+    ].join('\n') + '\n');
+    projectMdCreated = true;
   }
-  // .copilotignore al root del proyecto (token-first determinista)
+  // .copilotignore al root del proyecto (token-first determinista) + .gitignore (la fontanería fuera del repo)
   const ignorePath = join(root, '.copilotignore');
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
-  return { cfgPath, created, ymlPath, metadata, projectMd: join(openspecDir, 'project.md'), ignorePath, copilotignore };
+  const gitignore = ensureGitignore(root);
+  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore };
 }
 
-return { refreshProjectMeta, initConfig, CONFIG_SCHEMA };
+return { initConfig, CONFIG_SCHEMA };
 })();
 
 // ===== lib/serving/aiact.mjs =====
@@ -4396,7 +4413,7 @@ function aiactData(changeDir) {
     verdict: tl.verdict || null,
     generatedAt: new Date().toISOString(),
     spec: specPath ? { path: specPath.replace(/\\/g, '/').split('/').slice(-3).join('/'), sha256: sha(specPath) } : null,
-    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null })),
+    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null, fallback: p.fallback || null })),
     approvals: tl.approvals ?? [],
     aiGeneratedFiles: aiFiles,
     verification: {
@@ -4414,7 +4431,7 @@ function aiactData(changeDir) {
 function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
-  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>🛟 reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
     ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
@@ -4561,6 +4578,28 @@ function renderReceipt({ name = '', timeline = null, spec = '', proposal = '', v
   return L.join('\n');
 }
 
+// T3: desviación estimado-vs-real por fase (puro, testeable sin FS). Solo compara fases con tokens
+// REALES; la primera ocurrencia de cada fase (un retry no duplica la estimación). null = sin datos.
+function estimateDeviation(estimate, phases) {
+  if (!estimate || !Array.isArray(estimate.phases) || !Array.isArray(phases)) return null;
+  const est = new Map(estimate.phases.map((p) => [p.phase, p]));
+  const seen = new Set();
+  const rows = [];
+  for (const p of phases) {
+    if (!p || seen.has(p.phase) || !p.tokens || !est.has(p.phase)) continue;
+    seen.add(p.phase);
+    const e = est.get(p.phase);
+    const realIn = Number(p.tokens.in) || 0, realOut = Number(p.tokens.out) || 0;
+    const estIn = Number(e.estIn) || 0, estOut = Number(e.estOut) || 0;
+    const dev = (estIn + estOut) > 0 ? Math.round((((realIn + realOut) / (estIn + estOut)) - 1) * 100) : null;
+    rows.push({ phase: p.phase, estIn, estOut, realIn, realOut, devPct: dev });
+  }
+  if (!rows.length) return null;
+  const tEst = rows.reduce((s, r) => s + r.estIn + r.estOut, 0);
+  const tReal = rows.reduce((s, r) => s + r.realIn + r.realOut, 0);
+  return { phases: rows, totalDevPct: tEst > 0 ? Math.round(((tReal / tEst) - 1) * 100) : null };
+}
+
 function renderDashboard({ change, gates = [], trace, cost, timeline }) {
   const c = count(gates);
   const tl = timeline && timeline.phases ? timeline.phases : (Array.isArray(timeline) ? timeline : null);
@@ -4578,7 +4617,9 @@ function renderDashboard({ change, gates = [], trace, cost, timeline }) {
     ? gates.map((f) => `<tr class="${['breaking', 'error'].includes(f.severity) ? 'gap' : ''}"><td><span class="pill ${['breaking', 'error'].includes(f.severity) ? 'bad' : 'neutral'}" style="text-transform:none">${esc(f.severity)}</span></td><td><code>${esc(f.rule)}</code></td><td>${esc(f.message)}</td><td style="color:var(--tx3)">${esc(f.file || f.pointer || '')}</td></tr>`).join('')
     : '<tr><td colspan=4 style="color:var(--ok)">✓ sin findings — el gate pasa limpio</td></tr>';
   const traceRows = trace ? trace.matrix.map((m) => `<tr class="${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><td><code>${esc(m.id)}</code></td><td>${esc(m.name)}</td><td>${tick(m.cov.task)}</td><td>${tick(m.cov.code)}</td><td>${tick(m.cov.test)}</td><td>${m.scenarios.length}</td></tr>`).join('') : '';
-  const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}${p.tokens.cached ? ` ↺${fmt(p.tokens.cached)}` : ''}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
+  const devInfo = estimateDeviation(timeline?.estimate, tl || []);
+  const devMap = new Map((devInfo?.phases || []).map((r) => [r.phase, r]));
+  const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}${p.tokens.cached ? ` ↺${fmt(p.tokens.cached)}` : ''}` : '—'}</td><td style="font-variant-numeric:tabular-nums;color:var(--tx3)">${devMap.has(p.phase) ? `~↓${fmt(devMap.get(p.phase).estIn)} ↑${fmt(devMap.get(p.phase).estOut)}${devMap.get(p.phase).devPct !== null ? ` (${devMap.get(p.phase).devPct > 0 ? '+' : ''}${devMap.get(p.phase).devPct}%)` : ''}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
 
   return `<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <script>(function(){try{var t=localStorage.getItem('conductorTheme');if(!t)t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t;}catch(e){}})()</script>
@@ -4609,12 +4650,12 @@ function renderDashboard({ change, gates = [], trace, cost, timeline }) {
 <table><tr><th>severidad</th><th>regla</th><th>mensaje</th><th>ubicación</th></tr>${findRows}</table>
 ${trace ? `<h2 class=sect>Linaje spec → task → code → test <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué requisito cubre cada artefacto (rojo = hueco)</span></h2><table><tr><th>requisito</th><th>nombre</th><th>task</th><th>code</th><th>test</th><th>scn</th></tr>${traceRows}</table>` : ''}
 ${cost ? `<h2 class=sect>Coste por fase <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— tokens por fase y modelo (Copilot = AI Credits · LiteLLM = 0 AIC)</span></h2><table><tr><th>fase</th><th>calls</th><th>modelos</th><th>tokens in</th><th>tokens out</th></tr>${cost.phases.map((p) => `<tr><td>${esc(p.phase)}</td><td>${p.calls}</td><td><code>${esc(p.models.join(','))}</code></td><td>${fmt(p.in)}</td><td>${fmt(p.out)}</td></tr>`).join('')}</table>` : ''}
-${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— fase × modelo × duración × tokens</span></h2><table><tr><th>fase</th><th>rol</th><th>modelo</th><th>archivos</th><th>intentos</th><th>duración</th><th>tokens</th><th>ok</th></tr>${tlRows}</table>` : ''}
+${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— fase × modelo × duración × tokens</span></h2><table><tr><th>fase</th><th>rol</th><th>modelo</th><th>archivos</th><th>intentos</th><th>duración</th><th>tokens</th><th>est (preflight)</th><th>ok</th></tr>${tlRows}</table>` : ''}
 <footer>Generado por conductor — determinista, sin LLM. Evidencia para provenance de green-gate.</footer>
 </html>`;
 }
 
-return { renderReceipt, renderDashboard };
+return { renderReceipt, estimateDeviation, renderDashboard };
 })();
 
 // ===== lib/pipeline/drive.mjs =====
@@ -4637,7 +4678,7 @@ __M['drive'] = (function(){
 
 
 
-const { start, next, resolvePhases, redoPlanning, KNOWN_PHASES } = __M['orchestrate'];
+const { start, next, resolvePhases, redoPlanning, KNOWN_PHASES, renderRulesBlock } = __M['orchestrate'];
 const { resolvePreset } = __M['presets'];
 const { checkCoherence, parseReport } = __M['coherence'];
 const { checkArtifacts } = __M['artifacts'];
@@ -4655,7 +4696,7 @@ const { buildVerifiedIndex, buildBrownfieldMap } = __M['atlas'];
 const { buildCodeMap, renderCodeMap } = __M['codemap'];
 const { tierModel } = __M['tiers'];
 const { priceOf, metaOf } = __M['cost'];
-const { budgetContextFiles, summarizeArtifact } = __M['estimate'];
+const { budgetContextFiles, summarizeArtifact, estimateRun } = __M['estimate'];
 const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
 const { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } = __M['secret'];
@@ -5141,7 +5182,7 @@ function buildPrompt(step, { changeDir, projectRoot, complexity, verifiedCtx = '
       `${writeNow} Do NOT write an apply-report; the pipeline records what you changed automatically.`;
   }
   if (isCode) {
-    const fix = step.findings ? `\nThe deterministic gate FAILED with: ${(step.findings || []).map((f) => f.message).join(' | ')}. Fix exactly these.` : '';
+    const fix = step.findings ? `\nThe deterministic gate FAILED with: ${capFindings(step.findings).join(' | ')}. Fix exactly these.` : '';
     return `${sentinels}\n${guard}\n${step.instruction}\n` +
       `Project root: ${projectRoot}\nThe proposal/spec/tasks are under: ${changeDir} (read spec.md if you need the requirements; do not look for source files that don't exist yet).\n${refFiles}${focusCtx}` +
       `${writeNow} Put one comment "@conductor REQ-SLUG" (in each file's comment syntax) referencing the requirement it fulfills. ` +
@@ -5229,10 +5270,19 @@ function captureBaseTree(projectRoot, changeDir) {
 // RETRY-DELTA (puro, testeable): el mensaje del reintento según el PROGRESO REAL del intento anterior.
 // Con ficheros parciales (p.ej. timeout tras escribir la fuente pero no el test): completa, no re-crees —
 // ahorra re-pagar la implementación entera. Sin nada escrito: el empujón contundente de siempre.
+// T7: hallazgos del gate CAPADOS para prompts (token-first): máx N mensajes de L chars + '…y K más'.
+// Puro y exportado para test. El gate conserva la lista completa — esto solo gobierna lo que VIAJA al modelo.
+function capFindings(findings = [], max = 12, len = 300) {
+  const msgs = (findings || []).map((f) => String(f && f.message || f || '').slice(0, len)).filter(Boolean);
+  if (msgs.length <= max) return msgs;
+  return [...msgs.slice(0, max), `…y ${msgs.length - max} hallazgo(s) más (ver verify-report.md)`];
+}
+
 function retryHint(files = [], doneTasks = []) {
-  const done = doneTasks.length ? `\n\nTASKS ALREADY DONE (do NOT re-implement — completed in the previous attempt):\n${doneTasks.map((l) => `  ${l}`).join('\n')}` : '';
+  const capList = (arr, mk) => arr.length > 40 ? [...arr.slice(0, 40).map(mk), `  …y ${arr.length - 40} más`] : arr.map(mk);
+  const done = doneTasks.length ? `\n\nTASKS ALREADY DONE (do NOT re-implement — completed in the previous attempt):\n${capList(doneTasks, (l) => `  ${l}`).join('\n')}` : '';
   if (files.length) {
-    return `\n\n⚠ EL INTENTO ANTERIOR quedó a medias pero SÍ dejó ${files.length} fichero(s) escritos:\n${files.map((f) => `  ${f.p}`).join('\n')}\nNO los re-crees ni los reescribas desde cero. COMPLETA solo lo que falta (típicamente el TEST del código ya escrito y las tareas sin marcar): \`edit\` sobre lo existente, \`create\` solo para lo nuevo. Ve directo, sin explorar.${done}`;
+    return `\n\n⚠ EL INTENTO ANTERIOR quedó a medias pero SÍ dejó ${files.length} fichero(s) escritos:\n${capList(files, (f) => `  ${f.p}`).join('\n')}\nNO los re-crees ni los reescribas desde cero. COMPLETA solo lo que falta (típicamente el TEST del código ya escrito y las tareas sin marcar): \`edit\` sobre lo existente, \`create\` solo para lo nuevo. Ve directo, sin explorar.${done}`;
   }
   return `\n\n⚠ EL INTENTO ANTERIOR NO ESCRIBIÓ NINGÚN FICHERO. No leas, no explores, no uses \`view\`. Usa el tool \`create\` AHORA para escribir el fichero de código y su test, y para.${done}`;
 }
@@ -5370,6 +5420,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   } catch { /* sin mapa (repo sin JS/TS o ilegible) — cero regresión */ }
   if (codeMapCtx) log('🕸 mapa de relaciones inyectado (imports/exports/usedBy — el modelo no re-descubre dependencias leyendo ficheros)');
   let skillsLogged = false;
+  const rulesLogged = new Set(); // una línea de log por FASE con reglas (no por intento/reintento)
   // conductor.json NO se valida contra CONFIG_SCHEMA en runtime → se clampan aquí los valores que causan daño real:
   // timeoutSeconds<=0 daba tmo negativo (truthy) → TODA fase timeout al primer tick; maxRetries enorme → burn de
   // AI Credits en reintentos casi-infinitos. Solo un timeoutSeconds POSITIVO cuenta; maxRetries se acota a 0..3 (schema).
@@ -5407,6 +5458,20 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   // configurable-pauseat: dónde pausa la revisión es del proyecto. Si openspec/conductor.json define
   // "pauseAt" (subconjunto de fases), gana sobre el default que pase el llamador. La fase "fix" SIEMPRE pausa.
   const pauseEff = Array.isArray(cfg.pauseAt) ? cfg.pauseAt.filter((p) => KNOWN_PHASES.includes(p)) : (preset?.pauseAt ?? pauseAt); // KNOWN_PHASES = lista canónica de orchestrate
+
+  // ESTIMADO-vs-REAL (T3 2026-07-29): el preflight del panel se PERSISTE en el timeline para poder medir
+  // la precisión del estimador contra los tokens reales (OTel). En RESUME se reusa el estimado ORIGINAL —
+  // recalcular con artefactos ya escritos falsearía la comparación. Telemetría pura: jamás toca el gate.
+  let runEstimate = null;
+  // un timeline previo = run anterior (resume): su estimate ORIGINAL manda (sin depender del flag,
+  // que se inicializa más abajo — TDZ)
+  try { runEstimate = JSON.parse(readSafe(plumbPath(changeDir, 'timeline.json')) || '{}').estimate || null; } catch { /* fresco */ }
+  if (!runEstimate) {
+    try {
+      const e = estimateRun({ changeDir, complexity, domain, request, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : null });
+      runEstimate = { phases: e.phases, totalIn: e.totalIn, totalOut: e.totalOut };
+    } catch { /* estimador best-effort: sin él, simplemente no hay comparación */ }
+  }
 
   // TIMEOUT DE REVISIÓN HUMANA (R-A3): en headless/CI/--auto nadie atiende la pausa → el run colgaría
   // indefinidamente. Política cfg.onReviewTimeout: 'wait' (def · sin timeout = cero regresión) | 'continue'
@@ -5503,7 +5568,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   if (!resumed) captureBaseTree(projectRoot, changeDir);
   // `reason` (2º arg, solo en verdicts terminales): el porqué humano del BLOCKED/ABORTED/STOPPED — la UI lo
   // pinta bajo la pill; sin esto el run moría con una pill muda y el motivo solo vivía en el return/log.
-  const writeTimeline = (verdict, reason) => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
+  const writeTimeline = (verdict, reason) => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); const fixCycles = timeline.filter((p) => p.phase === 'fix').length; writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request, complexity, domain, verdict, reason: reason ? String(reason).slice(0, 600) : undefined, resumed, total_ms: Date.now() - t0run, current: currentInfo, approvals, decisions, estimate: runEstimate || undefined, fallbackUsed: timeline.some((p) => p.fallback) || undefined, dirtyTreeAtStart: dirtyAtStart || undefined, preset: preset ? { name: preset.name, label: preset.label, strict: strictGate, specFreeze: specFreezeOn } : undefined, pipeline: (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : undefined, runTests: runTestsOpt === true || undefined, tests: testsResult || undefined, selfRepair: { fixCycles, recovered: fixCycles > 0 && verdict === 'GREEN' }, models: Object.keys(launchModels).length ? launchModels : undefined, phases: timeline }, null, 2)); takeLock(); } catch {} }; // takeLock = heartbeat del lock
   // el artefacto PARA HUMANOS: informe HTML autocontenido (gate + traza + timeline). Los JSON son
   // evidencia para CI/auditoría; al usuario se le enseña esto.
   const writeReportData = (gates, trace) => { try { writeFileSync(plumbPath(changeDir, 'report.json'), JSON.stringify({ gates, trace })); } catch {} };
@@ -5524,7 +5589,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       const trace = !isMicro && existsSync(projectRoot) ? buildTrace(changeDir, projectRoot) : null;
       const out = join(changeDir, 'dashboard.html');
       writeReportData(gates, trace);
-      writeFileSync(out, renderDashboard({ change: changeDir, gates, trace, timeline: { verdict, phases: timeline, approvals } }));
+      writeFileSync(out, renderDashboard({ change: changeDir, gates, trace, timeline: { verdict, phases: timeline, approvals, estimate: runEstimate || undefined } }));
       log(`📊 informe: ${out}`);
     } catch {}
   };
@@ -5601,7 +5666,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         if (sel.length) {
           step.findings = sel;
           // la instrucción de orchestrate embebe TODOS los hallazgos → realinearla con la selección
-          step.instruction = (step.instruction || '').split(' Hallazgos:')[0] + ' Hallazgos: ' + sel.map((f) => f.message).join(' | ');
+          step.instruction = (step.instruction || '').split(' Hallazgos:')[0] + ' Hallazgos: ' + capFindings(sel).join(' | ');
           log(`▶ fix dirigido: ${sel.length} hallazgo(s) seleccionados`);
         }
       }
@@ -5663,6 +5728,12 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     }
     let prompt = buildPrompt(step, { changeDir, projectRoot, complexity, verifiedCtx, brownfieldMap, refFiles, codeMap: codeMapCtx, codeMapFocus: codeMapFocusCtx });
     if (!isCode && projectCtx) prompt += `\n\nPROJECT CONTEXT (openspec/project.md — maintained by the team; honor it):\n${projectCtx}`;
+    // REGLAS DE EQUIPO por fase (conductor.json → rules). A diferencia de project.md, aplican TAMBIÉN a
+    // apply/fix: "en apply usa componentes standalone" es justo el caso de uso principal.
+    {
+      const rblk = renderRulesBlock(cfg.rules, phase);
+      if (rblk) { prompt += rblk; if (!rulesLogged.has(phase)) { rulesLogged.add(phase); log(`📏 reglas de equipo inyectadas en "${phase}"`); } }
+    }
     if (userNote) { prompt += `\n\nUSER NOTE (from the human reviewer — MUST honor): ${userNote}`; userNote = null; }
     if (teamSkills.length) {
       // auto-match por dominio/fase ∪ las invocadas con "/nombre" (dedup por referencia — mismos objetos de teamSkills).
@@ -5679,7 +5750,8 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     if (!model && cfg.tiers) { const t = tierModel(phase, cfg, { request }); model = t.model; tierUsed = t.tier; if (tierUsed) log(`🎚 tier ${tierUsed} → ${model || '(de la sesión)'}`); }
     if (hotModel) log(`🎛 cambio de modelo aplicado a "${phase}"`);
     hotModel = null;
-    const mspec = parseModelSpec(model); // para telemetría: modelo limpio + proveedor (byok/copilot)
+    let mspec = parseModelSpec(model); // para telemetría: modelo limpio + proveedor (byok/copilot)
+    const primarySpec = mspec; // el PEDIDO original — modelRequested lo conserva aunque entre el fallback
     // ALLOWLIST DE MODELOS EN EL DRIVER (R-G4, defensa en profundidad): el boundary HTTP de serve ya filtra,
     // pero el modelo-en-caliente, el runner CLI y el SDK lo esquivaban. Solo si hay openspec/policy.json con
     // allowedModels NO vacía (modelAllowed() pasa cualquier modelo si la lista está vacía/ausente → sin policy
@@ -5786,11 +5858,25 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     // (imprescindible para las fases con allowlist 'write', que no tienen shell para mkdir)
     if (!isCode && step.write_to_abs) { try { mkdirSync(dirname(step.write_to_abs), { recursive: true }); } catch {} }
     let ok = false, attempt = 0, capturedFiles = [], lensTok = null, rawOut = '', lastFailureKind = null;
+    // FAILOVER opt-in (T2 2026-07-29): cfg.fallback[fase] || cfg.fallback[rol] = modelo de RESERVA. Solo
+    // tras agotar los reintentos con fallo NO atribuible al contenido; UN intento extra, jamás un bucle.
+    const fbStr = (cfg.fallback && typeof cfg.fallback === 'object') ? (cfg.fallback[phase] || cfg.fallback[role] || null) : null;
+    let fallbackInfo = null;
 
-    while (!ok && attempt <= maxRetries) {
+    while (!ok && (attempt <= maxRetries || (!fallbackInfo && fbStr && lastFailureKind && lastFailureKind !== 'error' && parseModelSpec(fbStr).model !== mspec.model))) {
+      if (attempt > maxRetries) {
+        // pasada EXTRA de reserva — con las MISMAS guardas de gobierno que el primario
+        const fbSpec = parseModelSpec(fbStr);
+        const fbVetado = projPolicy && fbSpec.model && !modelAllowed(fbSpec.model, projPolicy);
+        const fbSinCreds = isProdRunner && fbSpec.provider === 'byok' && !hasByokCreds && cfg.byokFallback !== true;
+        if (fbVetado || fbSinCreds) { log(`⚠ fallback "${fbStr}" omitido (${fbVetado ? 'no está en allowedModels de policy.json' : 'byok sin credenciales'}) — la fase queda como estaba`); break; }
+        fallbackInfo = { from: mspec.model || '(sesión)', to: fbSpec.model, afterKind: lastFailureKind };
+        log(`🛟 failover "${phase}": ${attempt} intento(s) con ${mspec.model || '(sesión)'} agotados (${lastFailureKind}) → 1 intento con ${fbSpec.model} (opt-in "fallback")`);
+        model = fbStr; mspec = fbSpec;
+      }
       attempt++;
       // lastError solo persiste entre REINTENTOS de la misma fase (nunca entre fases)
-      currentInfo = { phase, role, model: mspec.model || null, provider: mspec.provider, attempt, maxAttempts: maxRetries + 1, startedAt: Date.now(), timeoutMs: tmo, lastError: (currentInfo?.phase === phase ? currentInfo?.lastError : null) || null };
+      currentInfo = { phase, role, model: mspec.model || null, provider: mspec.provider, attempt, maxAttempts: maxRetries + 1 + (fbStr && !fallbackInfo ? 0 : (fallbackInfo ? 1 : 0)), startedAt: Date.now(), timeoutMs: tmo, lastError: (currentInfo?.phase === phase ? currentInfo?.lastError : null) || null };
       writeTimeline('running'); // publica la fase en curso (la mini-web la pinta viva)
       let r;
       if (phase === 'verify' && lenses.length > 1) {
@@ -5938,7 +6024,7 @@ ${readSafe(x.lp).trim()}`);
     if (cfg.rawCapture !== false && rawOut && rawOut.trim()) {
       try { const rd = plumbPath(changeDir, 'raw'); mkdirSync(rd, { recursive: true }); writeFileSync(join(rd, `${phase}.txt`), scrubSecrets(stripAnsi(rawOut), process.env, runSecretExtra).slice(0, 40000)); hasRaw = true; } catch {}
     }
-    timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: mspec.model || null, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
+    timeline.push({ phase, role, model: mspec.model || modelReported || null, modelRequested: primarySpec.model || null, fallback: fallbackInfo || undefined, modelReported, modelMismatch: modelMismatch || undefined, tier: tierUsed || undefined, provider: mspec.provider, attempts: attempt, files: capturedFiles, ms: Date.now() - t0, tokens: tok && (tok.in || tok.out || tok.cached) ? { in: tok.in, out: tok.out, ...(tok.cached ? { cached: tok.cached } : {}) } : null, lastError: currentInfo?.lastError || null, failureKind: (!ok && lastFailureKind) ? lastFailureKind : undefined, ok, hasRaw, ...(phase === 'verify' && lenses.length > 1 ? { lenses } : {}), ...(ins.length || ctxFiles.length ? { context: { instructions: ins, contextFiles: ctxFiles } } : {}) });
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
     writeTimeline('running'); // incremental: la mini-web en vivo (serve) lee esto tras cada fase
     if (!ok) { const why = `la fase "${phase}" no produjo su artefacto tras ${maxRetries + 1} intentos — la secuencia no se salta; revisa el modelo elegido o el registro del run`; log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED', why); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, reason: why, trail, timeline }; }
@@ -6152,7 +6238,220 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
+})();
+
+// ===== lib/pipeline/evals.mjs =====
+__M['evals'] = (function(){
+// conductor/lib/pipeline/evals.mjs — GOLDEN-SET DE EVALS del harness (Verification & CI del propio producto).
+// Nace de eval/live.mjs (que queda como re-export) y lo amplía: escenarios con EXPECTATIVA explícita,
+// perfiles de agente fake que ejercitan CADA gate, pass-rate committeable y fingerprint de prompts.
+//
+// HONESTIDAD (documentada a propósito): el agente fake NO lee los prompts — este golden-set protege los
+// INVARIANTES del harness (secuencia, gates, retry, nota humana, presets) ante cualquier cambio del motor
+// o de la fontanería de prompts; el gate de prompts (evals-gate.test) obliga a re-certificar en verde
+// antes de mergear un cambio de prompts/*.md. Con modelos reales (runAgent inyectado) mide AL MODELO.
+// 0-dep, offline, 0 tokens. El gate sigue siendo determinista: JAMÁS un LLM decide GREEN.
+
+
+
+const { drive } = __M['drive'];
+const NL = '\n';
+const specFor = (slug) => [
+  '## ADDED Requirements',
+  `<!-- id: REQ-${slug} -->`,
+  `### Requirement: ${slug}`,
+  `The system SHALL ${slug}.`,
+  '#### Scenario: works',
+  '- **GIVEN** an input',
+  '- **WHEN** it runs',
+  '- **THEN** it returns the output',
+].join(NL);
+
+// ── Agente FAKE por PERFIL ─────────────────────────────────────────────────────────────────────
+// Cada perfil ejercita UNA dimensión del harness. Deterministas, 0 red. El agente devuelto expone
+// `.captured` (array {phase, prompt}) para asertar QUÉ recibió el modelo (p.ej. la nota humana).
+//   strong      — artefactos completos y trazados → GREEN
+//   weak        — sin tag @conductor → hueco de trazabilidad (preset estricto lo tumba)
+//   no-test     — código SIN su test → trace.test-gap (strictTests default ON) lo bloquea
+//   secret      — el código incluye una key hardcodeada → secretScan tumba el GREEN
+//   hollow      — test sin aserciones → hollow-tests gate (con cfg.hollowTests) lo tumba
+//   sql         — además escribe una migración SQL segura (para dataGate del preset migration)
+//   sql-danger  — migración destructiva (DROP TABLE) → DATA-FAIL
+//   flaky       — el PRIMER intento de apply falla con timeout; después se comporta como strong
+//               (prueba retry: con maxRetries>=1 acaba GREEN con attempts=2)
+function makeLiveAgent(profile, slug) {
+  const traced = profile !== 'weak';
+  let flakyFired = false;
+  const agent = ({ phase, writeTo, cwd, prompt }) => {
+    agent.captured.push({ phase, prompt: String(prompt || '') });
+    if (profile === 'flaky' && phase === 'apply' && !flakyFired) {
+      flakyFired = true;
+      return Promise.resolve({ code: -1, err: 'timeout: fake transient failure' });
+    }
+    if (phase === 'apply' || phase === 'fix') {
+      mkdirSync(join(cwd, 'src'), { recursive: true });
+      const tag = traced ? `// @conductor REQ-${slug}${NL}` : '';
+      const secret = profile === 'secret' ? `const apiKey = 'sk-FAKE1234567890ABCDEFffff';${NL}` : '';
+      writeFileSync(join(cwd, 'src', `${slug}.js`), `${tag}${secret}export const ${slug} = (n) => n + 1;${NL}`);
+      if (profile !== 'no-test') {
+        const body = profile === 'hollow'
+          // DECLARA un test (el gate exige señal de test para opinar — fail-open documentado) pero sin aserción
+          ? `import { ${slug} } from './${slug}.js';${NL}test('works', () => { ${slug}(1); });${NL}`
+          : `import { ${slug} } from './${slug}.js';${NL}if (${slug}(1) !== 2) throw new Error('fail');${NL}`;
+        writeFileSync(join(cwd, 'src', `${slug}.test.js`), `${tag}${body}`);
+      }
+      if (profile === 'sql' || profile === 'sql-danger') {
+        mkdirSync(join(cwd, 'migrations'), { recursive: true });
+        const sql = profile === 'sql'
+          ? `CREATE TABLE ${slug}_log (id INTEGER PRIMARY KEY, note TEXT);${NL}`
+          : `DROP TABLE users;${NL}`;
+        writeFileSync(join(cwd, 'migrations', '001_change.sql'), sql);
+      }
+      return Promise.resolve({ code: 0 });
+    }
+    if (writeTo) {
+      mkdirSync(dirname(writeTo), { recursive: true });
+      const base = String(writeTo).replace(/\\/g, '/').split('/').pop();
+      let c = 'artifact content';
+      if (/spec\.md$/.test(base)) c = specFor(slug);
+      else if (base === 'tasks.md') c = `- [ ] 1.1 [REQ-${slug}] implement${NL}- [ ] 1.2 [REQ-${slug}] test`;
+      else if (/verify-report\.md$/.test(base)) c = traced
+        ? `## Verdict${NL}PASS${NL}## Per scenario${NL}✅ works — src/${slug}.js:1${NL}## Findings${NL}none${NL}## Tests${NL}src/${slug}.test.js exercises REQ-${slug}`
+        : `## Verdict${NL}RISK${NL}## Per scenario${NL}⚠️ works — sin trazar${NL}## Findings${NL}falta @conductor${NL}## Tests${NL}sin tag`;
+      else if (base === 'proposal.md') c = `## Why${NL}need ${slug}${NL}## What Changes${NL}- add ${slug}${NL}## Impact${NL}minimal`;
+      else if (base === 'design.md') c = `## Context${NL}x${NL}## Goals / Non-Goals${NL}do ${slug}${NL}## Decisions${NL}plain${NL}## Risks / Trade-offs${NL}none`;
+      else if (base === 'questions.md') c = `## Questions${NL}- [x] scope: confirmed minimal`;
+      else if (base === 'exploration.md') c = `## Findings${NL}greenfield — no prior ${slug}`;
+      writeFileSync(writeTo, c);
+    }
+    return Promise.resolve({ code: 0 });
+  };
+  agent.captured = [];
+  return agent;
+}
+
+// Corre UN drive() real en un dir temporal aislado. runAgent inyectable (modelo real) o fake por perfil.
+// CONDUCTOR_CAPTURE=fs aísla del git del repo. Devuelve también el timeline (attempts, fases) y el agente
+// (con .captured) para que los escenarios puedan asertar QUÉ viajó al modelo.
+async function driveOnce({ tmpRoot, slug, request, complexity = 'simple', cfg = {}, profile = 'strong', runAgent = null, onPause = null }) {
+  const prevCapture = process.env.CONDUCTOR_CAPTURE;
+  process.env.CONDUCTOR_CAPTURE = 'fs';
+  try {
+    rmSync(tmpRoot, { recursive: true, force: true });
+    mkdirSync(join(tmpRoot, 'openspec'), { recursive: true });
+    writeFileSync(join(tmpRoot, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false, serve: false, ...cfg }));
+    const changeDir = join(tmpRoot, 'openspec', 'changes', slug);
+    const agent = runAgent || makeLiveAgent(profile, slug);
+    const r = await drive({ changeDir, request: request || `add ${slug}`, complexity, domain: 'core', srcDir: tmpRoot, runAgent: agent, ...(onPause ? { onPause } : {}) });
+    return { verdict: r.verdict, isGreen: r.verdict === 'GREEN', gate: r.gate || null, timeline: r.timeline || [], agent };
+  } finally {
+    if (prevCapture === undefined) delete process.env.CONDUCTOR_CAPTURE; else process.env.CONDUCTOR_CAPTURE = prevCapture;
+  }
+}
+
+// Escenarios canónicos del harness en vivo (compat: los 3 originales, sin expectativa = GREEN).
+const LIVE_SCENARIOS = [
+  { id: 'trivial-fix', slug: 'twice', request: 'add a function twice(n) returning n*2 with a test', complexity: 'micro', cfg: {} },
+  { id: 'simple-feature', slug: 'inc', request: 'add a function inc(n) returning n+1 with a unit test', complexity: 'simple', cfg: {} },
+  { id: 'strict-feature', slug: 'incr', request: 'add a function incr(n) with a unit test', complexity: 'simple', cfg: { preset: 'feature' } },
+];
+
+// ── GOLDEN-SET (12): cada gate y cada invariante con su EXPECTATIVA explícita ──────────────────
+// expect: 'GREEN' | 'NOT-GREEN' (verdict exacto puede variar — BLOCKED/ABORTED — sin cambiar el contrato).
+// check(r): aserción extra sobre timeline/prompts; devuelve true o un string con el motivo del fallo.
+const GOLDEN_SCENARIOS = [
+  { id: 'trivial-fix', slug: 'twice', request: 'add a function twice(n) with a test', complexity: 'micro', cfg: {}, profile: 'strong', expect: 'GREEN' },
+  { id: 'quickfix-preset', slug: 'qfix', request: 'fix a typo', complexity: 'micro', cfg: { preset: 'quick-fix', autoApprove: true }, profile: 'strong', expect: 'GREEN' },
+  { id: 'visual-preset', slug: 'vis', request: 'tweak footer contrast', complexity: 'micro', cfg: { preset: 'visual', autoApprove: true }, profile: 'strong', expect: 'GREEN' },
+  { id: 'feature-strict', slug: 'incr', request: 'add incr(n) with a unit test', complexity: 'simple', cfg: { preset: 'feature', autoApprove: true }, profile: 'strong', expect: 'GREEN' },
+  { id: 'feature-weak-trace', slug: 'wtr', request: 'add wtr(n) with a unit test', complexity: 'simple', cfg: { preset: 'feature', autoApprove: true }, profile: 'weak', expect: 'NOT-GREEN' },
+  { id: 'strict-tests-gap', slug: 'ntg', request: 'add ntg(n) with a unit test', complexity: 'simple', cfg: { autoApprove: true }, profile: 'no-test', expect: 'NOT-GREEN' },
+  { id: 'secret-scan', slug: 'sec', request: 'add sec(n) with a test', complexity: 'simple', cfg: { autoApprove: true }, profile: 'secret', expect: 'NOT-GREEN' },
+  { id: 'hollow-tests', slug: 'hol', request: 'add hol(n) with a test', complexity: 'simple', cfg: { hollowTests: true, autoApprove: true }, profile: 'hollow', expect: 'NOT-GREEN' },
+  { id: 'migration-green', slug: 'mig', request: 'migrate the log storage safely', complexity: 'medium', cfg: { preset: 'migration', autoApprove: true }, profile: 'sql', expect: 'GREEN' },
+  { id: 'migration-danger-sql', slug: 'mgd', request: 'migrate dropping the old table', complexity: 'medium', cfg: { preset: 'migration', autoApprove: true }, profile: 'sql-danger', expect: 'NOT-GREEN' },
+  {
+    id: 'retry-recovery', slug: 'rty', request: 'add rty(n) with a test', complexity: 'simple', cfg: { maxRetries: 1, autoApprove: true }, profile: 'flaky', expect: 'GREEN',
+    check: (r) => { const a = (r.timeline.find((p) => p.phase === 'apply') || {}).attempts; return a === 2 ? true : `attempts=${a} (esperaba 2: el retry recuperó el timeout)`; },
+  },
+  {
+    id: 'human-note', slug: 'nte', request: 'add nte(n) with a test', complexity: 'simple', cfg: { pauseAt: ['apply'] }, profile: 'strong', expect: 'GREEN',
+    onPause: () => ({ note: 'EVAL-NOTE-TOKEN-42' }),
+    check: (r) => {
+      const ap = r.agent.captured.find((c) => c.phase === 'apply');
+      return ap && /USER NOTE/.test(ap.prompt) && /EVAL-NOTE-TOKEN-42/.test(ap.prompt) ? true : 'la nota humana NO llegó al prompt de apply';
+    },
+  },
+];
+
+// Corre el golden-set K veces por escenario. ok = la EXPECTATIVA se cumple K/K y el check pasa.
+// Con fakes deterministas, K>1 mide DETERMINISMO del harness (un flaky aquí es un bug nuestro).
+async function runGolden({ tmpRoot, scenarios = GOLDEN_SCENARIOS, K = 2 } = {}) {
+  const rows = [];
+  for (const sc of scenarios) {
+    const verdicts = []; let okCount = 0; let why = '';
+    for (let k = 1; k <= K; k++) {
+      const r = await driveOnce({ tmpRoot: join(tmpRoot, `${sc.id}-${k}`), slug: sc.slug, request: sc.request, complexity: sc.complexity, cfg: sc.cfg, profile: sc.profile, onPause: sc.onPause || null });
+      verdicts.push(r.verdict);
+      const matches = sc.expect === 'GREEN' ? r.verdict === 'GREEN' : r.verdict !== 'GREEN';
+      const chk = sc.check ? sc.check(r) : true;
+      if (matches && chk === true) okCount++;
+      else if (!why) why = matches ? String(chk) : `verdict ${r.verdict} (esperaba ${sc.expect})`;
+    }
+    rows.push({ id: sc.id, expect: sc.expect, K, ok: okCount === K, okCount, verdicts, ...(okCount === K ? {} : { why }) });
+  }
+  return rows;
+}
+
+// Corre el harness por escenario × modelo (compat con la API original). models = [{label, runAgent?}].
+async function runLive({ tmpRoot, scenarios = LIVE_SCENARIOS, models = [{ label: 'fake-strong' }], K = 3, profileFor = () => 'strong' } = {}) {
+  const rows = [];
+  for (const model of models) {
+    for (const sc of scenarios) {
+      let green = 0; const verdicts = [];
+      for (let k = 1; k <= K; k++) {
+        const r = await driveOnce({ tmpRoot: join(tmpRoot, `${model.label}-${sc.id}-${k}`), slug: sc.slug, request: sc.request, complexity: sc.complexity, cfg: sc.cfg, profile: profileFor(model.label), runAgent: model.runAgent || null });
+        verdicts.push(r.verdict); if (r.isGreen) green++;
+      }
+      rows.push({ model: model.label, scenario: sc.id, K, green, rate: green / K, verdicts });
+    }
+  }
+  return rows;
+}
+
+// ── FINGERPRINT de prompts + HISTORIAL committeable ────────────────────────────────────────────
+// sha256 estable del contenido de prompts/*.md (orden alfabético, CRLF→LF — sin normalizar, el hash
+// bailaría entre Windows y Linux por autocrlf). Es el ancla del eval-gate: prompts nuevos ⇒ sha nuevo
+// ⇒ el último resultado committeado ya no vale ⇒ re-certificar con `conductor evals`.
+function promptsFingerprint(promptsDir) {
+  const h = createHash('sha256');
+  let files = [];
+  try { files = readdirSync(promptsDir).filter((f) => f.endsWith('.md')).sort(); } catch { return null; }
+  if (!files.length) return null;
+  for (const f of files) {
+    const body = readFileSync(join(promptsDir, f), 'utf8').replace(/\r\n/g, '\n');
+    h.update(f); h.update('\0'); h.update(body); h.update('\0');
+  }
+  return h.digest('hex').slice(0, 16);
+}
+
+// Appendea una línea JSONL al historial de resultados (pass-rate TRACKEADO en git — Verification & CI).
+function appendEvalResult(file, entry) {
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, JSON.stringify(entry) + '\n');
+  return true;
+}
+
+// Última entrada del historial (para el eval-gate). null si no existe o está vacío/corrupto.
+function lastEvalResult(file) {
+  try {
+    const lines = readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
+    return lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+  } catch { return null; }
+}
+
+return { makeLiveAgent, driveOnce, runGolden, runLive, promptsFingerprint, appendEvalResult, lastEvalResult, LIVE_SCENARIOS, GOLDEN_SCENARIOS };
 })();
 
 // ===== lib/pipeline/sdk-runner.mjs =====
@@ -6423,7 +6722,6 @@ const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } = __M['secret'];
 const { plumbPath } = __M['plumb'];
-const { refreshProjectMeta } = __M['scaffold'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
   if (!root || !rel) return null;
@@ -6715,6 +7013,7 @@ function runState(changeDir, srcDir, { alive = null } = {}) {
     phases: tl?.phases ?? [],
     plan: st?.phases ?? [],
     current: cur,
+    estimate: tl?.estimate ?? null, // T3: preflight persistido — la UI compara est vs real por fase
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
     hasDashboard: existsSync(join(changeDir, 'dashboard.html')),
@@ -7315,8 +7614,8 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   // init v2: la app garantiza la plantilla de credenciales aunque nadie pasara por setup/init.
   // DENTRO de createAppServer (no a nivel de módulo): un import jamás debe escribir en el HOME real.
   try { ensureByokTemplate(CONDUCTOR_HOME()); } catch { /* best-effort: el panel enseña el formato igualmente */ }
-  // decisión 2026-07-29: config.yaml (espejo detectado) se refresca en cada arranque — jamás toca project.md
-  try { refreshProjectMeta(root); } catch { /* sin openspec aún: nada que refrescar */ }
+  // (2026-07-30) SIN refresco de config.yaml al arrancar: el espejo detectado ya no existe — el stack se
+  // detecta en cada run (detectStack) y se enseña en el panel. Un dato derivado no se versiona.
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }
   for (const p of loadRegistry()) registry.set(p.id, p);
@@ -7764,6 +8063,29 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           const body = raw != null ? scrubSecrets(raw, process.env, scrubExtra()) : null;
           res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(body ?? 'no encontrado');
         }
+        if (action === 'specdiff') {
+          // T6: delta del change vs la spec VIVA (openspec/specs/<dom>/spec.md). Solo el DOMINIO viaja del
+          // cliente y se sanea a [a-z0-9-]; las rutas se construyen server-side (confinadas por construcción).
+          const dom = String(u.searchParams.get('d') || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
+          const head = join(changeDir, 'specs', dom, 'spec.md');
+          if (!dom || !existsSync(head)) return json(404, { ok: false, error: 'sin spec delta para ese dominio' });
+          const base = join(proj.root, 'openspec', 'specs', dom, 'spec.md');
+          let body;
+          if (!existsSync(base)) {
+            body = `+++ spec NUEVA (no existe aún openspec/specs/${dom}/spec.md — se promoverá al archivar)\n` + readFileSync(head, 'utf8').split('\n').map((l) => '+ ' + l).join('\n');
+          } else {
+            // exit 1 = HAY diff (git diff --no-index) — capturar stdout del "error"; timeout corto; sin shell
+            try {
+              const out = execFileSync('git', ['-c', 'core.quotePath=false', 'diff', '--no-index', '--unified=3', '--', base, head], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+              body = out || '(sin diferencias: el delta coincide con la spec viva)';
+            } catch (e) {
+              body = (e && e.stdout) ? String(e.stdout) : null;
+            }
+          }
+          if (body == null) return json(500, { ok: false, error: 'diff no disponible (¿git en PATH?)' });
+          res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+          return res.end(scrubSecrets(body, process.env, scrubExtra()));
+        }
         if (action === 'files') {
           // resumen de CAMBIOS del run (experiencia Git): changeset real vs HEAD; sin git → ficheros de las fases del timeline.
           if (!existsSync(changeDir)) return json(404, { ok: false, error: 'change inexistente' }); // slug válido pero sin run → no materializar nada
@@ -7934,6 +8256,7 @@ const { initConfig } = __M['scaffold'];
 const { assertConfined } = __M['confine'];
 const { count } = __M['report'];
 const { plumbPath } = __M['plumb'];
+const { summarizeArtifact } = __M['estimate'];
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
 
 // walk de TEXTO acotado (para el evidence-gate de migración legacy): lee ficheros de código/datos, salta deps y
@@ -7990,8 +8313,18 @@ function makeReceipt(dir) {
     return renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') }) || null;
   } catch { return null; }
 }
-// artefactos de la pausa, RECORTADOS (token-first: el chat no necesita el fichero entero para decidir)
-const artClip = (dir, f, max = 1800) => { try { const t = readFileSync(join(dir, f), 'utf8'); return t.length > max ? t.slice(0, max) + `\n… [recortado — completo en ${f}]` : t; } catch { return null; } };
+// artefactos de la pausa, COMPACTADOS (token-first): por debajo del cap viajan enteros; por encima,
+// RESUMEN ESTRUCTURADO (cabeceras + ids + primeras líneas por sección — summarizeArtifact) en vez de una
+// tijera ciega a mitad de requisito. La spec conserva SIEMPRE todos sus <!-- id: REQ-* --> visibles.
+const artClip = (dir, f, max = 1800) => {
+  try {
+    const t = readFileSync(join(dir, f), 'utf8');
+    if (t.length <= max) return t;
+    const sum = summarizeArtifact(t);
+    const body = (sum && sum.length < t.length ? sum : t).slice(0, max);
+    return body + `\n… [compactado (${t.length} chars) — completo en ${f}]`;
+  } catch { return null; }
+};
 function pauseBundle(changeDir, pending) {
   const arts = {};
   const p1 = artClip(changeDir, 'proposal.md'); if (p1) arts['proposal.md'] = p1;
@@ -8059,8 +8392,20 @@ const TOOLS = {
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.
   conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', description: 'Create openspec/conductor.json (only if missing) and openspec/conductor.schema.json (editor autocomplete/validation) in the given openspec dir.', inputSchema: { type: 'object', properties: { openspecDir: { type: 'string', description: 'absolute path of the project openspec/ dir' } }, required: ['openspecDir'] } },
     run: ({ openspecDir }) => initConfig(openspecDir) },
-  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'HEADLESS/CI ONLY: runs the ENTIRE SDD pipeline in ONE blocking call (minutes — many chat hosts will kill it) with no review pauses. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' } }, required: ['request', 'projectRoot'] } },
-    run: async ({ request, projectRoot, changeName, complexity, domain }) => {
+  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'Runs the ENTIRE SDD pipeline with no review pauses. TWO modes: async:true = background JOB via the local app, returns immediately with {changeName, web} (poll with conductor_continue action:wait; conductor_receipt at the end) — use this from chat hosts. async absent/false = ONE blocking call (minutes — many chat hosts will kill it): CI/scripts only. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' }, async: { type: 'boolean', description: 'true = launch as a background JOB via the local app and return IMMEDIATELY with {changeName, web}; then poll with conductor_continue {action:"wait"} and fetch conductor_receipt at the end. false/absent = legacy blocking mode (CI/scripts only).' } }, required: ['request', 'projectRoot'] } },
+    run: async ({ request, projectRoot, changeName, complexity, domain, async: asJob }) => {
+      // ASYNC (T5): job vía app — el driver corre como hijo del server (guardarraíl 1-run/repo incluido);
+      // esta tool retorna al instante y el seguimiento lo hacen conductor_continue/receipt (ya existentes).
+      if (asJob === true) {
+        const rootA = resolve(projectRoot || process.cwd());
+        const app = await appUp(rootA);
+        if (!app) return { ok: false, error: 'la app local no arrancó — diagnostica con `conductor doctor`' };
+        const nameA = changeName ? slug(changeName) : featureName(request);
+        let lr = null, lj = null;
+        try { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name: nameA, project: rootA, auto: true, ...(complexity ? { complexity } : {}), ...(domain ? { domain } : {}) }) }); lj = await lr.json().catch(() => null); } catch (e) { return { ok: false, error: String(e.message) }; }
+        if (!lj?.ok) return { ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, busyProject: lj?.busyProject || undefined, needsInit: lj?.needsInit || undefined };
+        return { ok: true, changeName: nameA, web: app.url.replace(/\/$/, '') + lj.url, next: 'Job lanzado (sin pausas). Sondea con conductor_continue {projectRoot, changeName, action:"wait"} hasta status done, y pide conductor_receipt al final. NO lo relances.' };
+      }
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
       const name = changeName ? slug(changeName) : featureName(request);
@@ -8177,7 +8522,45 @@ function serve() {
   rl.on('line', (line) => { const s = line.trim(); if (!s) return; let m; try { m = JSON.parse(s); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); } handle(m).catch((e) => log('err', e.message)); });
 }
 
-return { pollRun, serve };
+return { pauseBundle, pollRun, serve };
+})();
+
+// ===== lib/sysops/upgrade.mjs =====
+__M['upgrade'] = (function(){
+// conductor/lib/sysops/upgrade.mjs — ACTUALIZACIÓN VERIFICADA (supply-chain): reinstala el paquete global
+// desde SU MISMO origen git y corre el selfcheck del motor NUEVO (versión + sha + firma si hay .sig/.pub).
+// Lógica PURA e inyectable (los tests jamás ejecutan npm real). La URL del origen sale de la instalación
+// LOCAL del usuario — nunca hardcodeada (confidencialidad: cada org tiene su remoto).
+
+// Origen de la instalación global actual según npm (`npm ls -g conductor --json --depth=0`):
+// dependencies.conductor.resolved = "git+<url>#<commit>". Devuelve {origin, version} o null (no instalado
+// por git / salida rara). El #<commit> se RECORTA: reinstalar debe seguir la RAMA/TAG del origen, no clavar
+// el commit viejo — para eso se guarda el origen SIN fragmento si el fragmento parece un sha.
+function resolveInstalledOrigin({ lsJson }) {
+  try {
+    const j = typeof lsJson === 'string' ? JSON.parse(lsJson) : lsJson;
+    const dep = j?.dependencies?.conductor;
+    if (!dep) return null;
+    const resolved = String(dep.resolved || '');
+    if (!resolved.startsWith('git+')) return null;
+    const [base, frag] = resolved.split('#');
+    // un fragmento hex largo = commit clavado por npm → se quita (seguir la rama por defecto del remoto);
+    // un fragmento corto no-hex (rama/tag) se CONSERVA (el usuario instaló una rama concreta)
+    const keepFrag = frag && !/^[0-9a-f]{20,}$/i.test(frag) ? `#${frag}` : '';
+    return { origin: base + keepFrag, version: dep.version || null };
+  } catch { return null; }
+}
+
+// Plan de actualización: argumentos npm + ruta del bundle NUEVO (para el selfcheck post-instalación).
+function upgradePlan({ origin, npmRoot }) {
+  if (!origin || !npmRoot) return null;
+  return {
+    installArgs: ['i', '-g', origin],
+    bundlePath: join(String(npmRoot).trim(), 'conductor', 'assets', 'conductor.mjs'),
+  };
+}
+
+return { resolveInstalledOrigin, upgradePlan };
 })();
 
 // ===== CLI =====
@@ -8227,6 +8610,8 @@ const L = __M['ledger'];
 const { lintMigrations } = __M['migration'];
 const { scoreCandidate } = __M['eval'];
 const { drive, readDriveConfig } = __M['drive'];
+const { runGolden, GOLDEN_SCENARIOS, promptsFingerprint, appendEvalResult } = __M['evals'];
+const { resolveInstalledOrigin, upgradePlan } = __M['upgrade'];
 const { createTtyPause } = __M['ttypause'];
 const { mergeMcpEntry } = __M['connect'];
 const { initConfig, CONFIG_SCHEMA } = __M['scaffold'];
@@ -8643,7 +9028,9 @@ switch (cmd) {
     const homeH = process.env.CONDUCTOR_USERHOME || homedir();
     const HOSTS_PROJ = [
       { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
-      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'commands', 'conductor.md'), rel: '.claude/commands/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      // Claude: SKILLS es el estándar recomendado (crea /conductor); OpenCode además DESCUBRE .claude/skills
+      // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
+      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md (skill estándar; OpenCode también la descubre)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
       { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
     ];
     let chosenH = HOSTS_PROJ.filter((h) => h.det);
@@ -8663,9 +9050,8 @@ switch (cmd) {
     if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
-  project.md → ${r.projectMd} (contexto del proyecto: RELLÉNALO, las fases de planificación lo leen)
-  config.yaml → ${r.ymlPath} (metadata detectada: stack, estructura, scripts)
-  conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, preset, gates)
+  project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
+  conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
   specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
@@ -8874,7 +9260,7 @@ switch (cmd) {
     try {
       const homeU2 = process.env.CONDUCTOR_USERHOME || homedir();
       const hosts = [];
-      if (existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
+      if (existsSync(join(homeU2, '.claude', 'skills', 'conductor', 'SKILL.md')) || existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
       if (existsSync(join(homeU2, '.config', 'opencode', 'command', 'conductor.md')) || existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
       try { if (readFileSync(join(homeU2, '.copilot', 'mcp-config.json'), 'utf8').includes('conductor')) hosts.push('Copilot CLI (MCP)'); } catch {}
       console.log(`  hosts conectados: ${hosts.length ? hosts.join(' · ') : 'ninguno → `conductor setup` los conecta (comando /conductor + MCP)'}`);
@@ -8990,6 +9376,32 @@ switch (cmd) {
     console.log(`\nconductor verify-file\n  fichero: ${file}\n  → ${ok ? 'FIRMA VÁLIDA (íntegro y auténtico)' : 'FIRMA INVÁLIDA (manipulado o clave incorrecta)'}\n`);
     process.exit(ok ? 0 : 1);
   }
+  case 'evals': {
+    // GOLDEN-SET del harness (Verification & CI): 12 escenarios deterministas, offline, 0 tokens. Cada
+    // gate e invariante con su EXPECTATIVA. El resultado se appendea a engine/eval/results.jsonl (repo)
+    // → pass-rate TRACKEADO en git; el eval-gate de la suite exige re-certificar si cambian los prompts.
+    const K = Math.max(1, Number(flag('--k')) || 2);
+    const tmpE = join(tmpdir(), `conductor-evals-${process.pid}`);
+    const t0e = Date.now();
+    const rows = await runGolden({ tmpRoot: tmpE, K });
+    try { rmSync(tmpE, { recursive: true, force: true }); } catch {}
+    const pass = rows.every((r) => r.ok);
+    // fingerprint de los prompts REALES junto al motor (repo: ../..; bundle npm: ..)
+    const cand = [join(dirname(resolve(process.argv[1])), '..', 'prompts'), join(dirname(resolve(process.argv[1])), '..', '..', 'prompts')];
+    const pDir = cand.find((d) => existsSync(d)) || null;
+    const promptsSha = pDir ? promptsFingerprint(pDir) : null;
+    const entry = { at: new Date().toISOString(), engineVersion: VERSION, promptsSha, k: K, pass, total: rows.length, ok: rows.filter((r) => r.ok).length, rows: rows.map((r) => ({ id: r.id, expect: r.expect, ok: r.ok, verdicts: r.verdicts, ...(r.why ? { why: r.why } : {}) })) };
+    const outF = flag('--out') || (existsSync(join(process.cwd(), 'engine', 'eval')) ? join(process.cwd(), 'engine', 'eval', 'results.jsonl') : null);
+    if (has('--json')) console.log(JSON.stringify(entry, null, 2));
+    else {
+      console.log(`\nconductor evals · golden-set del harness (offline, fake-agent, 0 tokens) · K=${K}\n`);
+      for (const r of rows) console.log(`  ${r.ok ? '✅' : '❌'} ${r.id.padEnd(22)} espera ${r.expect.padEnd(9)} → ${r.verdicts.join(',')}${r.why ? '  · ' + r.why : ''}`);
+      console.log(`\n  ${pass ? '✅ PASS' : '❌ FAIL'} ${entry.ok}/${entry.total} · ${Math.round((Date.now() - t0e) / 1000)}s · prompts ${promptsSha || '(no encontrados)'}`);
+    }
+    if (outF) { appendEvalResult(outF, entry); if (!has('--json')) console.log(`  historial → ${outF} (commitéalo: el eval-gate de la suite lo exige al cambiar prompts/)`); }
+    else if (!has('--json')) console.log('  (fuera del repo y sin --out: resultado no persistido)');
+    process.exit(pass ? 0 : 1);
+  }
   case 'eval': {
     // puntúa un cambio producido por el pipeline (calidad determinista): coherencia/artefactos (gate) + trazabilidad
     const dir = pos[0]; if (!dir || !existsSync(dir)) bad('eval <changeDir> --src <dir> [--json]');
@@ -9037,6 +9449,32 @@ switch (cmd) {
     else console.log(`✓ conductor v${VERSION} en marcha · (para pararlo: conductor stop)`);
     console.log(`🌐 conductor: ${url}`);
     break;
+  }
+  case 'upgrade': {
+    // ACTUALIZACIÓN VERIFICADA (supply-chain): reinstala del MISMO origen git de tu instalación y corre el
+    // selfcheck del motor NUEVO. La URL jamás va hardcodeada: sale de `npm ls -g` o de --from.
+    if (!/node_modules[\\/]/i.test(resolve(process.argv[1])) && !flag('--from')) {
+      console.error('⚠ esto es el checkout de desarrollo — actualízalo con git. Para probar el flujo: conductor upgrade --from "git+<url>#<rama>"');
+      process.exit(2);
+    }
+    let origin = flag('--from') || null;
+    if (!origin) {
+      let lsOut = '';
+      try { lsOut = execSync('npm ls -g conductor --json --depth=0', { encoding: 'utf8', windowsHide: true, timeout: 30000 }); } catch (e) { lsOut = String(e?.stdout || ''); }
+      origin = resolveInstalledOrigin({ lsJson: lsOut })?.origin || null;
+    }
+    if (!origin) { console.error('sin origen de instalación detectable (¿instalado desde registry?). Usa: conductor upgrade --from "git+<url>#<rama>"'); process.exit(2); }
+    console.log(`▶ conductor upgrade · v${VERSION} → reinstalando desde ${origin}`);
+    try { execSync(`npm i -g "${origin}"`, { stdio: 'inherit', windowsHide: true }); } catch { console.error('✗ npm i -g falló — revisa la salida de npm'); process.exit(1); }
+    let npmRoot = '';
+    try { npmRoot = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 30000 }); } catch {}
+    const plan = upgradePlan({ origin, npmRoot });
+    if (!plan || !existsSync(plan.bundlePath)) { console.error('✗ no encuentro el motor recién instalado para verificarlo'); process.exit(1); }
+    // selfcheck del motor NUEVO (versión+sha; con --pub verifica también la firma del bundle)
+    const extra = flag('--pub') ? ['--pub', flag('--pub')] : [];
+    try { execFileSync(process.execPath, [plan.bundlePath, 'selfcheck', ...extra], { stdio: 'inherit', windowsHide: true, timeout: 60000 }); } catch { console.error('✗ selfcheck del motor nuevo FALLÓ — no uses esa instalación'); process.exit(1); }
+    console.log('✅ actualizado y verificado.');
+    process.exit(0);
   }
   case 'setup': // el nombre que la gente espera tras `npm i -g` (patrón wizard de las referencias); install = alias
   case 'install': {
@@ -9106,7 +9544,7 @@ switch (cmd) {
     else if (selI !== 'n') { for (const h of hostsI) if (selI.includes(h.n)) chosen.add(h.key); }
     // Claude Code: comando global (~/.claude/commands) + MCP de usuario vía su CLI oficial si está en PATH
     if (chosen.has('claude')) {
-      try { mkdirSync(join(homeU, '.claude', 'commands'), { recursive: true }); writeFileSync(join(homeU, '.claude', 'commands', 'conductor.md'), CMD_MD); console.log('   ✓ Claude Code: comando /conductor instalado (global, todos tus repos)'); } catch (e) { console.log(`   ⚠ Claude Code: no pude escribir el comando (${e.message})`); }
+      try { mkdirSync(join(homeU, '.claude', 'skills', 'conductor'), { recursive: true }); writeFileSync(join(homeU, '.claude', 'skills', 'conductor', 'SKILL.md'), ['---', 'name: conductor', '---', CMD_MD].join('\n')); console.log('   ✓ Claude Code: skill /conductor instalada (global, estándar Agent Skills)'); } catch (e) { console.log(`   ⚠ Claude Code: no pude escribir la skill (${e.message})`); }
       try { execFileSync('claude', ['mcp', 'add', 'conductor', '-s', 'user', '--', 'conductor', 'mcp'], { stdio: 'pipe', timeout: 20000, windowsHide: true }); console.log('   ✓ Claude Code: servidor MCP registrado (usuario)'); }
       catch { console.log('   ⚠ Claude Code: registra el MCP tú (una vez): claude mcp add conductor -s user -- conductor mcp'); }
     }
@@ -9297,6 +9735,7 @@ function printStats(r, single) {
   console.log(`  RUNS     ${r.runs} total · ${r.green} GREEN · ${r.failed} fallido(s)${r.stopped ? ` · ${r.stopped} detenido(s)` : ''}${r.running ? ` · ${r.running} en curso` : ''}`);
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
+  if (st.estimator) console.log(`\n  ESTIMADOR   ${st.estimator.phases} fase(s) medidas en ${st.estimator.runs} run(s) · desviación total ${st.estimator.dev_pct > 0 ? '+' : ''}${st.estimator.dev_pct}% · error medio por fase (MAPE) ${st.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
     const label = p.provider === 'byok' ? 'LiteLLM (BYOK · tu proxy)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;
@@ -9327,4 +9766,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 0edc485bbf46f2a3df2070f88a4b81047fea8e16473b318f5bfd5fbbfb7bd06b
+// build-inputs-sha256: df51bdc2d475704f7aa6f090de628ebfa093b2a2ee5df3103f3542c2154e023c

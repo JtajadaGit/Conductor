@@ -1,9 +1,8 @@
 // conductor/lib/scaffold.mjs — genera la config de usuario (openspec/conductor.json) + su JSON Schema
 // (autocompletado/validación en el editor — developer power). Lo invoca el CLI (`conductor init-config`)
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
-import { writeFileSync, mkdirSync, existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
-import { detectStack } from './stack.mjs';
 
 export const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
@@ -23,6 +22,11 @@ export const CONFIG_SCHEMA = {
         reviewer: { type: 'string', examples: ['litellm:deepseek-v4-flash'] },
       },
       additionalProperties: { type: 'string' },
+    },
+    rules: {
+      type: 'object',
+      description: 'Reglas del EQUIPO inyectadas al prompt de una fase (gobierno DECLARATIVO: cambia cómo trabaja una fase sin forkear el motor). Clave = fase conocida o "all"; valor = lista de instrucciones en lenguaje natural. Ej: {"spec":["Un requisito por comportamiento observable; no escribas escenarios para la AUSENCIA de una regla"],"apply":["Componentes standalone; signals para estado local"]}. Tope 10 reglas/fase y 240 chars/regla (token-first). SOLO TEXTO: una regla JAMÁS ejecuta nada — los comandos viven en "checks", que exigen consentimiento explícito por-run (anti-RCE).',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
     },
     pipeline: {
       type: 'array',
@@ -59,6 +63,7 @@ export const CONFIG_SCHEMA = {
     strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
+    fallback: { type: 'object', additionalProperties: { type: 'string' }, description: 'OPT-IN. Modelo de RESERVA por rol (planner/coder/reviewer) o por FASE (la fase gana). Tras agotar maxRetries con fallo NO atribuible al contenido (timeout/proveedor/crash/no-progreso), UN único intento extra con este modelo. Queda registrado honesto en timeline y AI Act. Ej: {"coder":"copilot:claude-sonnet-4.5"}.' },
     byokFallback: { type: 'boolean', default: false, description: 'true = si se pide byok: sin credenciales, permite caer al catálogo Business (gasta créditos). Por defecto se BLOQUEA.' },
     rawCapture: { type: 'boolean', default: true, description: 'Guardar la salida CRUDA del modelo por fase en .conductor/raw/ (scrubbeada, tope 40k). false la desactiva. Siempre fue leída en runtime; ahora está declarada.' },
     preconditions: {
@@ -126,13 +131,14 @@ export const CONFIG_SCHEMA = {
 // queda como opt-in explícito (--serve / CONDUCTOR_SERVE=1), no como default que el scaffold reactiva.
 // init v2: SIN $schema — el fichero de schema ya no se escribe en el repo del usuario (apuntarlo sería
 // un enlace roto). La validación real es del motor (doctor); el autocompletado, opción del editor.
+// El fichero que nace en el repo del usuario es la SUPERFICIE de la herramienta: cada línea se paga en
+// code review. Nace con las 3 claves que un equipo toca de verdad — models (la escribe el 💾 del panel),
+// rules (gobierno por fase) y autoApprove. La documentación de los ~40 knobs es CONFIG_SCHEMA (motor,
+// `conductor doctor`, panel), NO un _ayuda de 300 chars dentro del JSON del usuario.
+// (_ayuda/_ejemplos siguen ACEPTADOS por el schema: los repos que ya los tienen no dejan de validar.)
 const DEFAULT_CONFIG = {
-  _ayuda: 'Gobierno del EQUIPO (committeable). NO necesitas rellenar nada: todo tiene default. models = tu mezcla por rol/fase (la escribe el botón 💾 del panel, o tú a mano — ver _ejemplos); preset = quick-fix|visual|feature|migration; el resto de knobs en la doc. Las claves que empiezan por _ se ignoran.',
-  _ejemplos: {
-    models: { planner: 'litellm:tu-modelo-barato', coder: 'copilot:claude-sonnet-4.5', spec: 'copilot:gpt-4.1' },
-    preset: 'feature',
-  },
   models: {},
+  rules: {},
   autoApprove: false,
 };
 
@@ -145,51 +151,25 @@ const COPILOTIGNORE = [
   'openspec/changes/**/.conductor/',
 ].join('\n') + '\n';
 
-// REFRESCO al arrancar la app (decisión de producto 2026-07-29): config.yaml es espejo DETECTADO y
-// machine-owned — se regenera entero con fecha; si el humano quiere contexto editable, eso es project.md.
-// una sola fuente del yaml (init y refresh): machine-owned, con fecha de detección
-function buildMetaYaml(root, stk, dirs, scripts) {
-  // entrecomillado JSON en valores con ": " embebido — sin comillas romperían parsers YAML conformes
-  return [
-    '# conductor — metadata DETECTADA del proyecto (machine-owned: la app la refresca al arrancar).',
-    '# Espejo de lo que el motor VE. El contexto EDITABLE (propósito, convenciones) vive en openspec/project.md.',
-    `name: ${basename(root) || 'proyecto'}`,
-    `detected: ${JSON.stringify(new Date().toISOString().slice(0, 10))}`,
-    'stack:',
-    `  summary: ${JSON.stringify(stk.summary || 'desconocido')}`,
-    stk.languages?.length ? `  languages: [${stk.languages.join(', ')}]` : '  # languages: []',
-    stk.frameworks?.length ? `  frameworks: [${stk.frameworks.join(', ')}]` : '  # frameworks: []',
-    stk.entrypoints?.length ? `  entrypoints: [${stk.entrypoints.map((e) => JSON.stringify(e)).join(', ')}]` : '  # entrypoints: []',
-    stk.testCmd ? `test: ${JSON.stringify(stk.testCmd)}` : '# test: <comando de pruebas del proyecto>',
-    dirs.length ? 'structure:' : '# structure: (sin dirs de primer nivel detectables)',
-    ...dirs.map((d) => `  - ${JSON.stringify(d)}`),
-    Object.keys(scripts).length ? 'scripts:' : '# scripts: (sin package.json o sin scripts)',
-    ...Object.entries(scripts).slice(0, 12).map(([k, v]) => `  ${k}: ${JSON.stringify(String(v).slice(0, 120))}`),
-    '',
-  ].join('\n');
-}
+// openspec/config.yaml YA NO SE GENERA (2026-07-30). Era un ESPEJO de lo detectado que se reescribía en
+// cada arranque y que NADIE parseaba (su único consumidor era un existsSync de isSdd) — 20 líneas de diff
+// diario en el repo del usuario a cambio de cero información. Un dato derivado no se versiona: se
+// recalcula (detectStack en cada run) y se enseña en el panel. Los repos que ya lo tienen lo conservan y
+// isSdd() lo sigue reconociendo: cero regresión, simplemente deja de nacer y de refrescarse.
 
-export function refreshProjectMeta(root) {
+// .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
+// MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
+// commiteada en el repo del usuario. Append IDEMPOTENTE: jamás reescribe el .gitignore existente.
+const GITIGNORE_LINE = 'openspec/changes/**/.conductor/';
+function ensureGitignore(root) {
+  const p = join(root, '.gitignore');
   try {
-    const ymlPath = join(root, 'openspec', 'config.yaml');
-    if (!existsSync(ymlPath)) return false;
-    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch {}
-    const dirs = topDirs(root);
-    const scripts = pkgScripts(root);
-    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts));
+    const prev = existsSync(p) ? readFileSync(p, 'utf8') : '';
+    if (prev.split(/\r?\n/).some((l) => l.trim() === GITIGNORE_LINE)) return false;
+    const sep = prev === '' ? '' : (prev.endsWith('\n') ? '\n' : '\n\n');
+    writeFileSync(p, `${prev}${sep}# conductor — fontanería del run (estado de máquina, no del repo)\n${GITIGNORE_LINE}\n`);
     return true;
   } catch { return false; }
-}
-
-// dirs de primer nivel con señal (para structure: de config.yaml) — sin recursión, sin ejecutar nada
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'openspec']);
-function topDirs(root) {
-  try {
-    return readdirSync(root).filter((d) => { try { return !d.startsWith('.') && !SKIP_DIRS.has(d) && statSync(join(root, d)).isDirectory(); } catch { return false; } }).slice(0, 12);
-  } catch { return []; }
-}
-function pkgScripts(root) {
-  try { return JSON.parse(String(readFileSync(join(root, 'package.json')))).scripts || {}; } catch { return {}; }
 }
 
 // escribe conductor.json (solo si no existe — nunca pisa la config del usuario)
@@ -208,48 +188,37 @@ export function initConfig(openspecDir) {
   if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
   const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');
   if (!existsSync(keep)) writeFileSync(keep, '');
-  // config.yaml: metadata OpenSpec del proyecto (stack DETECTADO por el motor). Init ATÓMICO y COMPLETO (#6): un
-  // fresh-init deja conductor.json (config EJECUTABLE) Y config.yaml (metadata) → "inicializado" deja de ser ambiguo
-  // (antes una ruta creaba uno y otra el otro). Determinista, sin LLM. Idempotente: nunca pisa el del usuario.
-  const ymlPath = join(openspecDir, 'config.yaml');
-  let metadata = false;
-  if (!existsSync(ymlPath)) {
-    let stk = { summary: '', testCmd: null }; try { stk = detectStack(root); } catch { /* sin stack detectable */ }
-    const dirs = topDirs(root);
-    const scripts = pkgScripts(root);
-    writeFileSync(ymlPath, buildMetaYaml(root, stk, dirs, scripts)); metadata = true;
-    // project.md: el CONTEXTO del estándar para humanos y agentes (lo que en v1 escribía la skill con LLM,
-    // ahora nace determinista y editable; las fases de planificación lo leen si existe)
-    const pmPath = join(openspecDir, 'project.md');
-    if (!existsSync(pmPath)) {
-      writeFileSync(pmPath, [
-        `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
-        '',
-        '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
-        '',
-        '## Propósito',
-        '(1-3 líneas: qué hace este producto y para quién)',
-        '',
-        '## Stack (detectado)',
-        `- ${stk.summary || 'desconocido'}`,
-        stk.entrypoints?.length ? `- entrypoints: ${stk.entrypoints.join(', ')}` : '',
-        stk.testCmd ? `- tests: \`${stk.testCmd}\`` : '',
-        '',
-        '## Estructura',
-        ...(dirs.length ? dirs.map((d) => `- \`${d}/\``) : ['(añade aquí un mapa breve de carpetas)']),
-        '',
-        '## Convenciones',
-        '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
-        '',
-        '## Decisiones vivas',
-        '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
-        '',
-      ].filter((l) => l !== '').join('\n') + '\n');
-    }
+  // project.md: el CONTEXTO del estándar para humanos y agentes. SIN stack ni estructura: eso es DERIVADO y
+  // aquí se escribía UNA sola vez (nada lo refrescaba nunca) mientras drive.mjs lo inyecta al planner con
+  // "honor it" — o sea, la única fuente de contexto PODRIDO que llegaba al prompt. El stack se detecta en
+  // cada run y se enseña en el panel. Aquí queda solo lo que un humano sabe y una máquina no puede deducir.
+  // (Antes colgaba del `if (!existsSync(config.yaml))`: un repo con yaml pero sin project.md no lo recibía
+  //  jamás. Ahora es independiente e idempotente.)
+  const pmPath = join(openspecDir, 'project.md');
+  let projectMdCreated = false;
+  if (!existsSync(pmPath)) {
+    writeFileSync(pmPath, [
+      `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
+      '',
+      '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
+      '> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.',
+      '',
+      '## Propósito',
+      '(1-3 líneas: qué hace este producto y para quién)',
+      '',
+      '## Convenciones',
+      '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
+      '',
+      '## Decisiones vivas',
+      '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
+      '',
+    ].join('\n') + '\n');
+    projectMdCreated = true;
   }
-  // .copilotignore al root del proyecto (token-first determinista)
+  // .copilotignore al root del proyecto (token-first determinista) + .gitignore (la fontanería fuera del repo)
   const ignorePath = join(root, '.copilotignore');
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
-  return { cfgPath, created, ymlPath, metadata, projectMd: join(openspecDir, 'project.md'), ignorePath, copilotignore };
+  const gitignore = ensureGitignore(root);
+  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore };
 }

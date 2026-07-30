@@ -45,6 +45,8 @@ import * as L from '../lib/provenance/ledger.mjs';
 import { lintMigrations } from '../lib/contract/migration.mjs';
 import { scoreCandidate } from '../lib/gates/eval.mjs';
 import { drive, readDriveConfig } from '../lib/pipeline/drive.mjs';
+import { runGolden, GOLDEN_SCENARIOS, promptsFingerprint, appendEvalResult } from '../lib/pipeline/evals.mjs';
+import { resolveInstalledOrigin, upgradePlan } from '../lib/sysops/upgrade.mjs';
 import { createTtyPause } from '../lib/pipeline/ttypause.mjs';
 import { mergeMcpEntry } from '../lib/sysops/connect.mjs';
 import { initConfig, CONFIG_SCHEMA } from '../lib/analysis/scaffold.mjs';
@@ -54,7 +56,7 @@ import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, lo
 import { aggregateStats } from '../lib/core/stats.mjs';
 import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate } from '../lib/provenance/secret.mjs';
 import { PROMPT_KEYS, instructionFor } from '../lib/pipeline/orchestrate.mjs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } from '../lib/gates/policy.mjs';
 import { toOtlp } from '../lib/sysops/otlp.mjs';
 
@@ -463,7 +465,9 @@ switch (cmd) {
     const homeH = process.env.CONDUCTOR_USERHOME || homedir();
     const HOSTS_PROJ = [
       { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
-      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'commands', 'conductor.md'), rel: '.claude/commands/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      // Claude: SKILLS es el estándar recomendado (crea /conductor); OpenCode además DESCUBRE .claude/skills
+      // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
+      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md (skill estándar; OpenCode también la descubre)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
       { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
     ];
     let chosenH = HOSTS_PROJ.filter((h) => h.det);
@@ -483,9 +487,8 @@ switch (cmd) {
     if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
-  project.md → ${r.projectMd} (contexto del proyecto: RELLÉNALO, las fases de planificación lo leen)
-  config.yaml → ${r.ymlPath} (metadata detectada: stack, estructura, scripts)
-  conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, preset, gates)
+  project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
+  conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
   specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
@@ -694,7 +697,7 @@ switch (cmd) {
     try {
       const homeU2 = process.env.CONDUCTOR_USERHOME || homedir();
       const hosts = [];
-      if (existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
+      if (existsSync(join(homeU2, '.claude', 'skills', 'conductor', 'SKILL.md')) || existsSync(join(homeU2, '.claude', 'commands', 'conductor.md'))) hosts.push('Claude Code (/conductor global)');
       if (existsSync(join(homeU2, '.config', 'opencode', 'command', 'conductor.md')) || existsSync(join(homeU2, '.config', 'opencode', 'commands', 'conductor.md'))) hosts.push('OpenCode (/conductor global)');
       try { if (readFileSync(join(homeU2, '.copilot', 'mcp-config.json'), 'utf8').includes('conductor')) hosts.push('Copilot CLI (MCP)'); } catch {}
       console.log(`  hosts conectados: ${hosts.length ? hosts.join(' · ') : 'ninguno → `conductor setup` los conecta (comando /conductor + MCP)'}`);
@@ -810,6 +813,32 @@ switch (cmd) {
     console.log(`\nconductor verify-file\n  fichero: ${file}\n  → ${ok ? 'FIRMA VÁLIDA (íntegro y auténtico)' : 'FIRMA INVÁLIDA (manipulado o clave incorrecta)'}\n`);
     process.exit(ok ? 0 : 1);
   }
+  case 'evals': {
+    // GOLDEN-SET del harness (Verification & CI): 12 escenarios deterministas, offline, 0 tokens. Cada
+    // gate e invariante con su EXPECTATIVA. El resultado se appendea a engine/eval/results.jsonl (repo)
+    // → pass-rate TRACKEADO en git; el eval-gate de la suite exige re-certificar si cambian los prompts.
+    const K = Math.max(1, Number(flag('--k')) || 2);
+    const tmpE = join(tmpdir(), `conductor-evals-${process.pid}`);
+    const t0e = Date.now();
+    const rows = await runGolden({ tmpRoot: tmpE, K });
+    try { rmSync(tmpE, { recursive: true, force: true }); } catch {}
+    const pass = rows.every((r) => r.ok);
+    // fingerprint de los prompts REALES junto al motor (repo: ../..; bundle npm: ..)
+    const cand = [join(dirname(resolve(process.argv[1])), '..', 'prompts'), join(dirname(resolve(process.argv[1])), '..', '..', 'prompts')];
+    const pDir = cand.find((d) => existsSync(d)) || null;
+    const promptsSha = pDir ? promptsFingerprint(pDir) : null;
+    const entry = { at: new Date().toISOString(), engineVersion: VERSION, promptsSha, k: K, pass, total: rows.length, ok: rows.filter((r) => r.ok).length, rows: rows.map((r) => ({ id: r.id, expect: r.expect, ok: r.ok, verdicts: r.verdicts, ...(r.why ? { why: r.why } : {}) })) };
+    const outF = flag('--out') || (existsSync(join(process.cwd(), 'engine', 'eval')) ? join(process.cwd(), 'engine', 'eval', 'results.jsonl') : null);
+    if (has('--json')) console.log(JSON.stringify(entry, null, 2));
+    else {
+      console.log(`\nconductor evals · golden-set del harness (offline, fake-agent, 0 tokens) · K=${K}\n`);
+      for (const r of rows) console.log(`  ${r.ok ? '✅' : '❌'} ${r.id.padEnd(22)} espera ${r.expect.padEnd(9)} → ${r.verdicts.join(',')}${r.why ? '  · ' + r.why : ''}`);
+      console.log(`\n  ${pass ? '✅ PASS' : '❌ FAIL'} ${entry.ok}/${entry.total} · ${Math.round((Date.now() - t0e) / 1000)}s · prompts ${promptsSha || '(no encontrados)'}`);
+    }
+    if (outF) { appendEvalResult(outF, entry); if (!has('--json')) console.log(`  historial → ${outF} (commitéalo: el eval-gate de la suite lo exige al cambiar prompts/)`); }
+    else if (!has('--json')) console.log('  (fuera del repo y sin --out: resultado no persistido)');
+    process.exit(pass ? 0 : 1);
+  }
   case 'eval': {
     // puntúa un cambio producido por el pipeline (calidad determinista): coherencia/artefactos (gate) + trazabilidad
     const dir = pos[0]; if (!dir || !existsSync(dir)) bad('eval <changeDir> --src <dir> [--json]');
@@ -857,6 +886,32 @@ switch (cmd) {
     else console.log(`✓ conductor v${VERSION} en marcha · (para pararlo: conductor stop)`);
     console.log(`🌐 conductor: ${url}`);
     break;
+  }
+  case 'upgrade': {
+    // ACTUALIZACIÓN VERIFICADA (supply-chain): reinstala del MISMO origen git de tu instalación y corre el
+    // selfcheck del motor NUEVO. La URL jamás va hardcodeada: sale de `npm ls -g` o de --from.
+    if (!/node_modules[\\/]/i.test(resolve(process.argv[1])) && !flag('--from')) {
+      console.error('⚠ esto es el checkout de desarrollo — actualízalo con git. Para probar el flujo: conductor upgrade --from "git+<url>#<rama>"');
+      process.exit(2);
+    }
+    let origin = flag('--from') || null;
+    if (!origin) {
+      let lsOut = '';
+      try { lsOut = execSync('npm ls -g conductor --json --depth=0', { encoding: 'utf8', windowsHide: true, timeout: 30000 }); } catch (e) { lsOut = String(e?.stdout || ''); }
+      origin = resolveInstalledOrigin({ lsJson: lsOut })?.origin || null;
+    }
+    if (!origin) { console.error('sin origen de instalación detectable (¿instalado desde registry?). Usa: conductor upgrade --from "git+<url>#<rama>"'); process.exit(2); }
+    console.log(`▶ conductor upgrade · v${VERSION} → reinstalando desde ${origin}`);
+    try { execSync(`npm i -g "${origin}"`, { stdio: 'inherit', windowsHide: true }); } catch { console.error('✗ npm i -g falló — revisa la salida de npm'); process.exit(1); }
+    let npmRoot = '';
+    try { npmRoot = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 30000 }); } catch {}
+    const plan = upgradePlan({ origin, npmRoot });
+    if (!plan || !existsSync(plan.bundlePath)) { console.error('✗ no encuentro el motor recién instalado para verificarlo'); process.exit(1); }
+    // selfcheck del motor NUEVO (versión+sha; con --pub verifica también la firma del bundle)
+    const extra = flag('--pub') ? ['--pub', flag('--pub')] : [];
+    try { execFileSync(process.execPath, [plan.bundlePath, 'selfcheck', ...extra], { stdio: 'inherit', windowsHide: true, timeout: 60000 }); } catch { console.error('✗ selfcheck del motor nuevo FALLÓ — no uses esa instalación'); process.exit(1); }
+    console.log('✅ actualizado y verificado.');
+    process.exit(0);
   }
   case 'setup': // el nombre que la gente espera tras `npm i -g` (patrón wizard de las referencias); install = alias
   case 'install': {
@@ -926,7 +981,7 @@ switch (cmd) {
     else if (selI !== 'n') { for (const h of hostsI) if (selI.includes(h.n)) chosen.add(h.key); }
     // Claude Code: comando global (~/.claude/commands) + MCP de usuario vía su CLI oficial si está en PATH
     if (chosen.has('claude')) {
-      try { mkdirSync(join(homeU, '.claude', 'commands'), { recursive: true }); writeFileSync(join(homeU, '.claude', 'commands', 'conductor.md'), CMD_MD); console.log('   ✓ Claude Code: comando /conductor instalado (global, todos tus repos)'); } catch (e) { console.log(`   ⚠ Claude Code: no pude escribir el comando (${e.message})`); }
+      try { mkdirSync(join(homeU, '.claude', 'skills', 'conductor'), { recursive: true }); writeFileSync(join(homeU, '.claude', 'skills', 'conductor', 'SKILL.md'), ['---', 'name: conductor', '---', CMD_MD].join('\n')); console.log('   ✓ Claude Code: skill /conductor instalada (global, estándar Agent Skills)'); } catch (e) { console.log(`   ⚠ Claude Code: no pude escribir la skill (${e.message})`); }
       try { execFileSync('claude', ['mcp', 'add', 'conductor', '-s', 'user', '--', 'conductor', 'mcp'], { stdio: 'pipe', timeout: 20000, windowsHide: true }); console.log('   ✓ Claude Code: servidor MCP registrado (usuario)'); }
       catch { console.log('   ⚠ Claude Code: registra el MCP tú (una vez): claude mcp add conductor -s user -- conductor mcp'); }
     }
@@ -1117,6 +1172,7 @@ function printStats(r, single) {
   console.log(`  RUNS     ${r.runs} total · ${r.green} GREEN · ${r.failed} fallido(s)${r.stopped ? ` · ${r.stopped} detenido(s)` : ''}${r.running ? ` · ${r.running} en curso` : ''}`);
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
+  if (st.estimator) console.log(`\n  ESTIMADOR   ${st.estimator.phases} fase(s) medidas en ${st.estimator.runs} run(s) · desviación total ${st.estimator.dev_pct > 0 ? '+' : ''}${st.estimator.dev_pct}% · error medio por fase (MAPE) ${st.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
     const label = p.provider === 'byok' ? 'LiteLLM (BYOK · tu proxy)' : p.provider === 'copilot' ? 'copilot (premium · AIC)' : p.provider;

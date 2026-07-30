@@ -615,8 +615,12 @@ await test('serve(#74): POST /api/init scaffold SDD nativo (conductor.json + .co
   const r = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   eq(r.ok, true); eq(r.created, true, 'crea conductor.json la 1ª vez');
   assert(existsSync(join(R, 'openspec', 'conductor.json')), 'conductor.json creado');
-  assert(existsSync(join(R, 'openspec', 'config.yaml')), 'config.yaml (metadata) creado — init ATÓMICO #6, no dos scaffolds');
+  // init ATÓMICO (#6): un fresh-init deja el proyecto COMPLETO de una vez. Lo que cambia (2026-07-30) es
+  // que "completo" ya no incluye config.yaml (espejo detectado que nadie parseaba) sino project.md.
+  assert(existsSync(join(R, 'openspec', 'project.md')), 'project.md creado — init ATÓMICO, no dos scaffolds');
+  assert(!existsSync(join(R, 'openspec', 'config.yaml')), 'SIN config.yaml (dato derivado: no se versiona)');
   assert(existsSync(join(R, '.copilotignore')), '.copilotignore creado en el root del proyecto');
+  assert(existsSync(join(R, '.gitignore')), '.gitignore creado (la fontanería del run fuera del repo)');
   const r2 = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   eq(r2.created, false, 'idempotente: no recrea conductor.json del usuario');
   await srv.close();

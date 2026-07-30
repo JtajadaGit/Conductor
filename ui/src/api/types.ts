@@ -25,6 +25,8 @@ export interface Phase {
   ok: boolean;
   lastError?: string | null;
   lenses?: string[];
+  /** T2: failover opt-in — la fase corrió con el modelo de RESERVA tras agotar reintentos */
+  fallback?: { from: string; to: string; afterKind: string } | null;
   resumed?: boolean;
   hasRaw?: boolean;
   context?: { instructions: string[]; contextFiles: string[] };
@@ -58,7 +60,11 @@ export interface Savings {
 export interface Usage { spend: number; budget: number; runDelta: number; }
 export interface GhUsage { plan: string; used: number; entitlement: number; percentUsed: number; reset: string; overage?: boolean; }
 
+export interface EstimateRow { phase: string; estIn: number; estOut: number }
+
 export interface RunState {
+  /** T3: preflight persistido — la UI compara est vs real por fase (null en runs antiguos) */
+  estimate?: { phases: EstimateRow[]; totalIn?: number; totalOut?: number } | null;
   project: string;
   branch: string | null;
   cost: Cost | null;

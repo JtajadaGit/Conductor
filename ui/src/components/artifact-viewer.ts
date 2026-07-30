@@ -3,7 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { loader } from '../lib/loader';
 
-export interface ViewDetail { apiBase: string; kind: 'art' | 'diff'; path: string; }
+export interface ViewDetail { apiBase: string; kind: 'art' | 'diff' | 'specdiff'; path: string; }
 
 /**
  * <artifact-viewer> — modal accesible (role=dialog, ESC cierra, foco restaurado al opener). Se monta una
@@ -23,7 +23,7 @@ export class ArtifactViewer extends CElement {
   @state() private pendingClose = false; // se intentó cerrar con cambios sin guardar → pide confirmar (no se pierde un edit)
   private apiBase = '/api/';
   private path = '';
-  private vkind: 'art' | 'diff' = 'art'; // 'diff' → render coloreado (verde/rojo) en vez de texto plano
+  private vkind: 'art' | 'diff' | 'specdiff' = 'art'; // diff/specdiff → render coloreado (verde/rojo)
   private opener: HTMLElement | null = null;
   private loadGen = 0; // token por apertura: una carga que termina TARDE (otra apertura ya en curso) no pisa el contenido actual
 
@@ -45,7 +45,7 @@ export class ArtifactViewer extends CElement {
     const d = (e as CustomEvent<ViewDetail>).detail;
     this.apiBase = d.apiBase; this.path = d.path; this.vkind = d.kind;
     this.editable = d.kind === 'art' && /\.md$/.test(d.path);
-    this.vbTitle = (d.kind === 'art' ? '📄 ' : '± ') + d.path;
+    this.vbTitle = d.kind === 'art' ? '📄 ' + d.path : d.kind === 'specdiff' ? `± spec vs viva (${d.path})` : '± ' + d.path;
     this.opener = (document.activeElement as HTMLElement) ?? null;
     this.open = true; this.editing = false; this.loading = true; this.content = ''; this.saveErr = ''; this.dirty = false; this.pendingClose = false;
     const gen = ++this.loadGen; // sella ESTA apertura: una carga anterior aún en vuelo quedará obsoleta
@@ -69,9 +69,9 @@ export class ArtifactViewer extends CElement {
     }
   };
 
-  private async load(kind: 'art' | 'diff', gen: number): Promise<void> {
+  private async load(kind: 'art' | 'diff' | 'specdiff', gen: number): Promise<void> {
     try {
-      const r = await fetch(this.apiBase + (kind === 'art' ? 'artifact?p=' : 'diff?p=') + encodeURIComponent(this.path));
+      const r = await fetch(this.apiBase + (kind === 'art' ? 'artifact?p=' : kind === 'specdiff' ? 'specdiff?d=' : 'diff?p=') + encodeURIComponent(this.path));
       const txt = (await r.text()) || '(vacío)';
       if (gen !== this.loadGen) return; // otra apertura ganó mientras esta cargaba → descartar (no pisar)
       this.content = txt;

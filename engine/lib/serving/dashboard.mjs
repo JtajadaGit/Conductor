@@ -40,6 +40,28 @@ export function renderReceipt({ name = '', timeline = null, spec = '', proposal 
   return L.join('\n');
 }
 
+// T3: desviación estimado-vs-real por fase (puro, testeable sin FS). Solo compara fases con tokens
+// REALES; la primera ocurrencia de cada fase (un retry no duplica la estimación). null = sin datos.
+export function estimateDeviation(estimate, phases) {
+  if (!estimate || !Array.isArray(estimate.phases) || !Array.isArray(phases)) return null;
+  const est = new Map(estimate.phases.map((p) => [p.phase, p]));
+  const seen = new Set();
+  const rows = [];
+  for (const p of phases) {
+    if (!p || seen.has(p.phase) || !p.tokens || !est.has(p.phase)) continue;
+    seen.add(p.phase);
+    const e = est.get(p.phase);
+    const realIn = Number(p.tokens.in) || 0, realOut = Number(p.tokens.out) || 0;
+    const estIn = Number(e.estIn) || 0, estOut = Number(e.estOut) || 0;
+    const dev = (estIn + estOut) > 0 ? Math.round((((realIn + realOut) / (estIn + estOut)) - 1) * 100) : null;
+    rows.push({ phase: p.phase, estIn, estOut, realIn, realOut, devPct: dev });
+  }
+  if (!rows.length) return null;
+  const tEst = rows.reduce((s, r) => s + r.estIn + r.estOut, 0);
+  const tReal = rows.reduce((s, r) => s + r.realIn + r.realOut, 0);
+  return { phases: rows, totalDevPct: tEst > 0 ? Math.round(((tReal / tEst) - 1) * 100) : null };
+}
+
 export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
   const c = count(gates);
   const tl = timeline && timeline.phases ? timeline.phases : (Array.isArray(timeline) ? timeline : null);
@@ -57,7 +79,9 @@ export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
     ? gates.map((f) => `<tr class="${['breaking', 'error'].includes(f.severity) ? 'gap' : ''}"><td><span class="pill ${['breaking', 'error'].includes(f.severity) ? 'bad' : 'neutral'}" style="text-transform:none">${esc(f.severity)}</span></td><td><code>${esc(f.rule)}</code></td><td>${esc(f.message)}</td><td style="color:var(--tx3)">${esc(f.file || f.pointer || '')}</td></tr>`).join('')
     : '<tr><td colspan=4 style="color:var(--ok)">✓ sin findings — el gate pasa limpio</td></tr>';
   const traceRows = trace ? trace.matrix.map((m) => `<tr class="${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><td><code>${esc(m.id)}</code></td><td>${esc(m.name)}</td><td>${tick(m.cov.task)}</td><td>${tick(m.cov.code)}</td><td>${tick(m.cov.test)}</td><td>${m.scenarios.length}</td></tr>`).join('') : '';
-  const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}${p.tokens.cached ? ` ↺${fmt(p.tokens.cached)}` : ''}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
+  const devInfo = estimateDeviation(timeline?.estimate, tl || []);
+  const devMap = new Map((devInfo?.phases || []).map((r) => [r.phase, r]));
+  const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}${p.tokens.cached ? ` ↺${fmt(p.tokens.cached)}` : ''}` : '—'}</td><td style="font-variant-numeric:tabular-nums;color:var(--tx3)">${devMap.has(p.phase) ? `~↓${fmt(devMap.get(p.phase).estIn)} ↑${fmt(devMap.get(p.phase).estOut)}${devMap.get(p.phase).devPct !== null ? ` (${devMap.get(p.phase).devPct > 0 ? '+' : ''}${devMap.get(p.phase).devPct}%)` : ''}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
 
   return `<!doctype html><html lang=es><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <script>(function(){try{var t=localStorage.getItem('conductorTheme');if(!t)t=matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.dataset.theme=t;}catch(e){}})()</script>
@@ -88,7 +112,7 @@ export function renderDashboard({ change, gates = [], trace, cost, timeline }) {
 <table><tr><th>severidad</th><th>regla</th><th>mensaje</th><th>ubicación</th></tr>${findRows}</table>
 ${trace ? `<h2 class=sect>Linaje spec → task → code → test <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué requisito cubre cada artefacto (rojo = hueco)</span></h2><table><tr><th>requisito</th><th>nombre</th><th>task</th><th>code</th><th>test</th><th>scn</th></tr>${traceRows}</table>` : ''}
 ${cost ? `<h2 class=sect>Coste por fase <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— tokens por fase y modelo (Copilot = AI Credits · LiteLLM = 0 AIC)</span></h2><table><tr><th>fase</th><th>calls</th><th>modelos</th><th>tokens in</th><th>tokens out</th></tr>${cost.phases.map((p) => `<tr><td>${esc(p.phase)}</td><td>${p.calls}</td><td><code>${esc(p.models.join(','))}</code></td><td>${fmt(p.in)}</td><td>${fmt(p.out)}</td></tr>`).join('')}</table>` : ''}
-${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— fase × modelo × duración × tokens</span></h2><table><tr><th>fase</th><th>rol</th><th>modelo</th><th>archivos</th><th>intentos</th><th>duración</th><th>tokens</th><th>ok</th></tr>${tlRows}</table>` : ''}
+${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— fase × modelo × duración × tokens</span></h2><table><tr><th>fase</th><th>rol</th><th>modelo</th><th>archivos</th><th>intentos</th><th>duración</th><th>tokens</th><th>est (preflight)</th><th>ok</th></tr>${tlRows}</table>` : ''}
 <footer>Generado por conductor — determinista, sin LLM. Evidencia para provenance de green-gate.</footer>
 </html>`;
 }

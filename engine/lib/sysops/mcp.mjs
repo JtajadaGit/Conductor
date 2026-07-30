@@ -20,6 +20,7 @@ import { initConfig } from '../analysis/scaffold.mjs';
 import { assertConfined } from './confine.mjs';
 import { count } from '../core/report.mjs';
 import { plumbPath } from '../core/plumb.mjs';
+import { summarizeArtifact } from '../core/estimate.mjs';
 
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
 
@@ -77,9 +78,19 @@ function makeReceipt(dir) {
     return renderReceipt({ name: resolve(dir).split(/[\\/]/).pop(), timeline: tl, spec: rd(`specs/${domain}/spec.md`), proposal: rd('proposal.md'), verify: rd('verify-report.md') }) || null;
   } catch { return null; }
 }
-// artefactos de la pausa, RECORTADOS (token-first: el chat no necesita el fichero entero para decidir)
-const artClip = (dir, f, max = 1800) => { try { const t = readFileSync(join(dir, f), 'utf8'); return t.length > max ? t.slice(0, max) + `\n… [recortado — completo en ${f}]` : t; } catch { return null; } };
-function pauseBundle(changeDir, pending) {
+// artefactos de la pausa, COMPACTADOS (token-first): por debajo del cap viajan enteros; por encima,
+// RESUMEN ESTRUCTURADO (cabeceras + ids + primeras líneas por sección — summarizeArtifact) en vez de una
+// tijera ciega a mitad de requisito. La spec conserva SIEMPRE todos sus <!-- id: REQ-* --> visibles.
+const artClip = (dir, f, max = 1800) => {
+  try {
+    const t = readFileSync(join(dir, f), 'utf8');
+    if (t.length <= max) return t;
+    const sum = summarizeArtifact(t);
+    const body = (sum && sum.length < t.length ? sum : t).slice(0, max);
+    return body + `\n… [compactado (${t.length} chars) — completo en ${f}]`;
+  } catch { return null; }
+};
+export function pauseBundle(changeDir, pending) {
   const arts = {};
   const p1 = artClip(changeDir, 'proposal.md'); if (p1) arts['proposal.md'] = p1;
   try { for (const d of readdirSync(join(changeDir, 'specs'))) { const s = artClip(changeDir, join('specs', d, 'spec.md')); if (s) { arts[`specs/${d}/spec.md`] = s; break; } } } catch {}
@@ -146,8 +157,20 @@ const TOOLS = {
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.
   conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', description: 'Create openspec/conductor.json (only if missing) and openspec/conductor.schema.json (editor autocomplete/validation) in the given openspec dir.', inputSchema: { type: 'object', properties: { openspecDir: { type: 'string', description: 'absolute path of the project openspec/ dir' } }, required: ['openspecDir'] } },
     run: ({ openspecDir }) => initConfig(openspecDir) },
-  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'HEADLESS/CI ONLY: runs the ENTIRE SDD pipeline in ONE blocking call (minutes — many chat hosts will kill it) with no review pauses. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' } }, required: ['request', 'projectRoot'] } },
-    run: async ({ request, projectRoot, changeName, complexity, domain }) => {
+  conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'Runs the ENTIRE SDD pipeline with no review pauses. TWO modes: async:true = background JOB via the local app, returns immediately with {changeName, web} (poll with conductor_continue action:wait; conductor_receipt at the end) — use this from chat hosts. async absent/false = ONE blocking call (minutes — many chat hosts will kill it): CI/scripts only. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' }, async: { type: 'boolean', description: 'true = launch as a background JOB via the local app and return IMMEDIATELY with {changeName, web}; then poll with conductor_continue {action:"wait"} and fetch conductor_receipt at the end. false/absent = legacy blocking mode (CI/scripts only).' } }, required: ['request', 'projectRoot'] } },
+    run: async ({ request, projectRoot, changeName, complexity, domain, async: asJob }) => {
+      // ASYNC (T5): job vía app — el driver corre como hijo del server (guardarraíl 1-run/repo incluido);
+      // esta tool retorna al instante y el seguimiento lo hacen conductor_continue/receipt (ya existentes).
+      if (asJob === true) {
+        const rootA = resolve(projectRoot || process.cwd());
+        const app = await appUp(rootA);
+        if (!app) return { ok: false, error: 'la app local no arrancó — diagnostica con `conductor doctor`' };
+        const nameA = changeName ? slug(changeName) : featureName(request);
+        let lr = null, lj = null;
+        try { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name: nameA, project: rootA, auto: true, ...(complexity ? { complexity } : {}), ...(domain ? { domain } : {}) }) }); lj = await lr.json().catch(() => null); } catch (e) { return { ok: false, error: String(e.message) }; }
+        if (!lj?.ok) return { ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, busyProject: lj?.busyProject || undefined, needsInit: lj?.needsInit || undefined };
+        return { ok: true, changeName: nameA, web: app.url.replace(/\/$/, '') + lj.url, next: 'Job lanzado (sin pausas). Sondea con conductor_continue {projectRoot, changeName, action:"wait"} hasta status done, y pide conductor_receipt al final. NO lo relances.' };
+      }
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
       const name = changeName ? slug(changeName) : featureName(request);
