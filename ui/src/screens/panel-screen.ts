@@ -402,8 +402,14 @@ export class PanelScreen extends CElement {
   }
 }</pre>
       <p class="inst-note"><code>models</code> = tu catálogo declarado: sale SIEMPRE en el selector (sin depender del proxy) y sus límites
-      viajan a cada fase. Al primer uso conductor <strong>sella</strong> el fichero: cifra la key (AES-256-GCM, Win/Mac/Linux) y la
-      versión en claro desaparece del disco. <strong>Nunca sale de tu máquina</strong>, no se registra ni se cachea.</p>`;
+      viajan a cada fase. La key se queda <strong>como tú la escribas</strong> (mismo hábito que tu opencode.json); si prefieres
+      cifrarla: <code>"seal": true</code> o <code>conductor litellm login</code>. <strong>Nunca sale de tu máquina</strong>, no se registra ni se cachea.</p>`;
+    // TU FICHERO, leído de verdad (bug real: con fichero rellenado el panel enseñaba el EJEMPLO genérico —
+    // parecía una lectura rota). Si hay modelos declarados, se listan con sus nombres; el ejemplo queda
+    // SOLO para quien aún no tiene fichero.
+    const declaredNote = (m?.byok ?? []).length ? html`<p class="inst-note">Leído de <code>~/.conductor/litellm.json</code> — tu catálogo declarado (${m!.byok.length}):
+      <strong>${m!.byok.map((id) => m?.names?.[id] ?? id).join(' · ')}</strong>. Sale en el selector aunque el proxy no conteste; sus límites viajan a cada fase.
+      Comprueba QUÉ key hay dentro con <code>conductor litellm status</code> (huella, sin imprimirla).</p>` : nothing;
     if (connected) {
       // CONECTADO = readout de instrumento: LED verde + pill "Conectado" + pares clave→valor.
       return html`
@@ -417,11 +423,11 @@ export class PanelScreen extends CElement {
           <div class="inst-body">
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
-              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · cifrada (AES-256-GCM)</dd></div>
+              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json (tu fichero, formato OpenCode compatible)</dd></div>
               <div class="ro-row"><dt>Privacidad</dt><dd>Nunca sale de tu máquina · no se registra</dd></div>
             </dl>
             <p class="inst-note">¿Key caducada o rotada? Escribe la nueva en <code>~/.conductor/litellm.json</code>
-              (campo <code>apiKey</code>; conductor la re-sella al primer uso) o ejecuta <code>conductor litellm login</code>.</p>
+              (campo <code>apiKey</code> — se queda tal cual) o ejecuta <code>conductor litellm login</code>. Verifica cuál hay dentro: <code>conductor litellm status</code>.</p>
           </div>
         </details>`;
     }
@@ -458,7 +464,7 @@ export class PanelScreen extends CElement {
           </summary>
           <div class="inst-body">
             <div class="inst-msg bad" role="status" aria-live="polite">${reason}</div>
-            ${fileHint}
+            ${(m?.byok ?? []).length ? declaredNote : fileHint}
           </div>
         </details>`;
     }

@@ -715,7 +715,7 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
-      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).';
+      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se queda como la escribas, formato OpenCode; "seal": true si prefieres cifrarla).';
       else if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
       else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}
@@ -726,7 +726,7 @@ async function _computeAvailableModels(registry) {
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
       // key RECHAZADA por el proxy (rotada/revocada): sin este motivo explícito, el dev veía "byok ✅" (la
       // key existe y descifra) y un catálogo "observados" mudo — indistinguible de un fallo de red. Caso real.
-      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y escríbela en ~/.conductor/litellm.json (campo "apiKey"; conductor la sella al primer uso) o ejecuta \`conductor litellm login\`.`;
+      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y escríbela en ~/.conductor/litellm.json (campo "apiKey" — se queda tal cual la escribas) o ejecuta \`conductor litellm login\`. Verifica cuál hay dentro con \`conductor litellm status\` (huella).`;
       if (r.ok) {
         const j = await r.json(); const ids = [];
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }

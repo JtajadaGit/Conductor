@@ -448,8 +448,8 @@ switch (cmd) {
         if (k) keyTx = ` · key …${k.slice(-4)} (huella ${createHash('sha256').update(k).digest('hex').slice(0, 6)})`;
       } catch {}
       if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
-      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
-        : (optOut ? 'EN CLARO por decisión tuya ("seal": false)' : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)');
+      const encTxt = enc ? (sealedNow ? 'con "seal": true → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
+        : 'en claro — tu fichero, tu formato (como OpenCode; añade "seal": true o usa `litellm login` si prefieres cifrarla)';
       console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + keyTx + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
     }
@@ -709,7 +709,7 @@ switch (cmd) {
       let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
       if (!jD) console.log('  credenciales LiteLLM: AUSENTES → `conductor setup` deja la plantilla en ~/.conductor/litellm.json (o `conductor litellm login`)');
       else if (isTemplateCreds(jD)) console.log(`  credenciales LiteLLM: PLANTILLA sin rellenar en ${fD} — ábrela y pega tu baseUrl y apiKey`);
-      else if (jD.apiKey) console.log(`  credenciales LiteLLM: EN CLARO en ${fD} — se sellarán (cifrado) al primer uso`);
+      else if (jD.apiKey) console.log(`  credenciales LiteLLM: en claro en ${fD} (formato OpenCode — válido; \"seal\": true si prefieres cifrarla)`);
       else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
       else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
     } catch { console.log('  credenciales LiteLLM: (no comprobable)'); }
@@ -974,7 +974,7 @@ switch (cmd) {
       console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
     } else {
       if (!existsSync(credF)) { mkdirSync(homeI, { recursive: true }); writeFileSync(credF, JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 }); }
-      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).\n     (alternativa con asistente: \`conductor litellm login\`)`);
+      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (se quedan tal cual los escribas, como en OpenCode).\n     (alternativa con asistente: \`conductor litellm login\` — esa vía sí cifra la key)`);
     }
     // 2/3 · CONECTAR conductor a tus CLIs — TÚ eliges (Enter = los detectados). En cada host se instala el
     // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
@@ -1136,7 +1136,7 @@ function printHelp() {
 
   PRIMERA VEZ (tras npm i -g)
     setup                                elige tus CLIs (Copilot/Claude/OpenCode) → /conductor en su chat
-    ~/.conductor/litellm.json            tus credenciales+modelos del proxy (o \`litellm login\`; se cifra sola)
+    ~/.conductor/litellm.json            tus credenciales+modelos del proxy, formato OpenCode (o \`litellm login\`)
 
   conductor help --all                   → la sala de máquinas completa (gates, sellos, ledger, CI…)`);
     process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);

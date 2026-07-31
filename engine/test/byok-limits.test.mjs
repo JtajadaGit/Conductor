@@ -23,14 +23,17 @@ await test('byok-limits: byokCreds devuelve maxOutput/maxPrompt del byok.json (e
   rmSync(home, { recursive: true, force: true });
 });
 
-await test('byok-seal: un byok.json escrito A MANO (key en claro, hábito-de-fichero) se SELLA al primer toque', () => {
+await test('byok-seal: la key EN CLARO se queda (paridad OpenCode, default 2026-07-31); "seal": true la SELLA', () => {
   const home = join(HERE, '.tmp-byok-seal');
   rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
   const prev = process.env.CONDUCTOR_HOME;
   process.env.CONDUCTOR_HOME = home;
   try {
     writeFileSync(join(home, 'byok.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'sk-a-mano', maxOutputTokens: 16384 }));
-    eq(sealByokFile(home), true, 'sella la primera vez');
+    eq(sealByokFile(home), false, 'DEFAULT: la key del dev NO se toca (como OpenCode)');
+    eq(JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8')).apiKey, 'sk-a-mano', 'sigue en claro, tal cual la escribio');
+    writeFileSync(join(home, 'byok.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'sk-a-mano', maxOutputTokens: 16384, seal: true }));
+    eq(sealByokFile(home), true, 'con "seal": true SI sella');
     // el sellado MIGRA el legado byok.json -> litellm.json (nombre user-facing) y no deja el claro atras
     assert(!existsSync(join(home, 'byok.json')), 'byok.json legado migrado (no queda atras con la key)');
     const j = JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8'));
@@ -45,14 +48,19 @@ await test('byok-seal: un byok.json escrito A MANO (key en claro, hábito-de-fic
   }
 });
 
-await test('byok-seal: `byok status` sella él mismo y lo ANUNCIA (el dev ve que su fichero quedó cifrado)', () => {
+await test('byok-seal: `byok status` respeta la key en claro (default), enseña la HUELLA, y con "seal": true sella y lo anuncia', () => {
   const home = join(HERE, '.tmp-byok-seal2');
   rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
   writeFileSync(join(home, 'byok.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'sk-status' }));
-  const out = execFileSync(process.execPath, [BIN, 'byok', 'status'], { encoding: 'utf8', env: { ...process.env, CONDUCTOR_HOME: home }, stdio: 'pipe', windowsHide: true, timeout: 30000 });
-  assert(out.includes('sellada AHORA'), 'status anuncia el sellado: ' + out.trim());
-  const j = JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8'));
-  assert(j.apiKeyEnc && !j.apiKey, 'el fichero quedó cifrado en disco');
+  const run = () => execFileSync(process.execPath, [BIN, 'byok', 'status'], { encoding: 'utf8', env: { ...process.env, CONDUCTOR_HOME: home }, stdio: 'pipe', windowsHide: true, timeout: 30000 });
+  const out = run();
+  assert(out.includes('en claro') && !out.includes('sellada AHORA'), 'default: en claro sin alarma ni sellado: ' + out.trim());
+  assert(out.includes('key …atus') && out.includes('huella '), 'la huella verificable sale siempre: ' + out.trim());
+  eq(JSON.parse(readFileSync(join(home, 'byok.json'), 'utf8')).apiKey, 'sk-status', 'el fichero NO se toco');
+  writeFileSync(join(home, 'byok.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'sk-status', seal: true }));
+  const out2 = run();
+  assert(out2.includes('sellada AHORA'), 'con "seal": true, status sella y lo anuncia: ' + out2.trim());
+  assert(JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8')).apiKeyEnc, 'y el fichero quedo cifrado');
   rmSync(home, { recursive: true, force: true });
 });
 

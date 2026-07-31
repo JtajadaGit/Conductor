@@ -27,7 +27,7 @@ app-sidebar {
 /* ── Marca (NO es un enlace: el Dashboard ya lleva a "/"). Identidad, no acción. ── */
 .sb-logo {
   display: flex; align-items: center; gap: .48rem; flex-shrink: 0;
-  font-weight: 700; font-size: .97rem; letter-spacing: -.01em;
+  font-family: var(--mono); font-weight: 700; font-size: .9rem; letter-spacing: -.01em;
   color: var(--tx); cursor: default; user-select: none;
   padding: .2rem 0 .7rem;
 }
@@ -93,7 +93,7 @@ app-sidebar {
 .sb-run .dot.G     { background: var(--tx3); }
 @keyframes dotPulse { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb,var(--warn) 50%,transparent); } 55% { box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 0%,transparent); } }
 .sb-run .dot.CURSO { background: var(--warn); animation: dotPulse 1.5s ease-out infinite; }
-.sb-run .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.sb-run .nm { font-family: var(--mono); font-size: .76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
 /* ── Estado vacío / footer de stats ── */
 .sb-empty { font-size: .71rem; color: var(--tx3); font-style: italic; padding: .04rem .45rem .18rem; }
@@ -125,7 +125,7 @@ main.content { max-width: 1040px; margin: 0 auto; width: 100%; padding: 2.2rem c
 .badge, .mod { font-size: .76rem; }
 .logpre, .rawpre { font-size: .8rem; }
 .run-l { padding: .85rem 1.1rem; }
-.run-row .nm { font-size: .98rem; }
+.run-row .nm { font-size: .9rem; }
 h1 { font-size: 1.55rem; }
 .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
 .muted { color: var(--tx2); }

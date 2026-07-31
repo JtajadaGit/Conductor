@@ -107,6 +107,7 @@ await test('litellm-compat: el bloque de proveedor de OpenCode PEGADO TAL CUAL f
   try {
     writeFileSync(join(home, 'litellm.json'), JSON.stringify({
       npm: '@ai-sdk/openai-compatible', name: 'LiteLLM',
+      seal: true, // el sellado es OPT-IN desde 2026-07-31 (paridad OpenCode); este test prueba el MECANISMO
       options: { baseURL: 'https://proxy.corp', apiKey: 'sk-real-abc', headerTimeout: 15000, chunkTimeout: 60000, timeout: 300000 },
       models: { 'glm-v52': { name: 'GLM 5.2', limit: { context: 250000, output: 16384 } } },
     }));
@@ -126,13 +127,15 @@ await test('litellm-compat: el bloque de proveedor de OpenCode PEGADO TAL CUAL f
   }
 });
 
-await test('litellm-seal-optout: "seal": false = key EN CLARO por decision informada del dev (paridad OpenCode) y usable', async () => {
+await test('litellm-seal: EN CLARO es el DEFAULT (paridad OpenCode) — sin "seal" ni con "seal": false se toca nada', async () => {
   const { sealByokFile } = await import('../lib/provenance/secret.mjs');
   const home = join(HERE, '.tmp-litellm-optout');
   rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
   try {
+    writeFileSync(join(home, 'litellm.json'), JSON.stringify({ baseUrl: 'https://proxy.corp/v1', apiKey: 'sk-clear-9999' }));
+    eq(sealByokFile(home), false, 'DEFAULT: no se sella');
     writeFileSync(join(home, 'litellm.json'), JSON.stringify({ baseUrl: 'https://proxy.corp/v1', apiKey: 'sk-clear-9999', seal: false }));
-    eq(sealByokFile(home), false, 'con opt-out NO se sella');
+    eq(sealByokFile(home), false, 'con "seal": false explicito, tampoco');
     const j = JSON.parse(readFileSync(join(home, 'litellm.json'), 'utf8'));
     eq(j.apiKey, 'sk-clear-9999', 'la key sigue en claro en SU fichero');
     assert(!j.apiKeyEnc, 'sin blob cifrado');

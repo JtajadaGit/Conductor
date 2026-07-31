@@ -228,7 +228,7 @@ function ensureByokTemplate(home) {
 }
 
 const LITELLM_TEMPLATE = {
-  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se CIFRA sola al primer uso (nunca queda en claro). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
+  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se queda COMO LA ESCRIBAS (formato OpenCode; añade "seal": true si prefieres que conductor la cifre). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
   baseUrl: 'https://TU-PROXY/v1',
   apiKey: 'sk-PEGA-AQUI-TU-KEY',
   models: {
@@ -276,9 +276,11 @@ function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
-    // opt-out EXPLÍCITO del dev ("seal": false — paridad con su config de OpenCode): la key se queda en
-    // claro y es SU decisión informada; `litellm status` lo refleja sin alarma. Por defecto SIEMPRE se sella.
-    if (j && typeof j === 'object' && j.seal === false) return false;
+    // PARIDAD OpenCode (decisión 2026-07-31, feedback real: "cifrar la key es una cagada" — su opencode.json
+    // guarda la key tal cual): el fichero es DEL DEV y la key se queda COMO ÉL la escriba. Sellar es
+    // OPT-IN: "seal": true aquí, o `conductor litellm login` (cifra porque el fichero lo escribe conductor).
+    // Los ficheros YA sellados (apiKeyEnc) siguen descifrando igual — nada se rompe.
+    if (!j || typeof j !== 'object' || j.seal !== true) return false;
     const plain = (j && typeof j === 'object') ? (j.apiKey || (j.options && typeof j.options === 'object' ? j.options.apiKey : null)) : null;
     if (!j || typeof j !== 'object' || !plain || j.apiKeyEnc) return false; // nada en claro que sellar
     if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
@@ -7485,7 +7487,7 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
-      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).';
+      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se queda como la escribas, formato OpenCode; "seal": true si prefieres cifrarla).';
       else if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
       else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}
@@ -7496,7 +7498,7 @@ async function _computeAvailableModels(registry) {
       const r = await fetch((base.endsWith('/v1') ? base : base + '/v1') + '/models', { headers: { authorization: `Bearer ${creds.apiKey}` }, signal: AbortSignal.timeout(5000) });
       // key RECHAZADA por el proxy (rotada/revocada): sin este motivo explícito, el dev veía "byok ✅" (la
       // key existe y descifra) y un catálogo "observados" mudo — indistinguible de un fallo de red. Caso real.
-      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y escríbela en ~/.conductor/litellm.json (campo "apiKey"; conductor la sella al primer uso) o ejecuta \`conductor litellm login\`.`;
+      if (r.status === 401 || r.status === 403) byokReason = `el proxy RECHAZÓ tu key (HTTP ${r.status}): rotada o revocada. Genera una nueva y escríbela en ~/.conductor/litellm.json (campo "apiKey" — se queda tal cual la escribas) o ejecuta \`conductor litellm login\`. Verifica cuál hay dentro con \`conductor litellm status\` (huella).`;
       if (r.ok) {
         const j = await r.json(); const ids = [];
         for (const m of j.data ?? []) if (m.id) { byok.add(m.id); liveByok.add(m.id); ids.push(m.id); }
@@ -9109,8 +9111,8 @@ switch (cmd) {
         if (k) keyTx = ` · key …${k.slice(-4)} (huella ${createHash('sha256').update(k).digest('hex').slice(0, 6)})`;
       } catch {}
       if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
-      const encTxt = enc ? (sealedNow ? 'estaba EN CLARO → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
-        : (optOut ? 'EN CLARO por decisión tuya ("seal": false)' : 'EN CLARO ⚠ (no se pudo cifrar — revisa ~/.conductor/.enckey)');
+      const encTxt = enc ? (sealedNow ? 'con "seal": true → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
+        : 'en claro — tu fichero, tu formato (como OpenCode; añade "seal": true o usa `litellm login` si prefieres cifrarla)';
       console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + keyTx + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
     }
@@ -9370,7 +9372,7 @@ switch (cmd) {
       let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
       if (!jD) console.log('  credenciales LiteLLM: AUSENTES → `conductor setup` deja la plantilla en ~/.conductor/litellm.json (o `conductor litellm login`)');
       else if (isTemplateCreds(jD)) console.log(`  credenciales LiteLLM: PLANTILLA sin rellenar en ${fD} — ábrela y pega tu baseUrl y apiKey`);
-      else if (jD.apiKey) console.log(`  credenciales LiteLLM: EN CLARO en ${fD} — se sellarán (cifrado) al primer uso`);
+      else if (jD.apiKey) console.log(`  credenciales LiteLLM: en claro en ${fD} (formato OpenCode — válido; \"seal\": true si prefieres cifrarla)`);
       else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
       else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
     } catch { console.log('  credenciales LiteLLM: (no comprobable)'); }
@@ -9635,7 +9637,7 @@ switch (cmd) {
       console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
     } else {
       if (!existsSync(credF)) { mkdirSync(homeI, { recursive: true }); writeFileSync(credF, JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 }); }
-      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (la key se cifra sola al primer uso).\n     (alternativa con asistente: \`conductor litellm login\`)`);
+      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (se quedan tal cual los escribas, como en OpenCode).\n     (alternativa con asistente: \`conductor litellm login\` — esa vía sí cifra la key)`);
     }
     // 2/3 · CONECTAR conductor a tus CLIs — TÚ eliges (Enter = los detectados). En cada host se instala el
     // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
@@ -9797,7 +9799,7 @@ function printHelp() {
 
   PRIMERA VEZ (tras npm i -g)
     setup                                elige tus CLIs (Copilot/Claude/OpenCode) → /conductor en su chat
-    ~/.conductor/litellm.json            tus credenciales+modelos del proxy (o \`litellm login\`; se cifra sola)
+    ~/.conductor/litellm.json            tus credenciales+modelos del proxy, formato OpenCode (o \`litellm login\`)
 
   conductor help --all                   → la sala de máquinas completa (gates, sellos, ledger, CI…)`);
     process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
@@ -9897,4 +9899,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 593aa0ece7f00f4a43f47b899b2d6edecb47eb9e6ae3fa4631e8613d5e45af66
+// build-inputs-sha256: d014fa949caab4478e86581cd6c998791c80bf91d110ec54547217c6076a4eca

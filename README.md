@@ -56,7 +56,7 @@ Abre `~/.conductor/litellm.json` — la plantilla te enseña el formato:
 
 - Los `models` que declares salen **siempre** en el selector, con su nombre y sus límites.
 - **También puedes pegar tu bloque de proveedor de OpenCode tal cual** (con `options.baseURL`, timeouts…) — conductor lo entiende.
-- Al primer uso la key **se cifra sola** (AES-256-GCM) y desaparece en claro del disco. Jamás viaja por HTTP ni la ve un modelo. Alternativa por terminal: `conductor litellm login`.
+- La key **se queda como tú la escribas** (mismo hábito que tu `opencode.json`). ¿Prefieres cifrarla? Añade `"seal": true` (AES-256-GCM) o usa `conductor litellm login`. En cualquier caso jamás viaja por HTTP ni la ve un modelo, y `conductor litellm status` te enseña su huella (últimos 4 + sha corto) para que SIEMPRE sepas cuál hay dentro.
 
 ---
 

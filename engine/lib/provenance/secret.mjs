@@ -107,7 +107,7 @@ export function ensureByokTemplate(home) {
 }
 
 export const LITELLM_TEMPLATE = {
-  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se CIFRA sola al primer uso (nunca queda en claro). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
+  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se queda COMO LA ESCRIBAS (formato OpenCode; añade "seal": true si prefieres que conductor la cifre). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
   baseUrl: 'https://TU-PROXY/v1',
   apiKey: 'sk-PEGA-AQUI-TU-KEY',
   models: {
@@ -155,9 +155,11 @@ export function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
-    // opt-out EXPLÍCITO del dev ("seal": false — paridad con su config de OpenCode): la key se queda en
-    // claro y es SU decisión informada; `litellm status` lo refleja sin alarma. Por defecto SIEMPRE se sella.
-    if (j && typeof j === 'object' && j.seal === false) return false;
+    // PARIDAD OpenCode (decisión 2026-07-31, feedback real: "cifrar la key es una cagada" — su opencode.json
+    // guarda la key tal cual): el fichero es DEL DEV y la key se queda COMO ÉL la escriba. Sellar es
+    // OPT-IN: "seal": true aquí, o `conductor litellm login` (cifra porque el fichero lo escribe conductor).
+    // Los ficheros YA sellados (apiKeyEnc) siguen descifrando igual — nada se rompe.
+    if (!j || typeof j !== 'object' || j.seal !== true) return false;
     const plain = (j && typeof j === 'object') ? (j.apiKey || (j.options && typeof j.options === 'object' ? j.options.apiKey : null)) : null;
     if (!j || typeof j !== 'object' || !plain || j.apiKeyEnc) return false; // nada en claro que sellar
     if (isTemplateCreds(j)) return false; // la PLANTILLA sin rellenar jamás se cifra (no es una key)
