@@ -1,6 +1,7 @@
 // run-changes.test.mjs — endpoint /api/run/.../files: el CHANGESET del run (experiencia Git) — ficheros × tipo × líneas
 // +/− vs HEAD, incluido lo untracked, vía índice propio (no toca el índice del usuario). Excluye .conductor (plumbing).
 import { createAppServer } from '../lib/serving/serve.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync, renameSync } from 'node:fs';
@@ -14,7 +15,7 @@ await test('run-changes: /api/run/.../files → changeset git (tipo + líneas +/
   const ROOT = join(HERE, '.tmp-run-changes');
   rmSync(ROOT, { recursive: true, force: true });
   mkdirSync(join(ROOT, 'src'), { recursive: true });
-  mkdirSync(join(ROOT, 'openspec', 'changes', 'feat', '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(join(ROOT, 'openspec', 'changes', 'feat')), { recursive: true });
   writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}');
   writeFileSync(join(ROOT, 'src', 'a.js'), 'const a = 1;\nconst b = 2;\n');
   git(ROOT, 'init'); git(ROOT, 'config', 'user.email', 't@t'); git(ROOT, 'config', 'user.name', 't');
@@ -40,7 +41,7 @@ await test('run-changes: con BASELINE del run, /api/files muestra SOLO lo que to
   const ROOT = join(HERE, '.tmp-run-baseline');
   rmSync(ROOT, { recursive: true, force: true });
   mkdirSync(join(ROOT, 'src'), { recursive: true });
-  const cdir = join(ROOT, 'openspec', 'changes', 'feat2', '.conductor'); mkdirSync(cdir, { recursive: true });
+  const cdir = plumbPath(join(ROOT, 'openspec', 'changes', 'feat2')); mkdirSync(cdir, { recursive: true });
   writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}');
   writeFileSync(join(ROOT, 'src', 'a.js'), 'const a = 1;\n');
   git(ROOT, 'init'); git(ROOT, 'config', 'user.email', 't@t'); git(ROOT, 'config', 'user.name', 't');
@@ -68,7 +69,7 @@ await test('run-changes: un RENAME → una fila con la ruta DESTINO (parsing -z 
   const ROOT = join(HERE, '.tmp-run-rename');
   rmSync(ROOT, { recursive: true, force: true });
   mkdirSync(join(ROOT, 'src'), { recursive: true });
-  mkdirSync(join(ROOT, 'openspec', 'changes', 'feat3', '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(join(ROOT, 'openspec', 'changes', 'feat3')), { recursive: true });
   writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}');
   const content = Array.from({ length: 8 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n';
   writeFileSync(join(ROOT, 'src', 'old.js'), content);
@@ -88,7 +89,7 @@ await test('run-changes: rutas no-ASCII llegan intactas al changeset (core.quote
   const ROOT = join(HERE, '.tmp-run-utf8');
   rmSync(ROOT, { recursive: true, force: true });
   mkdirSync(join(ROOT, 'src'), { recursive: true });
-  mkdirSync(join(ROOT, 'openspec', 'changes', 'feat4', '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(join(ROOT, 'openspec', 'changes', 'feat4')), { recursive: true });
   writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}');
   writeFileSync(join(ROOT, 'src', 'a.js'), 'const a = 1;\n');
   git(ROOT, 'init'); git(ROOT, 'config', 'user.email', 't@t'); git(ROOT, 'config', 'user.name', 't');

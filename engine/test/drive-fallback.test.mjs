@@ -2,6 +2,7 @@
 // al contenido (timeout/provider/crash/no-progress), UN único intento extra con el modelo de reserva de
 // cfg.fallback (rol o fase; la fase gana). OFF por defecto = cero cambio de comportamiento.
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { drive } from '../lib/pipeline/drive.mjs';
@@ -48,7 +49,7 @@ async function run({ slug, cfg, models, agent }) {
   const prev = process.env.CONDUCTOR_CAPTURE; process.env.CONDUCTOR_CAPTURE = 'fs';
   try {
     const r = await drive({ changeDir: join(T, 'openspec', 'changes', slug), request: `add ${slug}`, complexity: 'simple', domain: 'core', srcDir: T, runAgent: agent });
-    const tl = JSON.parse(readFileSync(join(T, 'openspec', 'changes', slug, '.conductor', 'timeline.json'), 'utf8'));
+    const tl = JSON.parse(readFileSync(plumbPath(join(T, 'openspec', 'changes', slug), 'timeline.json'), 'utf8'));
     return { r, tl, T };
   } finally {
     if (prev === undefined) delete process.env.CONDUCTOR_CAPTURE; else process.env.CONDUCTOR_CAPTURE = prev;

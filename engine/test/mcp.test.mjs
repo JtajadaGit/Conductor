@@ -1,4 +1,5 @@
 import { spawn, execFileSync } from 'node:child_process';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { createInterface } from 'node:readline';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,7 +62,7 @@ await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "
   const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');
   // change de mentira con un artefacto para el bundle de la pausa
   const CH = join(HERE, '.tmp-pollrun-change');
-  rmSync(CH, { recursive: true, force: true }); mkdirSync(join(CH, '.conductor'), { recursive: true });
+  rmSync(CH, { recursive: true, force: true }); mkdirSync(plumbPath(CH), { recursive: true });
   writeFileSync(join(CH, 'proposal.md'), '## Why\nporque sí');
   // servidor fake: el estado que toque según el escenario activo
   let state = {};
@@ -114,8 +115,8 @@ await test('mcp: conductor_receipt devuelve el recibo de PR de un run (feature c
   const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const tmp = join(HERE, '.tmp-mcp-receipt');
   rmSync(tmp, { recursive: true, force: true });
-  mkdirSync(join(tmp, '.conductor'), { recursive: true });
-  writeFileSync(join(tmp, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'probar recibo por chat', phases: [{ phase: 'apply', model: 'm-x', provider: 'byok', tokens: { in: 10, out: 5 }, files: [{ p: 'src/x.js', k: 'create' }] }] }));
+  mkdirSync(plumbPath(tmp), { recursive: true });
+  writeFileSync(plumbPath(tmp, 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'probar recibo por chat', phases: [{ phase: 'apply', model: 'm-x', provider: 'byok', tokens: { in: 10, out: 5 }, files: [{ p: 'src/x.js', k: 'create' }] }] }));
   const c = client();
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
   const r = await c.callTool('conductor_receipt', { changeDir: tmp });

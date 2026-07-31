@@ -2,8 +2,8 @@
 // (regla 0-dep): walk del FS + lectura de timeline/spec, búsqueda por substring sobre título/request/spec.
 // Cubre la brecha vs herramientas de referencia (índice de conocimiento) acotada a la identidad de conductor.
 import { readdirSync, readFileSync, existsSync, statSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
-import { join, basename, resolve, relative } from 'node:path';
-import { plumbPath } from '../core/plumb.mjs';
+import { join, basename, dirname, resolve, relative } from 'node:path';
+import { plumbPath, plumbDir } from '../core/plumb.mjs';
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const changesDir = (root) => join(root, 'openspec', 'changes');
@@ -114,6 +114,17 @@ export function archiveChange(changeDir, archiveBaseDir, date, { allowNonGreen =
     if (verdict !== 'GREEN') { const e = new Error(`no se archiva un change sin veredicto GREEN (actual: ${verdict || 'desconocido'}) — corrígelo, o archiva con override explícito`); e.code = 'NOT_GREEN'; throw e; }
   }
   mkdirSync(archiveBaseDir, { recursive: true });
+  const evidSrc = plumbDir(src); // ANTES del move: con layout moderno apunta a .conductor/runs/<name>
   renameSync(src, dest); // move atómico (mismo FS) — sin Remove-Item recursivo
+  // layout moderno: la evidencia vive en <root>/.conductor/runs/<name> y NO viaja con la carpeta — se
+  // muda a runs/archive/<fecha-name> para que plumbBase(dest) la siga encontrando (la legada, dentro
+  // de la propia carpeta del change, ya viajó con el renameSync de arriba).
+  try {
+    if (!evidSrc.startsWith(resolve(src)) && existsSync(evidSrc)) {
+      const evidDest = plumbDir(dest);
+      mkdirSync(dirname(evidDest), { recursive: true });
+      if (!existsSync(evidDest)) renameSync(evidSrc, evidDest);
+    }
+  } catch { /* best-effort: la evidencia legado-huérfana no rompe el archivado */ }
   return { archivedDir, dest };
 }

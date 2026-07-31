@@ -1,6 +1,7 @@
 // model-validation-before-send: la validación pura de modelos byok: contra el catálogo.
 // + registro de proyectos atómico/validado (Ola 1: projects-registry-recovery).
 import { checkByokModels, saveRegistry, loadRegistry, aggregateArchive, aggregateSearch, isCopilotFamily } from '../lib/serving/serve.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { scrubSecrets } from '../lib/pipeline/drive.mjs';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -57,7 +58,7 @@ await test('checkByokModels: sin models → ok', () => {
 
 // ── búsqueda/archivo AGREGADOS sobre varios proyectos (coherente con la lista multi-proyecto del panel) ──
 function mkChange(root, name, request) {
-  const cd = join(root, 'openspec', 'changes', name, '.conductor');
+  const cd = plumbPath(join(root, 'openspec', 'changes', name));
   mkdirSync(cd, { recursive: true });
   writeFileSync(join(cd, 'timeline.json'), JSON.stringify({ request, verdict: 'GREEN', phases: [{ phase: 'spec' }] }));
 }

@@ -1,5 +1,6 @@
 // Tests de la mini-web del run (serve.mjs). Offline: server en 127.0.0.1 con puerto efímero.
 import { createRunServer, createProjectServer, listChanges, runState } from '../lib/serving/serve.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -124,7 +125,7 @@ await test('runner(complexity-guard): loadOrNew degrada complexity inválida/pro
 await test('serve: PANEL de proyecto — lista runs, lanza y reanuda por HTTP (spawner inyectado)', async () => {
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '.tmp-panel');
   rmSync(ROOT, { recursive: true, force: true });
-  const ch = join(ROOT, 'openspec', 'changes', 'feature-x', '.conductor');
+  const ch = plumbPath(join(ROOT, 'openspec', 'changes', 'feature-x'));
   mkdirSync(ch, { recursive: true });
   writeFileSync(join(ch, 'timeline.json'), JSON.stringify({ request: 'add feature x', complexity: 'simple', verdict: 'STOPPED', phases: [{ phase: 'propose', ok: true, tokens: { in: 100, out: 10 } }] }));
   const spawned = [];
@@ -196,8 +197,8 @@ await test('serve(v3-P0): APP ÚNICA — launch IPC, pausa→continue con nota/m
   assert(/<!doctype html>/i.test(runHtml), 'la ruta de run responde una página HTML');
   // tras exit del hijo → relanzable (resume usa el request del timeline)
   spawned[0].emit('exit', 0);
-  mkdirSync(join(ROOT, 'openspec', 'changes', 'header-x', '.conductor'), { recursive: true });
-  writeFileSync(join(ROOT, 'openspec', 'changes', 'header-x', '.conductor', 'timeline.json'), JSON.stringify({ request: 'add header', complexity: 'simple', verdict: 'STOPPED', phases: [] }));
+  mkdirSync(plumbPath(join(ROOT, 'openspec', 'changes', 'header-x')), { recursive: true });
+  writeFileSync(plumbPath(join(ROOT, 'openspec', 'changes', 'header-x'), 'timeline.json'), JSON.stringify({ request: 'add header', complexity: 'simple', verdict: 'STOPPED', phases: [] }));
   const rs = await (await fetch(srv.url + 'api/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'header-x' }) })).json();
   eq(rs.ok, true, 'resume desde la app');
   eq(spawned[1].args.request, 'add header', 'resume con el MISMO request');
@@ -226,9 +227,9 @@ await test('serve(v3-P1): editar artefacto por POST — confinado (.md, nunca .c
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '.tmp-app2');
   rmSync(ROOT, { recursive: true, force: true });
   const ch = join(ROOT, 'openspec', 'changes', 'e-x');
-  mkdirSync(join(ch, '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(ch), { recursive: true });
   writeFileSync(join(ch, 'proposal.md'), 'v1');
-  writeFileSync(join(ch, '.conductor', 'state.json'), '{}');
+  writeFileSync(plumbPath(ch, 'state.json'), '{}');
   const srv = await createAppServer({ root: ROOT, engine: 'E.mjs', spawnRun: () => ({ on: () => {}, send: () => {}, kill: () => {} }) });
   const ok = await (await fetch(srv.url + 'api/run/e-x/artifact', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ p: 'proposal.md', content: 'v2 EDITADO' }) })).json();
   eq(ok.ok, true);
@@ -292,8 +293,8 @@ await test('serve(v4-P2): APP GLOBAL — segundo proyecto vía launch {project},
   assert(Array.isArray(ping.projects) && ping.projects.length >= 2, 'ping con proyectos');
   // state por ruta scoped funciona
   const pid = l.url.split('/')[2];
-  mkdirSync(join(R2, 'openspec', 'changes', 'feat-b', '.conductor'), { recursive: true });
-  writeFileSync(join(R2, 'openspec', 'changes', 'feat-b', '.conductor', 'timeline.json'), JSON.stringify({ request: 'algo', verdict: 'GREEN', phases: [] }));
+  mkdirSync(plumbPath(join(R2, 'openspec', 'changes', 'feat-b')), { recursive: true });
+  writeFileSync(plumbPath(join(R2, 'openspec', 'changes', 'feat-b'), 'timeline.json'), JSON.stringify({ request: 'algo', verdict: 'GREEN', phases: [] }));
   const st = await (await fetch(srv.url + 'api/run/' + pid + '/feat-b/state')).json();
   eq(st.verdict, 'GREEN', 'state por ruta con proyecto');
   await srv.close();
@@ -388,8 +389,8 @@ await test('serve(v3.12): RESUME por ruta scoped /api/run/<pid>/<change>/resume 
   const { createAppServer } = await import('../lib/serving/serve.mjs');
   const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-resume-scoped');
   rmSync(R, { recursive: true, force: true });
-  mkdirSync(join(R, 'openspec', 'changes', 'feat-r', '.conductor'), { recursive: true });
-  writeFileSync(join(R, 'openspec', 'changes', 'feat-r', '.conductor', 'timeline.json'), JSON.stringify({ request: 'reanuda esto', complexity: 'simple', domain: 'feat', verdict: 'STOPPED', phases: [] }));
+  mkdirSync(plumbPath(join(R, 'openspec', 'changes', 'feat-r')), { recursive: true });
+  writeFileSync(plumbPath(join(R, 'openspec', 'changes', 'feat-r'), 'timeline.json'), JSON.stringify({ request: 'reanuda esto', complexity: 'simple', domain: 'feat', verdict: 'STOPPED', phases: [] }));
   const spawned = [];
   const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); return { on: () => {}, send: () => {}, kill: () => {} }; } });
   // selecciona el proyecto POR ROOT (no projects[0]): el registro persistido en CONDUCTOR_HOME acumula
@@ -440,8 +441,8 @@ await test('serve(#69): POST archive — GREEN promueve+mueve; no-GREEN → 409'
   const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-arch-ep');
   rmSync(R, { recursive: true, force: true });
   const ch = join(R, 'openspec', 'changes', 'feat-x');
-  mkdirSync(join(ch, '.conductor'), { recursive: true });
-  writeFileSync(join(ch, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'x', phases: [] }));
+  mkdirSync(plumbPath(ch), { recursive: true });
+  writeFileSync(plumbPath(ch, 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'x', phases: [] }));
   mkdirSync(join(ch, 'specs', 'auth'), { recursive: true });
   writeFileSync(join(ch, 'specs', 'auth', 'spec.md'), '## ADDED Requirements\n\n### Requirement: Login\nThe system SHALL log in.\n#### Scenario: s\n- **GIVEN** a\n- **WHEN** b\n- **THEN** c\n');
   const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: () => ({ on() {}, send() {}, kill() {} }) });
@@ -452,8 +453,8 @@ await test('serve(#69): POST archive — GREEN promueve+mueve; no-GREEN → 409'
   assert(!existsSync(ch), 'el change se movió fuera de changes/');
   assert(existsSync(join(R, 'openspec', 'specs', 'auth', 'spec.md')), 'promovió el delta spec a openspec/specs/');
   const ch2 = join(R, 'openspec', 'changes', 'feat-y');
-  mkdirSync(join(ch2, '.conductor'), { recursive: true });
-  writeFileSync(join(ch2, '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'NOT_GREEN', request: 'y', phases: [] }));
+  mkdirSync(plumbPath(ch2), { recursive: true });
+  writeFileSync(plumbPath(ch2, 'timeline.json'), JSON.stringify({ verdict: 'NOT_GREEN', request: 'y', phases: [] }));
   const r2 = await fetch(srv.url + 'api/run/' + pid + '/feat-y/archive', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   eq(r2.status, 409, 'un change no-GREEN no se archiva (409)');
   await srv.close();
@@ -595,8 +596,8 @@ await test('serve(P0): el RESUME reusa el preset de gobierno persistido en el ti
   const { createAppServer } = await import('../lib/serving/serve.mjs');
   const R = join(dirname(fileURLToPath(import.meta.url)), '.tmp-preset-resume');
   rmSync(R, { recursive: true, force: true });
-  mkdirSync(join(R, 'openspec', 'changes', 'mig-r', '.conductor'), { recursive: true });
-  writeFileSync(join(R, 'openspec', 'changes', 'mig-r', '.conductor', 'timeline.json'), JSON.stringify({ request: 'reanuda migración', complexity: 'complex', domain: 'mig', verdict: 'STOPPED', preset: { name: 'migration', label: 'Gran migración' }, phases: [] }));
+  mkdirSync(plumbPath(join(R, 'openspec', 'changes', 'mig-r')), { recursive: true });
+  writeFileSync(plumbPath(join(R, 'openspec', 'changes', 'mig-r'), 'timeline.json'), JSON.stringify({ request: 'reanuda migración', complexity: 'complex', domain: 'mig', verdict: 'STOPPED', preset: { name: 'migration', label: 'Gran migración' }, phases: [] }));
   const spawned = [];
   const srv = await createAppServer({ root: R, engine: 'E.mjs', spawnRun: (a) => { spawned.push(a); const c = Object.assign(new EventEmitter(), { send() {}, kill() {} }); setImmediate(() => c.emit('exit', 0)); return c; } });
   const rs = await (await fetch(srv.url + 'api/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'mig-r' }) })).json();

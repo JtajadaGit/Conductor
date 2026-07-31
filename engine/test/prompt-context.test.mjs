@@ -1,6 +1,7 @@
 // prompt-context.test.mjs — experiencia Copilot en el prompt: @fichero (contexto pre-inyectado, CONFINADO) y /skill (fuerza
 // la skill invocada). Además de los endpoints que alimentan el autocompletado: /api/files y /api/skills.
 import { referencedFiles, mentionedSkills } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { createAppServer } from '../lib/serving/serve.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +101,7 @@ await test('prompt-context: /api/skills lista los patrones de equipo (nombre + t
   const ROOT = join(HERE, '.tmp-skills-ep');
   rmSync(ROOT, { recursive: true, force: true });
   mkdirSync(join(ROOT, 'openspec'), { recursive: true }); writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}');
-  w2(join(ROOT, '.conductor', 'skills', 'angular-signals', 'SKILL.md'), '---\nname: angular-signals\ntitle: Angular Signals\nmatch: front\n---\nUsa signals.');
+  w2(plumbPath(ROOT, 'skills', 'angular-signals', 'SKILL.md'), '---\nname: angular-signals\ntitle: Angular Signals\nmatch: front\n---\nUsa signals.');
   const srv = await createAppServer({ root: ROOT, engine: 'E.mjs', spawnRun: () => ({ on() {}, send() {}, kill() {} }) });
   try {
     const r = await (await fetch(srv.url + 'api/skills')).json();

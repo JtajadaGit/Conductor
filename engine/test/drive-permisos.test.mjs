@@ -54,3 +54,20 @@ await test('tests-fuertes: checkUnrunnable distingue "no pudo EJECUTARSE" (confi
   assert(checkUnrunnable({}, '"vitest" no se reconoce como un comando interno o externo'), 'not-recognized (es) => no ejecutable');
   assert(!checkUnrunnable({ code: '1' }, 'Expected 2 to be 3 -- 1 test failed'), 'assertion roja => SI son pruebas (fix aplica)');
 });
+
+await test('plumb(fase 2): la fontaneria de un run REAL vive en <raiz>/.conductor/runs/<change> — la carpeta del change queda para el DEV', async () => {
+  const { plumbPath, plumbDir } = await import('../lib/core/plumb.mjs');
+  const T = join(HERE, '.tmp-plumb-raiz');
+  rmSync(T, { recursive: true, force: true });
+  const changeDir = join(T, 'openspec', 'changes', 'mi-feature');
+  mkdirSync(changeDir, { recursive: true }); // los flujos reales SIEMPRE crean el change antes de conducir
+  eq(plumbDir(changeDir), join(T, '.conductor', 'runs', 'mi-feature'), 'punto UNICO de estado en la raiz (patron .git/.angular)');
+  mkdirSync(join(T, 'openspec', 'changes', 'archive', '2026-07-31-mi-feature'), { recursive: true });
+  eq(plumbPath(join(T, 'openspec', 'changes', 'archive', '2026-07-31-mi-feature'), 'timeline.json').includes(join('.conductor', 'runs', 'archive')), true, 'los archivados van a runs/archive');
+  // LEGADO: un run viejo con .conductor DENTRO del change se sigue leyendo y escribiendo ahi (coherencia)
+  mkdirSync(join(changeDir, '.conductor'), { recursive: true });
+  eq(plumbDir(changeDir), join(changeDir, '.conductor'), 'legacy existente gana (cada run vive donde nacio)');
+  // fixture "de la nada" (change sin crear): quien escribe primero define -> legacy (semantica de siempre)
+  eq(plumbDir(join(T, 'openspec', 'changes', 'no-creado')), join(T, 'openspec', 'changes', 'no-creado', '.conductor'), 'change inexistente => legacy');
+  rmSync(T, { recursive: true, force: true });
+});

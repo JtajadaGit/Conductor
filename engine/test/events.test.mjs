@@ -1,5 +1,6 @@
 // Parser del visor de sesión (lib/events.mjs): colapso start/end con duración, categorías, profundidad, filtro.
 import { parseEvents, eventCategory, parseOtelSession } from '../lib/core/events.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -18,7 +19,7 @@ const EV = [
   { type: 'tool.execution_complete', data: {}, id: 'x2', parentId: 't1', timestamp: '2026-06-16T14:50:06.000Z' },
   { type: 'assistant.turn_end', data: {}, id: 't2', parentId: 'u1', timestamp: '2026-06-16T14:50:07.000Z' },
 ];
-const write = () => { const d = join(TMP, '.conductor'); mkdirSync(d, { recursive: true }); const f = join(d, 'events.jsonl'); writeFileSync(f, EV.map((e) => JSON.stringify(e)).join('\n')); return f; };
+const write = () => { const d = plumbPath(TMP); mkdirSync(d, { recursive: true }); const f = join(d, 'events.jsonl'); writeFileSync(f, EV.map((e) => JSON.stringify(e)).join('\n')); return f; };
 
 await test('events: categoría por tipo', () => {
   eq(eventCategory('tool.execution_start'), 'tool');
@@ -63,7 +64,7 @@ const OTEL = [
 ];
 await test('events: reconstruye la sesión qwen desde spans OTel (sin events.jsonl)', () => {
   fresh();
-  const od = join(TMP, '.conductor', 'otel'); mkdirSync(od, { recursive: true });
+  const od = plumbPath(TMP, 'otel'); mkdirSync(od, { recursive: true });
   writeFileSync(join(od, 'apply.jsonl'), OTEL.map((s) => JSON.stringify(s)).join('\n'));
   const r = parseOtelSession(od);
   assert(r && r.summary.reconstructed, 'summary.reconstructed=true (distingue del events.jsonl nativo)');

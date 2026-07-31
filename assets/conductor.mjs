@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // conductor.mjs — BUNDLE single-file (generado por build.mjs). 0 deps, 0 rutas externas.
-import { join, relative, resolve, basename, extname, dirname, isAbsolute, normalize } from 'node:path';
+import { join, resolve, basename, dirname, relative, extname, isAbsolute, normalize } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, readdirSync, statSync, lstatSync, openSync, readSync, closeSync, renameSync, appendFileSync, unlinkSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, rmSync, readdirSync, statSync, lstatSync, openSync, readSync, closeSync, renameSync, appendFileSync, unlinkSync, realpathSync } from 'node:fs';
 import { randomBytes, createCipheriv, createDecipheriv, createHash, createHmac, sign as edSign, verify as edVerify, generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:crypto';
 import { execFileSync, spawn, execSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -22,8 +22,34 @@ __M['plumb'] = (function(){
 // + provenance) con fallback al legado y GC al archivar. Todos los join(<change>, '.conductor', …) del
 // motor pasan por aquí — el flip será una función, no 66 sitios.
 
-const plumbPath = (changeDir, ...rest) => join(changeDir, '.conductor', ...rest);
-const plumbDir = (changeDir) => plumbPath(changeDir);
+
+// FASE 2 EJECUTADA (2026-07-31, feedback real: "una carpeta .conductor dentro de cada feature es poco
+// profesional — ruido para el developer"): la fontanería runtime vive en UN punto de la raíz del
+// proyecto — <proyecto>/.conductor/runs/<change>/ (patrón .git/.angular/.terraform; las skills de
+// proyecto ya vivían en <proyecto>/.conductor/skills). La carpeta del change queda SOLO con los
+// artefactos OpenSpec del desarrollador. HOME (~/.conductor) quedó DESCARTADO con datos de hoy: el
+// agente escribe lentes/artefactos vía su sesión y fuera del dir de confianza del CLI toda escritura
+// se deniega (el muro `denied-no-approval-rule`). LEGADO: un run con <change>/.conductor/ existente
+// se sigue leyendo Y escribiendo ahí (coherencia total: cada run vive donde nació).
+function plumbBase(changeDir) {
+  const abs = resolve(changeDir);
+  const legacy = join(abs, '.conductor');
+  if (existsSync(legacy)) return legacy;
+  // change AÚN sin crear → legacy: quien escribe primero define el layout. Los flujos reales (serve/mcp/bin)
+  // SIEMPRE crean la carpeta del change antes de conducir → esos van al layout moderno; una fixture que
+  // siembra evidencia "de la nada" conserva la semántica de siempre (crear el change al escribir dentro).
+  if (!existsSync(abs)) return legacy;
+  const parent = dirname(abs);
+  const isArch = basename(parent) === 'archive';
+  const changesDir = isArch ? dirname(parent) : parent;
+  // SOLO el layout real openspec/changes[/archive]/<name> migra; cualquier otra forma (fixtures,
+  // rutas ad-hoc) conserva el layout legado — jamás sembramos .conductor fuera de un proyecto OpenSpec.
+  if (basename(changesDir) !== 'changes' || basename(dirname(changesDir)) !== 'openspec') return legacy;
+  const root = dirname(dirname(changesDir));
+  return join(root, '.conductor', 'runs', ...(isArch ? ['archive'] : []), basename(abs));
+}
+const plumbPath = (changeDir, ...rest) => join(plumbBase(changeDir), ...rest);
+const plumbDir = (changeDir) => plumbBase(changeDir);
 
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
@@ -2555,7 +2581,7 @@ __M['archive'] = (function(){
 // Cubre la brecha vs herramientas de referencia (índice de conocimiento) acotada a la identidad de conductor.
 
 
-const { plumbPath } = __M['plumb'];
+const { plumbPath, plumbDir } = __M['plumb'];
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const changesDir = (root) => join(root, 'openspec', 'changes');
 
@@ -2665,7 +2691,18 @@ function archiveChange(changeDir, archiveBaseDir, date, { allowNonGreen = false 
     if (verdict !== 'GREEN') { const e = new Error(`no se archiva un change sin veredicto GREEN (actual: ${verdict || 'desconocido'}) — corrígelo, o archiva con override explícito`); e.code = 'NOT_GREEN'; throw e; }
   }
   mkdirSync(archiveBaseDir, { recursive: true });
+  const evidSrc = plumbDir(src); // ANTES del move: con layout moderno apunta a .conductor/runs/<name>
   renameSync(src, dest); // move atómico (mismo FS) — sin Remove-Item recursivo
+  // layout moderno: la evidencia vive en <root>/.conductor/runs/<name> y NO viaja con la carpeta — se
+  // muda a runs/archive/<fecha-name> para que plumbBase(dest) la siga encontrando (la legada, dentro
+  // de la propia carpeta del change, ya viajó con el renameSync de arriba).
+  try {
+    if (!evidSrc.startsWith(resolve(src)) && existsSync(evidSrc)) {
+      const evidDest = plumbDir(dest);
+      mkdirSync(dirname(evidDest), { recursive: true });
+      if (!existsSync(evidDest)) renameSync(evidSrc, evidDest);
+    }
+  } catch { /* best-effort: la evidencia legado-huérfana no rompe el archivado */ }
   return { archivedDir, dest };
 }
 
@@ -4338,6 +4375,7 @@ const COPILOTIGNORE = [
   '*.log', '*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
   '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
   'openspec/changes/**/.conductor/',
+  '.conductor/',
 ].join('\n') + '\n';
 
 // openspec/config.yaml YA NO SE GENERA (2026-07-30). Era un ESPEJO de lo detectado que se reescribía en
@@ -4349,7 +4387,7 @@ const COPILOTIGNORE = [
 // .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
 // MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
 // commiteada en el repo del usuario. Append IDEMPOTENTE: jamás reescribe el .gitignore existente.
-const GITIGNORE_LINE = 'openspec/changes/**/.conductor/';
+const GITIGNORE_LINE = '.conductor/'; // punto ÚNICO de estado en la raíz (los runs legados quedan cubiertos por la línea antigua si existe)
 function ensureGitignore(root) {
   const p = join(root, '.gitignore');
   try {
@@ -5970,7 +6008,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       writeTimeline('running'); // publica la fase en curso (la mini-web la pinta viva)
       // tamaño de la traza ANTES del intento (scope del BUCLE: el if(!ok) del final la necesita venga del
       // branch que venga) → tras un fallo, contar SOLO las denegaciones de permiso de ESTE intento
-      const evPath = join(changeDir, '.conductor', 'events.jsonl');
+      const evPath = plumbPath(changeDir, 'events.jsonl');
       const evBefore = (() => { try { return statSync(evPath).size; } catch { return 0; } })();
       let r;
       if (phase === 'verify' && lenses.length > 1) {
@@ -8797,6 +8835,7 @@ const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
 const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
 const { aggregateStats } = __M['stats'];
+const { plumbPath } = __M['plumb'];
 const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate, normalizeByokShape } = __M['secret'];
 const { PROMPT_KEYS, instructionFor } = __M['orchestrate'];
 const { loadPolicy, validatePolicy, enforce, DEFAULT_POLICY } = __M['policy'];
@@ -9319,9 +9358,9 @@ switch (cmd) {
   case 'receipt': {
     // RECIBO DE PR por terminal (mismo render que la web): markdown listo para pegar en la descripción del PR.
     const dirR = pos[0]; if (!dirR || !existsSync(dirR)) bad('receipt <changeDir> [-o out.md]');
-    let tlR = null; try { tlR = JSON.parse(readFileSync(join(dirR, '.conductor', 'timeline.json'), 'utf8')); } catch {}
+    let tlR = null; try { tlR = JSON.parse(readFileSync(plumbPath(dirR, 'timeline.json'), 'utf8')); } catch {}
     if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) { console.error('receipt: sin timeline todavía — el recibo sale de un run ejecutado'); process.exit(1); }
-    let domR = 'core'; try { domR = JSON.parse(readFileSync(join(dirR, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+    let domR = 'core'; try { domR = JSON.parse(readFileSync(plumbPath(dirR, 'state.json'), 'utf8')).domain || 'core'; } catch {}
     const readOpt = (f) => { try { return readFileSync(join(dirR, f), 'utf8'); } catch { return ''; } };
     const nameR = resolve(dirR).split(/[\\/]/).pop();
     const mdR = renderReceipt({ name: nameR, timeline: tlR, spec: readOpt(`specs/${domR}/spec.md`), proposal: readOpt('proposal.md'), verify: readOpt('verify-report.md') });
@@ -9334,7 +9373,7 @@ switch (cmd) {
     const gates = [...checkCoherence(dir), ...checkArtifacts(dir)];
     const trace = src && existsSync(src) ? buildTrace(dir, src) : null;
     const usage = flag('--usage'); const cost = usage && existsSync(usage) ? computeCost(usage) : null;
-    const tlPath = existsSync(join(dir, '.conductor', 'timeline.json')) ? join(dir, '.conductor', 'timeline.json') : join(dir, 'run-timeline.json'); const timeline = existsSync(tlPath) ? JSON.parse(readFileSync(tlPath, 'utf8')) : null;
+    const tlPath = existsSync(plumbPath(dir, 'timeline.json')) ? plumbPath(dir, 'timeline.json') : join(dir, 'run-timeline.json'); const timeline = existsSync(tlPath) ? JSON.parse(readFileSync(tlPath, 'utf8')) : null;
     const o = flag('-o', join(dir, 'dashboard.html'));
     writeFileSync(o, renderDashboard({ change: dir, gates, trace, cost, timeline }));
     console.log(`dashboard → ${o}`); process.exit(0);
@@ -10001,4 +10040,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: d254465f748728e00d6e194d9295e025a55722e49217bd453d4ebbbe6187dabf
+// build-inputs-sha256: 00822027f47d92a437ece5d3646b7e5cf65a2c9d8a335445f2518b90406f3618

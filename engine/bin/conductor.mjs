@@ -54,6 +54,7 @@ import { writeAiact } from '../lib/serving/aiact.mjs';
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 import { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } from '../lib/serving/serve.mjs';
 import { aggregateStats } from '../lib/core/stats.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate, normalizeByokShape } from '../lib/provenance/secret.mjs';
 import { PROMPT_KEYS, instructionFor } from '../lib/pipeline/orchestrate.mjs';
 import { homedir, tmpdir } from 'node:os';
@@ -578,9 +579,9 @@ switch (cmd) {
   case 'receipt': {
     // RECIBO DE PR por terminal (mismo render que la web): markdown listo para pegar en la descripción del PR.
     const dirR = pos[0]; if (!dirR || !existsSync(dirR)) bad('receipt <changeDir> [-o out.md]');
-    let tlR = null; try { tlR = JSON.parse(readFileSync(join(dirR, '.conductor', 'timeline.json'), 'utf8')); } catch {}
+    let tlR = null; try { tlR = JSON.parse(readFileSync(plumbPath(dirR, 'timeline.json'), 'utf8')); } catch {}
     if (!tlR || !Array.isArray(tlR.phases) || !tlR.phases.length) { console.error('receipt: sin timeline todavía — el recibo sale de un run ejecutado'); process.exit(1); }
-    let domR = 'core'; try { domR = JSON.parse(readFileSync(join(dirR, '.conductor', 'state.json'), 'utf8')).domain || 'core'; } catch {}
+    let domR = 'core'; try { domR = JSON.parse(readFileSync(plumbPath(dirR, 'state.json'), 'utf8')).domain || 'core'; } catch {}
     const readOpt = (f) => { try { return readFileSync(join(dirR, f), 'utf8'); } catch { return ''; } };
     const nameR = resolve(dirR).split(/[\\/]/).pop();
     const mdR = renderReceipt({ name: nameR, timeline: tlR, spec: readOpt(`specs/${domR}/spec.md`), proposal: readOpt('proposal.md'), verify: readOpt('verify-report.md') });
@@ -593,7 +594,7 @@ switch (cmd) {
     const gates = [...checkCoherence(dir), ...checkArtifacts(dir)];
     const trace = src && existsSync(src) ? buildTrace(dir, src) : null;
     const usage = flag('--usage'); const cost = usage && existsSync(usage) ? computeCost(usage) : null;
-    const tlPath = existsSync(join(dir, '.conductor', 'timeline.json')) ? join(dir, '.conductor', 'timeline.json') : join(dir, 'run-timeline.json'); const timeline = existsSync(tlPath) ? JSON.parse(readFileSync(tlPath, 'utf8')) : null;
+    const tlPath = existsSync(plumbPath(dir, 'timeline.json')) ? plumbPath(dir, 'timeline.json') : join(dir, 'run-timeline.json'); const timeline = existsSync(tlPath) ? JSON.parse(readFileSync(tlPath, 'utf8')) : null;
     const o = flag('-o', join(dir, 'dashboard.html'));
     writeFileSync(o, renderDashboard({ change: dir, gates, trace, cost, timeline }));
     console.log(`dashboard → ${o}`); process.exit(0);

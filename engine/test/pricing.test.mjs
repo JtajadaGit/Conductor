@@ -1,6 +1,7 @@
 // Tests del PRECIO REAL BYOK (cost.mjs precios en vivo + serve.fetchByokPrices + stats.unpriced):
 // la verdad econÃ³mica sale del proxy del usuario, no de una tabla; lo desconocido se DECLARA, no se inventa 0.
 import { createServer } from 'node:http';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,7 +70,7 @@ await test('pricing: stats declara las fases con modelo sin precio (unpriced) â€
   const root = join(HERE, '.tmp-pricing-proj');
   rmSync(root, { recursive: true, force: true });
   const mkTl = (name, model) => {
-    const d = join(root, 'openspec', 'changes', name, '.conductor');
+    const d = plumbPath(join(root, 'openspec', 'changes', name));
     mkdirSync(d, { recursive: true });
     writeFileSync(join(d, 'timeline.json'), JSON.stringify({ verdict: 'GREEN', phases: [{ phase: 'apply', model, provider: 'byok', tokens: { in: 10, out: 10 } }] }));
   };

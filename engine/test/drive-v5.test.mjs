@@ -1,5 +1,6 @@
 // Tests de las mejoras v5 del driver: byok-hardfail (no gastar créditos sin creds) y pauseAt configurable.
 import { drive, defaultRunAgent, stripAnsi } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
@@ -109,14 +110,14 @@ await test('drive(v5): decisiones del revisor (nota + modelo en caliente) quedan
     changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: goodAgent,
     pauseAt: ['apply'], onPause: (i) => { if (i.before === 'apply' && !paused) { paused = true; return Promise.resolve({ note: 'usa convención X', model: 'byok:qwen-test' }); } return Promise.resolve(); },
   });
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const kinds = (tl.decisions || []).map((d) => d.kind);
   assert(kinds.includes('note') && kinds.includes('model-override'), 'nota y override de modelo auditados en timeline.decisions');
 });
 
 await test('drive(v5): los patrones de equipo (.conductor/skills) se inyectan en el prompt de apply', async () => {
   fresh();
-  const dir = join(TMP, '.conductor', 'skills'); mkdirSync(dir, { recursive: true });
+  const dir = plumbPath(TMP, 'skills'); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'pat.md'), '# Patrón\nUsa el patrón XYZ del equipo.');
   let applyPrompt = '';
   const rec = (a) => { if (a.phase === 'apply') applyPrompt = a.prompt; return goodAgent(a); };
@@ -157,8 +158,8 @@ await test('drive(post-apply): preset feature → revisor FRESCO tras apply escr
   // agente: para las lentes post-apply escribe una reseña; el resto, el agente bueno de siempre
   const rec = (a) => { if (a.phase.startsWith('post-apply:')) { w(a.writeTo, 'El codigo satisface el requisito REQ-C.'); return Promise.resolve({ code: 0 }); } return goodAgent(a); };
   await drive({ changeDir: ch, request: 'x', complexity: 'medium', domain: 'c', srcDir: TMP, runAgent: rec });
-  assert(existsSync(join(ch, '.conductor', 'post-apply-review.md')), 'se creó post-apply-review.md tras apply');
-  const rv = readFileSync(join(ch, '.conductor', 'post-apply-review.md'), 'utf8');
+  assert(existsSync(plumbPath(ch, 'post-apply-review.md')), 'se creó post-apply-review.md tras apply');
+  const rv = readFileSync(plumbPath(ch, 'post-apply-review.md'), 'utf8');
   assert(/Post-Apply Review/.test(rv) && /Lens: correctness/.test(rv), 'incluye la lente correctness (revisor fresco)');
 });
 

@@ -5,6 +5,7 @@
 //     (atribución honesta del diff; NO bloquea — el experto manda).
 import { createAppServer } from '../lib/serving/serve.mjs'; // la app REAL multi-proyecto (runs Map + IPC), donde vive el guardrail
 import { drive } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -19,11 +20,11 @@ const w2 = (abs, c) => { mkdirSync(dirname(abs), { recursive: true }); writeFile
 await test('guardrail: con un driver VIVO en el repo, lanzar/reanudar OTRO cambio → 409; al liberar el lock, ya pasa', async () => {
   const ROOT = join(HERE, '.tmp-guard-repo');
   rmSync(ROOT, { recursive: true, force: true });
-  mkdirSync(join(ROOT, 'openspec', 'changes', 'feat-a', '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(join(ROOT, 'openspec', 'changes', 'feat-a')), { recursive: true });
   writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}'); // proyecto SDD (pasa el gate de init)
   // simula un DRIVER VIVO en feat-a: un proceso real (pid vivo ≠ self) + su lock.json (lo que escribe takeLock del driver)
   const linger = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' });
-  const lockA = join(ROOT, 'openspec', 'changes', 'feat-a', '.conductor', 'lock.json');
+  const lockA = plumbPath(join(ROOT, 'openspec', 'changes', 'feat-a'), 'lock.json');
   writeFileSync(lockA, JSON.stringify({ pid: linger.pid, startedAt: Date.now(), request: 'feature a' }));
   const spawned = [];
   const srv = await createAppServer({ root: ROOT, engine: 'ENGINE.mjs', spawnRun: (a) => { spawned.push(a); return { on() {}, send() {}, kill() {} }; } });
@@ -37,7 +38,7 @@ await test('guardrail: con un driver VIVO en el repo, lanzar/reanudar OTRO cambi
     assert(/feat-a/.test(b.url || ''), 'apunta al run activo para abrirlo');
     eq(spawned.length, 0, 'el 2º driver NO se llegó a spawnear');
     // reanudar feat-b con feat-a vivo también se rehúsa (necesita timeline del cambio a reanudar)
-    w2(join(ROOT, 'openspec', 'changes', 'feat-b', '.conductor', 'timeline.json'), JSON.stringify({ request: 'feature b', complexity: 'simple', verdict: 'STOPPED', phases: [] }));
+    w2(plumbPath(join(ROOT, 'openspec', 'changes', 'feat-b'), 'timeline.json'), JSON.stringify({ request: 'feature b', complexity: 'simple', verdict: 'STOPPED', phases: [] }));
     eq((await post('api/resume', { name: 'feat-b' })).status, 409, 'reanudar otro cambio con un driver vivo también se rehúsa');
     // cuando feat-a TERMINA, su driver BORRA el lock (releaseLock) → activeRun pasa a falso → feat-b YA arranca (sin falso-bloqueo)
     rmSync(lockA, { force: true });
@@ -61,7 +62,7 @@ const setupRepo = (name) => {
   writeFileSync(join(ROOT, 'base.txt'), 'base'); git(ROOT, 'add', '-A'); git(ROOT, 'commit', '-m', 'base');
   return ROOT;
 };
-const tlOf = (root, name) => JSON.parse(readFileSync(join(root, 'openspec', 'changes', name, '.conductor', 'timeline.json'), 'utf8'));
+const tlOf = (root, name) => JSON.parse(readFileSync(plumbPath(join(root, 'openspec', 'changes', name), 'timeline.json'), 'utf8'));
 
 await test('guardrail: preflight árbol SUCIO — run fresco sobre cambios sin commitear → dirtyTreeAtStart=true', async () => {
   const ROOT = setupRepo('.tmp-guard-dirty');

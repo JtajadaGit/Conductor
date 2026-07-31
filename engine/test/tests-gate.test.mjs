@@ -4,6 +4,7 @@
 // EJECUTA con consentimiento del USUARIO (toggle "test" por-run / env CONDUCTOR_ALLOW_CHECKS) — NUNCA por un flag
 // del fichero del repo (allowChecks-en-config sería RCE-por-config); en el pipeline pero sin consentimiento = no-op.
 import { drive } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -38,7 +39,7 @@ const fresh = (cfg = {}) => {
 };
 // pipeline con la fase `test` (entre apply y verify). resolvePhases la reubica justo antes de la verify terminal.
 const runT = (name, opts = {}) => drive({ changeDir: join(TMP, 'openspec', 'changes', name), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(), pipeline: ['propose', 'spec', 'apply', 'test'], ...opts });
-const tl = (name) => { try { return JSON.parse(readFileSync(join(TMP, 'openspec', 'changes', name, '.conductor', 'timeline.json'), 'utf8')); } catch { return null; } };
+const tl = (name) => { try { return JSON.parse(readFileSync(plumbPath(join(TMP, 'openspec', 'changes', name), 'timeline.json'), 'utf8')); } catch { return null; } };
 
 // ── 1) test PASA → apply→test→verify→GREEN; el timeline registra tests.passed y test va ANTES de verify ──
 await test('tests-gate: fase test con pruebas que PASAN → GREEN; test corre ANTES de verify', async () => {

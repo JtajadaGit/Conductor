@@ -2,6 +2,7 @@
 // model-allowlist-driver (R-G4), pause-timeout (R-A3), backoff+failureKind (R-A1/R-A7),
 // ctxfiles-wire (R-T2), self-repair-rate en timeline.json (R-E3).
 import { drive, classifyFailure } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -117,7 +118,7 @@ await test('drive(R-E3): timeline.json expone selfRepair { fixCycles, recovered 
     writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false }));
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: goodAgent });
     eq(r.verdict, 'GREEN');
-    const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+    const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
     assert(tl.selfRepair && typeof tl.selfRepair.fixCycles === 'number', 'selfRepair presente');
     eq(tl.selfRepair.fixCycles, 0); eq(tl.selfRepair.recovered, false);
   } finally { restoreEnv(saved); }
@@ -134,7 +135,7 @@ await test('drive(R-A7): una fase que falla persiste failureKind en su entrada d
     const failApply = (a) => { if (a.phase === 'apply') return Promise.resolve({ code: 1, err: 'boom' }); return goodAgent(a); };
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: failApply });
     eq(r.verdict, 'ABORTED');
-    const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+    const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
     const apply = tl.phases.find((p) => p.phase === 'apply');
     assert(apply && apply.failureKind === 'no-progress', 'la entrada apply lleva failureKind=no-progress');
   } finally { restoreEnv(saved); }
@@ -161,7 +162,7 @@ await test('drive(R-T1): snapshot() honra .copilotignore (un dir excluido no se 
     };
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: agent });
     eq(r.verdict, 'GREEN');
-    const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+    const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
     const applyFiles = (tl.phases.find((p) => p.phase === 'apply')?.files || []).map((f) => f.p);
     assert(applyFiles.some((p) => p.includes('src/c.js')), 'captura src/c.js');
     assert(!applyFiles.some((p) => p.includes('vendor/')), 'NO captura vendor/ (excluido por .copilotignore)');
@@ -177,12 +178,12 @@ await test('drive(R-A5 FASE 3): resume con tasks.md parcial → prompt de apply 
     const specContent = '## ADDED Requirements\n<!-- id: REQ-C -->\n### Requirement: C\nThe system SHALL c.\n#### Scenario: s\n- **GIVEN** a\n- **WHEN** b\n- **THEN** c';
     mkdirSync(join(TMP, 'openspec'), { recursive: true });
     writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false }));
-    mkdirSync(join(changeDir, '.conductor'), { recursive: true });
+    mkdirSync(plumbPath(changeDir), { recursive: true });
     mkdirSync(join(changeDir, `specs/${domain}`), { recursive: true });
     // Estado válido: el run anterior llegó hasta apply (idx=2) pero fue interrumpido
-    writeFileSync(join(changeDir, '.conductor', 'state.json'), JSON.stringify({ request: 'do x', complexity: 'simple', domain, phases: ['propose', 'spec', 'apply', 'verify'], idx: 2, status: 'running', fixCycles: 0 }));
+    writeFileSync(plumbPath(changeDir, 'state.json'), JSON.stringify({ request: 'do x', complexity: 'simple', domain, phases: ['propose', 'spec', 'apply', 'verify'], idx: 2, status: 'running', fixCycles: 0 }));
     // Timeline: propose+spec completadas ok (para que el fast-forward las salte)
-    writeFileSync(join(changeDir, '.conductor', 'timeline.json'), JSON.stringify({ request: 'do x', complexity: 'simple', domain, verdict: 'running', phases: [{ phase: 'propose', ok: true, ms: 100 }, { phase: 'spec', ok: true, ms: 100 }] }));
+    writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify({ request: 'do x', complexity: 'simple', domain, verdict: 'running', phases: [{ phase: 'propose', ok: true, ms: 100 }, { phase: 'spec', ok: true, ms: 100 }] }));
     // Artefactos de las fases completadas
     writeFileSync(join(changeDir, 'proposal.md'), '## Why\nx\n## What Changes\n- a\n## Impact\nx');
     writeFileSync(join(changeDir, `specs/${domain}/spec.md`), specContent);
@@ -217,7 +218,7 @@ await test('drive(#6): los patrones de equipo llegan también a la PLANIFICACIÓ
     mkdirSync(join(TMP, 'openspec'), { recursive: true });
     writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, lenses: false }));
     // patrón de equipo GLOBAL (sin match) → aplica a todas las fases, incluidas las de planificación
-    w(join(TMP, '.conductor', 'skills', 'zzz-planning-pattern.md'), '---\nname: zzz-planning-pattern\n---\nDocumenta cada decision con un ADR breve.');
+    w(plumbPath(TMP, 'skills', 'zzz-planning-pattern.md'), '---\nname: zzz-planning-pattern\n---\nDocumenta cada decision con un ADR breve.');
     let specPrompt = '';
     const rec = (a) => { if (a.phase === 'spec') specPrompt = a.prompt || ''; return goodAgent(a); };
     const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'sk'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: rec });

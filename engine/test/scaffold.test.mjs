@@ -1,4 +1,5 @@
 import { initConfig, CONFIG_SCHEMA } from '../lib/analysis/scaffold.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -26,7 +27,7 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   assert(/node_modules\//.test(readFileSync(join(TMP, '.copilotignore'), 'utf8')), '.copilotignore excluye node_modules (token-first)');
   // la fontanería del run fuera de git: se excluía del contexto del modelo pero acababa commiteada
   assert(r.gitignore && existsSync(join(TMP, '.gitignore')), '.gitignore creado');
-  assert(/openspec\/changes\/\*\*\/\.conductor\//.test(readFileSync(join(TMP, '.gitignore'), 'utf8')), '.gitignore excluye la fontanería del run');
+  assert(/^\.conductor\/$/m.test(readFileSync(join(TMP, '.gitignore'), 'utf8')), '.gitignore excluye el punto ÚNICO de estado de la raíz (.conductor/)');
   const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
   assert(!cfg.$schema, 'config SIN $schema colgante (no hay fichero al lado)');
   assert(typeof cfg._ayuda === 'string' && cfg._ayuda.includes('conductor config'), 'el config que NACE se explica solo: UNA linea _ayuda que apunta a `conductor config` (feedback real: el fichero mudo obligaba a imaginar los mandos)');
@@ -56,7 +57,7 @@ await test('scaffold: .gitignore preexistente del usuario se RESPETA (append, ja
   const gi = readFileSync(join(TMP, '.gitignore'), 'utf8');
   assert(r.gitignore, 'informa de que añadió la línea');
   assert(gi.startsWith('/dist\nnode_modules\n'), 'el contenido previo del usuario queda INTACTO y primero');
-  assert(gi.includes('openspec/changes/**/.conductor/'), 'y la fontanería queda excluida');
+  assert(gi.includes('.conductor/'), 'y el punto único de estado (.conductor/) queda excluido');
 });
 
 rmSync(TMP, { recursive: true, force: true });
@@ -85,10 +86,10 @@ await test('aiact (P3): informe de transparencia — modelos, aprobaciones human
   const { fileURLToPath } = await import('node:url');
   const T = join(dirname(fileURLToPath(import.meta.url)), '.tmp-aiact');
   rmSync(T, { recursive: true, force: true });
-  mkdirSync(join(T, '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(T), { recursive: true });
   mkdirSync(join(T, 'specs', 'counter'), { recursive: true });
   writeFileSync(join(T, 'specs', 'counter', 'spec.md'), '## ADDED Requirements');
-  writeFileSync(join(T, '.conductor', 'timeline.json'), JSON.stringify({
+  writeFileSync(plumbPath(T, 'timeline.json'), JSON.stringify({
     request: 'add counter', verdict: 'GREEN',
     approvals: [{ phase: 'apply', at: '2026-06-11T10:00:00Z', via: 'human-web' }],
     phases: [

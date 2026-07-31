@@ -5,6 +5,7 @@
 //   con NOTA + MODELO EN CALIENTE → lentes paralelas → GREEN → informe AI Act → diff → anti-dup.
 // Es la "prueba oficial" automatizada: lo que antes costaba créditos y clicks, ahora corre en CI.
 import { spawn, execSync } from 'node:child_process';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,7 +109,7 @@ try {
   ok('la nota del developer viajó hasta el código');
 
   // el modelo en caliente quedó en la telemetría de apply
-  const tl = JSON.parse(readFileSync(join(PROJ, 'openspec', 'changes', 'header-e2e', '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(join(PROJ, 'openspec', 'changes', 'header-e2e'), 'timeline.json'), 'utf8'));
   const applyPh = tl.phases.find((p) => p.phase === 'apply');
   if (applyPh.model !== 'fake-hot-model') fail('modelo en caliente no registrado: ' + applyPh.model);
   ok('modelo en caliente registrado en telemetría');
@@ -184,7 +185,7 @@ try {
   ok('🚫 MICRO retirado: el cliente pide micro, el server deriva un flujo SDD gobernado (spec+…+verify) → GREEN');
 
   // CRUDO del modelo ("lo que verías sin conductor"): el driver persiste el stdout del agente y la web lo sirve (fase apply)
-  const mtl = JSON.parse(readFileSync(join(PROJ, 'openspec', 'changes', 'micro-e2e', '.conductor', 'timeline.json'), 'utf8'));
+  const mtl = JSON.parse(readFileSync(plumbPath(join(PROJ, 'openspec', 'changes', 'micro-e2e'), 'timeline.json'), 'utf8'));
   const mApply = (mtl.phases || []).find((p) => p.phase === 'apply');
   if (!mApply || !mApply.hasRaw) fail('la fase apply debía marcar hasRaw=true');
   const rawResp = await api('/api/run/micro-e2e/raw?phase=apply');

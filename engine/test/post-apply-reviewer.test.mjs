@@ -1,6 +1,7 @@
 // B.3 (patch post-apply-reviewer): los hallazgos CONFIRMADOS y graves del revisor fresco entran en el
 // sello como gate CONSULTIVO (severity warning — evidencia, no veto). Aquí se prueba el extractor.
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { postApplyFindings } from '../lib/pipeline/drive.mjs';
@@ -10,8 +11,8 @@ const TMP = join(HERE, '.tmp-par');
 
 await test('post-apply(B.3): Confirmed + error/critical/breaking → findings consultivos para el sello', () => {
   rmSync(TMP, { recursive: true, force: true });
-  mkdirSync(join(TMP, '.conductor'), { recursive: true });
-  writeFileSync(join(TMP, '.conductor', 'post-apply-review.md'), [
+  mkdirSync(plumbPath(TMP), { recursive: true });
+  writeFileSync(plumbPath(TMP, 'post-apply-review.md'), [
     '# Post-Apply Review',
     '- Confirmed: error — el endpoint de pago ignora el escenario de timeout',
     '- Suspect: style — nombres poco descriptivos',
@@ -26,8 +27,8 @@ await test('post-apply(B.3): Confirmed + error/critical/breaking → findings co
 await test('post-apply(B.3): sin fichero o sin graves confirmados → cero findings (cero ruido)', () => {
   rmSync(TMP, { recursive: true, force: true });
   eq(postApplyFindings(TMP).length, 0);
-  mkdirSync(join(TMP, '.conductor'), { recursive: true });
-  writeFileSync(join(TMP, '.conductor', 'post-apply-review.md'), '# Post-Apply Review\n- Suspect: error — sin consenso entre lentes\n- Confirmed: style — nomenclatura');
+  mkdirSync(plumbPath(TMP), { recursive: true });
+  writeFileSync(plumbPath(TMP, 'post-apply-review.md'), '# Post-Apply Review\n- Suspect: error — sin consenso entre lentes\n- Confirmed: style — nomenclatura');
   eq(postApplyFindings(TMP).length, 0);
   rmSync(TMP, { recursive: true, force: true });
 });

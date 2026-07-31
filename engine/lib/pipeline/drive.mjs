@@ -1260,7 +1260,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       writeTimeline('running'); // publica la fase en curso (la mini-web la pinta viva)
       // tamaño de la traza ANTES del intento (scope del BUCLE: el if(!ok) del final la necesita venga del
       // branch que venga) → tras un fallo, contar SOLO las denegaciones de permiso de ESTE intento
-      const evPath = join(changeDir, '.conductor', 'events.jsonl');
+      const evPath = plumbPath(changeDir, 'events.jsonl');
       const evBefore = (() => { try { return statSync(evPath).size; } catch { return 0; } })();
       let r;
       if (phase === 'verify' && lenses.length > 1) {

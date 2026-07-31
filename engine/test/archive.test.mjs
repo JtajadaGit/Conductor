@@ -1,5 +1,6 @@
 // Board de archive + búsqueda ligera (Ola 3).
 import { listArchive, searchChanges, promoteSpec, archiveChange } from '../lib/analysis/archive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,10 +12,10 @@ const CH = (sub) => join(ROOT, 'openspec', 'changes', sub);
 function seed() {
   rmSync(ROOT, { recursive: true, force: true });
   // activo
-  w(join(CH('login'), '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'añade login con OAuth', phases: [{}, {}] }));
+  w(plumbPath(CH('login'), 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'añade login con OAuth', phases: [{}, {}] }));
   w(join(CH('login'), 'specs', 'auth', 'spec.md'), '## ADDED Requirements\nThe system SHALL authenticate via OAuth token.');
   // archivado
-  w(join(CH('archive/2026-06-10-counter'), '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'añade un counter', phases: [{}, {}, {}] }));
+  w(plumbPath(CH('archive/2026-06-10-counter'), 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'añade un counter', phases: [{}, {}, {}] }));
 }
 
 await test('archive: listArchive lee fecha, nombre y verdict de los archivados', () => {
@@ -75,12 +76,12 @@ await test('archive(#69): promoteSpec preserva # Title/## Purpose al añadir a u
 
 await test('archive(#69): archiveChange mueve a archive/YYYY-MM-DD-name; idempotente; confina a openspec/changes/', () => {
   rmSync(ROOT, { recursive: true, force: true });
-  w(join(CH('feat-done'), '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'x', phases: [{}] }));
+  w(plumbPath(CH('feat-done'), 'timeline.json'), JSON.stringify({ verdict: 'GREEN', request: 'x', phases: [{}] }));
   const archiveBase = join(ROOT, 'openspec', 'changes', 'archive');
   const res = archiveChange(CH('feat-done'), archiveBase, '2026-06-23');
   eq(res.archivedDir, '2026-06-23-feat-done');
   assert(!existsSync(CH('feat-done')), 'el change se movió (origen ya no existe)');
-  assert(existsSync(join(archiveBase, '2026-06-23-feat-done', '.conductor', 'timeline.json')), 'el contenido está en archive');
+  assert(existsSync(plumbPath(join(archiveBase, '2026-06-23-feat-done'), 'timeline.json')), 'el contenido está en archive');
   eq(listArchive(ROOT).some((a) => a.name === 'feat-done'), true, 'listArchive lo ve');
   w(join(CH('feat-done'), 'x.txt'), 'dup');
   let threw = false; try { archiveChange(CH('feat-done'), archiveBase, '2026-06-23'); } catch (e) { threw = /Already archived/.test(e.message); }
@@ -94,7 +95,7 @@ await test('archive(gobierno): no se archiva un change sin veredicto GREEN; el o
   rmSync(ROOT, { recursive: true, force: true });
   const archiveBase = join(ROOT, 'openspec', 'changes', 'archive');
   // change NOT-GREEN → archivar lo RECHAZA (el CÓDIGO conduce la promoción a la spec viva, defensa en profundidad)
-  w(join(CH('feat-bad'), '.conductor', 'timeline.json'), JSON.stringify({ verdict: 'NOT-GREEN', request: 'x' }));
+  w(plumbPath(CH('feat-bad'), 'timeline.json'), JSON.stringify({ verdict: 'NOT-GREEN', request: 'x' }));
   let blocked = false; try { archiveChange(CH('feat-bad'), archiveBase, '2026-06-23'); } catch (e) { blocked = e.code === 'NOT_GREEN'; }
   assert(blocked, 'sin GREEN → NOT_GREEN, no se archiva');
   assert(existsSync(CH('feat-bad')), 'el change NO se movió');

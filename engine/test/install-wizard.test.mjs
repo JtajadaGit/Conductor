@@ -1,6 +1,7 @@
 // Test del INSTALADOR GUIADO (`conductor install`): el onboarding de un comando. Guionizado por pipe
 // (CONDUCTOR_TTY=1) — cada paso saltable, jamás se cuelga, y sin TTY imprime la checklist y sale.
 import { mkdirSync, rmSync } from 'node:fs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -49,7 +50,7 @@ await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectado
   rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true });
   mkdirSync(join(home, '.claude'), { recursive: true });
   mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
-  const env = { ...process.env, CONDUCTOR_USERHOME: home, CONDUCTOR_HOME: join(home, '.conductor') };
+  const env = { ...process.env, CONDUCTOR_USERHOME: home, CONDUCTOR_HOME: plumbPath(home) };
   // pipe (sin TTY): conecta los DETECTADOS sin preguntar (CI/scripts jamas se cuelgan)
   execFileSync(process.execPath, [BIN, 'init', proj], { encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 30000, env });
   assert(ex(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md')), 'skill de proyecto de Claude escrita (estándar Agent Skills; OpenCode también la descubre)');

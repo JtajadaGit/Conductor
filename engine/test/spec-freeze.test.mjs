@@ -1,6 +1,7 @@
 // spec-freeze.test.mjs — R-S3: spec-freeze opt-in. Congela el hash de la spec al aprobarla y bloquea el
 // GREEN si la spec muta después (la fase coder corre con --allow-all-tools y podría reescribirla).
 import { drive } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { hashSpecs } from '../lib/provenance/provenance.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +37,7 @@ await test('spec-freeze: con specFreeze=true la spec se congela y un run honesto
     writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ specFreeze: true, maxRetries: 0, lenses: false }));
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: goodAgent });
     eq(r.verdict, 'GREEN', 'spec intacta → GREEN');
-    assert(existsSync(join(changeDir, '.conductor', 'spec-freeze.json')), 'se escribió el sidecar de freeze');
+    assert(existsSync(plumbPath(changeDir, 'spec-freeze.json')), 'se escribió el sidecar de freeze');
   } finally { restoreEnv(saved); }
 });
 
@@ -82,7 +83,7 @@ await test('spec-freeze: SIN specFreeze (default) mutar la spec NO bloquea (fluj
     };
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: tamperAgent });
     eq(r.verdict, 'GREEN', 'sin freeze, el flujo laxo no bloquea por editar la spec');
-    assert(!existsSync(join(changeDir, '.conductor', 'spec-freeze.json')), 'no se congela sin opt-in');
+    assert(!existsSync(plumbPath(changeDir, 'spec-freeze.json')), 'no se congela sin opt-in');
   } finally { restoreEnv(saved); }
 });
 

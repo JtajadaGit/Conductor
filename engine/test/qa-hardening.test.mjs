@@ -2,6 +2,7 @@
 // No vuelven a colarse: false-GREEN forjado (en determinism.test), recursión de contratos, fail-open de
 // políticas, downgrade de firma, race/forgery del ledger, prototype-pollution y DoS de parseo.
 import { diffOpenApi } from '../lib/contract/openapi-diff.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { lintMigrations } from '../lib/contract/migration.mjs';
 import { seal, verifySeal, generateKeypair } from '../lib/provenance/provenance.mjs';
 import { append, verifyChain } from '../lib/provenance/ledger.mjs';
@@ -75,7 +76,7 @@ await test('L2/L3: estimateRun con complexity de prototipo no rompe (cae a mediu
 
 await test('M26: una línea de events.jsonl SIN type no tumba el visor', () => {
   fresh();
-  const d = join(TMP, '.conductor'); mkdirSync(d, { recursive: true });
+  const d = plumbPath(TMP); mkdirSync(d, { recursive: true });
   writeFileSync(join(d, 'events.jsonl'), JSON.stringify({ id: '1' }) + '\n' + JSON.stringify({ type: 'tool.execution_start', id: '2', data: { tool_name: 'bash' } }) + '\n');
   const r = parseEvents(join(d, 'events.jsonl'));
   assert(r && r.summary.total === 2, 'parsea las 2 líneas sin lanzar pese a la que no tiene type');

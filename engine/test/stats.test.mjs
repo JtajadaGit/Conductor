@@ -1,5 +1,6 @@
 // Tests del agregador de uso (lib/stats.mjs): mezcla qwen+Copilot, coste, ahorro, edge cases.
 import { aggregateStats } from '../lib/core/stats.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -8,11 +9,12 @@ const TMP = join(dirname(fileURLToPath(import.meta.url)), '.tmp-stats');
 const fresh = () => { rmSync(TMP, { recursive: true, force: true }); mkdirSync(TMP, { recursive: true }); };
 // escribe un timeline.json en openspec/changes/<name>/.conductor/ (archived → bajo changes/archive/)
 const writeTL = (root, name, tl, archived = false) => {
-  const dir = archived
-    ? join(root, 'openspec', 'changes', 'archive', name, '.conductor')
-    : join(root, 'openspec', 'changes', name, '.conductor');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'timeline.json'), JSON.stringify(tl));
+  const changeDir = archived
+    ? join(root, 'openspec', 'changes', 'archive', name)
+    : join(root, 'openspec', 'changes', name);
+  mkdirSync(changeDir, { recursive: true }); // el change EXISTE primero (como en los flujos reales) → layout moderno
+  mkdirSync(plumbPath(changeDir), { recursive: true });
+  writeFileSync(plumbPath(changeDir, 'timeline.json'), JSON.stringify(tl));
 };
 
 await test('stats: agrega por proveedor y modelo, cuenta runs y hace VISIBLE el ahorro', async () => {

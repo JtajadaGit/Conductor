@@ -2,6 +2,7 @@
 // ESCRIBIENDO ficheros nativamente (como hace Copilot con Write/Edit). Demuestra la propiedad central:
 // la SECUENCIA la impone el CÓDIGO; el agente solo rellena. Captura por snapshot fs (sin git).
 import { drive, parseModelSpec, agentArgs, rollbackTo, scrubSecrets } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
@@ -95,7 +96,7 @@ await test('drive(Path X): emite run-timeline.json con telemetría por fase (rol
   const changeDir = join(TMP, 'openspec', 'changes', 'timeline');
   const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: goodAgent });
   delete process.env.CONDUCTOR_MODEL_CODER;
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   eq(tl.verdict, 'GREEN');
   eq(tl.phases.length, 4, 'una entrada por fase (simple = 4)');
   const apply = tl.phases.find((p) => p.phase === 'apply');
@@ -138,7 +139,7 @@ await test('drive(Path X): captura tokens por fase del export OTel de Copilot (b
     return goodAgent(a);
   };
   await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: otelAgent });
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const apply = tl.phases.find((p) => p.phase === 'apply');
   eq(apply.tokens, { in: 1200, out: 340 }, 'tokens in/out capturados del OTel');
 });
@@ -149,7 +150,7 @@ await test('drive(Path X): OTel corrupto o ausente NO rompe (tokens=null)', asyn
   const badOtel = (a) => { if (a.otelFile && a.phase === 'spec') w(a.otelFile, 'esto no es json{{{\n'); return goodAgent(a); };
   const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: badOtel });
   eq(r.verdict, 'GREEN', 'el run cierra igual');
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   eq(tl.phases.find((p) => p.phase === 'spec').tokens, null, 'corrupto → null, sin crash');
 });
 
@@ -167,7 +168,7 @@ await test('drive(Path X): RESUME — un run abortado se reanuda sin re-pagar la
   eq(r2.verdict, 'GREEN', 'el run reanudado cierra GREEN');
   assert(!called.includes('propose'), `propose NO se re-ejecuta (llamadas: ${called.join(',')})`);
   assert(called.includes('spec') && called.includes('apply'), 'sí ejecuta lo pendiente');
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   eq(tl.resumed, true, 'la telemetría marca resumed');
 });
 
@@ -278,16 +279,16 @@ await test('drive(Path X): LOCK anti-duplicado — un 2º lanzamiento concurrent
   const changeDir = join(TMP, 'openspec', 'changes', 'lockd');
   // lock "vivo" (nuestro propio pid está vivo, pero activeRun ignora el pid propio → simulamos otro proceso con un pid real ajeno: el padre)
   const otherPid = process.ppid || process.pid + 1;
-  w(join(changeDir, '.conductor', 'lock.json'), JSON.stringify({ pid: otherPid, startedAt: Date.now() }));
+  w(plumbPath(changeDir, 'lock.json'), JSON.stringify({ pid: otherPid, startedAt: Date.now() }));
   const called = [];
   const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: (a) => { called.push(a.phase); return goodAgent(a); } });
   eq(r.verdict, 'DUPLICATE', 'el duplicado se niega a arrancar');
   eq(called.length, 0, 'no lanzó ni una fase');
   // lock muerto (pid inexistente) → arranca con normalidad y al acabar LIBERA el lock
-  w(join(changeDir, '.conductor', 'lock.json'), JSON.stringify({ pid: 999999, startedAt: Date.now() }));
+  w(plumbPath(changeDir, 'lock.json'), JSON.stringify({ pid: 999999, startedAt: Date.now() }));
   const r2 = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: goodAgent });
   eq(r2.verdict, 'GREEN', 'lock muerto = se ignora');
-  assert(!existsSync(join(changeDir, '.conductor', 'lock.json')), 'lock liberado al terminar');
+  assert(!existsSync(plumbPath(changeDir, 'lock.json')), 'lock liberado al terminar');
 });
 
 await test('drive(Path X): STOP limpio — conserva lo hecho, marca STOPPED, y el resume retoma después', async () => {
@@ -298,13 +299,13 @@ await test('drive(Path X): STOP limpio — conserva lo hecho, marca STOPPED, y e
   const r1 = await drive({ changeDir, request: 'add counter', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: stopAtSpec, stopSignal: sig });
   eq(r1.verdict, 'STOPPED', 'detenido, no GREEN ni ABORTED');
   assert(!existsSync(join(TMP, 'src', 'counter.js')), 'apply NO llegó a ejecutarse');
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   eq(tl.verdict, 'STOPPED');
   // reanudar con el mismo comando completa el run sin re-pagar propose
   const called = [];
   const r2 = await drive({ changeDir, request: 'add counter', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: (a) => { called.push(a.phase); return goodAgent(a); } });
   // la web del run reanudado debe ver el run COMPLETO: las fases pre-stop heredadas (resumed) + las nuevas
-  const tlr = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tlr = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const names = tlr.phases.map((p) => p.phase);
   assert(names.indexOf('propose') >= 0 && names.indexOf('propose') < names.indexOf('apply'), 'fases heredadas presentes y en orden: ' + names.join('>'));
   assert(tlr.phases.find((p) => p.phase === 'propose').resumed === true, 'heredadas marcadas resumed');
@@ -322,7 +323,7 @@ await test('drive(Path X): MEZCLA de proveedores por fase — byok:/copilot:/amb
   const changeDir = join(TMP, 'openspec', 'changes', 'mix');
   await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: goodAgent });
   delete process.env.CONDUCTOR_MODEL_PLANNER; delete process.env.CONDUCTOR_MODEL_CODER;
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const prop = tl.phases.find((p) => p.phase === 'propose'), apply = tl.phases.find((p) => p.phase === 'apply');
   eq([prop.model, prop.provider], ['qwen36-msc1', 'byok'], 'planner en BYOK');
   eq([apply.model, apply.provider], ['claude-sonnet-4.6', 'copilot'], 'coder en catálogo Business — mismo run');
@@ -406,7 +407,7 @@ await test('drive(v3-P1): nota del humano y MODELO EN CALIENTE — solo para la 
   const verifies = seen.filter((s2) => s2.phase.startsWith('verify'));
   assert(verifies.every((v) => v.model !== 'byok:qwen-hot'), 'el override NO contamina la fase siguiente');
   assert(verifies.every((v) => !v.prompt.includes('USER NOTE')), 'la nota NO contamina la fase siguiente');
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   assert(Array.isArray(tl.approvals) && tl.approvals.some((a) => a.phase === 'apply' && a.via === 'human-web'), 'aprobaciones humanas registradas (AI Act)');
 });
 
@@ -431,7 +432,7 @@ await test('drive(#45): CHAT-EN-PAUSA — redo:"spec" rehace la spec con la inst
   eq(specs.length, 2, 'la fase spec se ejecutó DOS veces (redo real, no fast-forward)');
   assert(specs[1].prompt.includes('USER NOTE') && specs[1].prompt.includes('empiezan en 10'), 'la instrucción del revisor viaja en el prompt del redo');
   eq(seen.filter((s2) => s2.phase === 'apply').length, 1, 'apply solo UNA vez (el redo de planificación no re-paga código)');
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   assert(Array.isArray(tl.approvals) && tl.approvals.some((a) => a.redo === 'spec'), 'el redo queda auditado en approvals (AI Act)');
 });
 
@@ -470,7 +471,7 @@ await test('drive(v3-P1): CHECKPOINT por fase + rollbackTo — deshacer el apply
   };
   const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: agent });
   eq(r.verdict, 'GREEN');
-  assert(existsSync(join(changeDir, '.conductor', 'checkpoints.json')), 'checkpoint guardado');
+  assert(existsSync(plumbPath(changeDir, 'checkpoints.json')), 'checkpoint guardado');
   assert(readFileSync(join(TMP, 'src', 'a.js'), 'utf8').includes('v2-editado'), 'el apply editó a.js');
   rollbackTo(TMP, changeDir, 'apply');
   eq(readFileSync(join(TMP, 'src', 'a.js'), 'utf8'), 'v1-original', 'rollback: a.js restaurado al estado pre-apply');
@@ -500,7 +501,7 @@ await test('drive(v3.1.2): fix que SOLO edita la spec — capturado (el aborto f
   const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: agent, maxRetries: 1 });
   eq(fixCalls, 1, 'el fix corre UNA vez (sin reintentos fantasma)');
   eq(r.verdict, 'GREEN', 'la edición de spec se captura y el run cierra GREEN (antes: ABORTED falso)');
-  const tl = JSON.parse(readFileSync(join(changeDir, '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
   const fx = tl.phases.find((p) => p.phase === 'fix');
   assert(fx.ok && fx.files.some((f) => f.p.includes('spec.md')), 'el timeline registra la spec editada por el fix');
 });

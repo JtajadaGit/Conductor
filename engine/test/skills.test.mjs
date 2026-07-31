@@ -1,5 +1,6 @@
 // Catálogo de patrones de equipo (Ola 3): carga, matching e inyección.
 import { loadSkills, matchSkills, renderSkillsBlock, buildSkillsIndex, buildRegistry } from '../lib/analysis/skills.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,7 @@ const w = (p, c) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(
 
 await test('skills: carga + frontmatter (match/title) + matching por dominio/fase', () => {
   rmSync(ROOT, { recursive: true, force: true });
-  const dir = join(ROOT, '.conductor', 'skills');
+  const dir = plumbPath(ROOT, 'skills');
   w(join(dir, 'global-quality.md'), '# Calidad\nSiempre tests reales.');
   w(join(dir, 'angular.md'), '---\nmatch: angular, apply\ntitle: Convenciones Angular\n---\nUsa signals.');
   const sk = loadSkills(ROOT);
@@ -28,14 +29,14 @@ await test('skills: renderSkillsBlock etiqueta como DATO de confianza del equipo
 
 await test('skills: buildSkillsIndex escribe INDEX.md con todos los patrones', () => {
   buildSkillsIndex(ROOT);
-  const idx = readFileSync(join(ROOT, '.conductor', 'skills', 'INDEX.md'), 'utf8');
+  const idx = readFileSync(plumbPath(ROOT, 'skills', 'INDEX.md'), 'utf8');
   assert(/global-quality/.test(idx) && /angular/.test(idx), 'el INDEX lista los patrones');
   rmSync(ROOT, { recursive: true, force: true });
 });
 
 await test('skills (#72): carpeta SKILL.md (estándar abierto) + compat con planos + de-dup (carpeta gana)', () => {
   rmSync(ROOT, { recursive: true, force: true });
-  const dir = join(ROOT, '.conductor', 'skills');
+  const dir = plumbPath(ROOT, 'skills');
   w(join(dir, 'global-quality.md'), '# Calidad\nSiempre tests reales.');                                   // legacy plano (sin match = global)
   w(join(dir, 'angular', 'SKILL.md'), '---\nname: angular\ndescription: Convenciones Angular\nmatch: angular, apply\n---\nUsa signals.'); // estándar
   w(join(dir, 'security', 'SKILL.md'), '---\nname: security\ndescription: Reglas de seguridad\n---\nValida entradas.'); // estándar sin match = global; title cae a description
@@ -52,7 +53,7 @@ await test('skills (#72): carpeta SKILL.md (estándar abierto) + compat con plan
   eq(matchSkills(sk, { domain: 'counter', phase: 'spec' }).map((s) => s.name).sort(), ['dup', 'global-quality', 'security']);
   eq(matchSkills(sk, { domain: 'angular', phase: 'apply' }).map((s) => s.name).sort(), ['angular', 'dup', 'global-quality', 'security']);
   buildSkillsIndex(ROOT);
-  const idx = readFileSync(join(ROOT, '.conductor', 'skills', 'INDEX.md'), 'utf8');
+  const idx = readFileSync(plumbPath(ROOT, 'skills', 'INDEX.md'), 'utf8');
   assert(/angular/.test(idx) && /security/.test(idx) && /global-quality/.test(idx), 'INDEX cubre planos + carpetas');
   rmSync(ROOT, { recursive: true, force: true });
 });
@@ -66,8 +67,8 @@ await test('skills (#72): buildRegistry escribe REGISTRY.md (Skill|Trigger|Scope
     w(join(home, 'skills', 'shared.md'), '# Compartido\nregla global');
     w(join(home, 'skills', 'dup.md'), 'cuerpo USER');
     // proyecto
-    w(join(ROOT, '.conductor', 'skills', 'local.md'), '---\nmatch: apply\n---\nregla local');
-    w(join(ROOT, '.conductor', 'skills', 'dup.md'), 'cuerpo PROYECTO');
+    w(plumbPath(ROOT, 'skills', 'local.md'), '---\nmatch: apply\n---\nregla local');
+    w(plumbPath(ROOT, 'skills', 'dup.md'), 'cuerpo PROYECTO');
     const sk = loadSkills(ROOT, { includeGlobal: true });
     const byName = Object.fromEntries(sk.map((s) => [s.name, s]));
     eq(sk.length, 3, 'shared(user) + local(project) + dup(dedup project>user) = 3');
@@ -78,7 +79,7 @@ await test('skills (#72): buildRegistry escribe REGISTRY.md (Skill|Trigger|Scope
     eq(loadSkills(ROOT).length, 2, 'por defecto solo patrones del proyecto');
     const skills = buildRegistry(ROOT);
     eq(skills.length, 3, 'el registro incluye proyecto + global');
-    const reg = readFileSync(join(ROOT, '.conductor', 'skills', 'REGISTRY.md'), 'utf8');
+    const reg = readFileSync(plumbPath(ROOT, 'skills', 'REGISTRY.md'), 'utf8');
     assert(/\| Skill \| Trigger \| Scope \| Path \|/.test(reg), 'tabla con columnas Skill/Trigger/Scope/Path');
     assert(/shared/.test(reg) && /local/.test(reg) && /\buser\b/.test(reg) && /\bproject\b/.test(reg), 'lista patrones con su scope');
   } finally { if (savedHome === undefined) delete process.env.CONDUCTOR_HOME; else process.env.CONDUCTOR_HOME = savedHome; rmSync(ROOT, { recursive: true, force: true }); }
@@ -88,7 +89,7 @@ await test('skills(estandar): .github/skills es la ruta PRIMARIA y gana al legad
   rmSync(ROOT, { recursive: true, force: true });
   w(join(ROOT, '.github', 'skills', 'pago', 'SKILL.md'), '---\nname: pago\ndescription: Patron de pago\nmatch: checkout, apply\n---\nUsa el servicio de pagos central.');
   w(join(ROOT, '.github', 'skills', 'estilo.md'), '# Estilo\nBEM siempre.'); // plano tambien vale en la ruta estandar
-  w(join(ROOT, '.conductor', 'skills', 'pago.md'), '---\ntitle: VIEJO\n---\nversion legada que debe PERDER');
+  w(plumbPath(ROOT, 'skills', 'pago.md'), '---\ntitle: VIEJO\n---\nversion legada que debe PERDER');
   const sk = loadSkills(ROOT);
   eq(sk.length, 2, '.github + legado dedupeados');
   assert(sk.find((s) => s.name === 'pago').body.includes('pagos central'), 'la version .github (estandar) GANA sobre el legado');
@@ -110,6 +111,6 @@ await test('skills(proyecto limpio): buildRegistry NO crea .conductor/ en proyec
   w(join(ROOT, '.github', 'skills', 'x.md'), '# X\npatron');
   const skills = buildRegistry(ROOT);
   eq(skills.length, 1, 'los patrones se devuelven igualmente (el driver usa el array)');
-  assert(!existsSync(join(ROOT, '.conductor')), 'cero carpetas inventadas en el proyecto');
+  assert(!existsSync(plumbPath(ROOT)), 'cero carpetas inventadas en el proyecto');
   rmSync(ROOT, { recursive: true, force: true });
 });

@@ -1,6 +1,7 @@
 // T3 — ESTIMADO-vs-REAL: el preflight se persiste en el timeline y la desviación se calcula honesta.
 // Observability & Tracing del propio producto: el estimador deja de ser una promesa y pasa a MEDIRSE.
 import { rmSync, readFileSync } from 'node:fs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { driveOnce } from '../lib/pipeline/evals.mjs';
@@ -12,7 +13,7 @@ await test('estimate-vs-real: el timeline persiste el preflight (fases alineadas
   const T = join(HERE, '.tmp-estreal');
   rmSync(T, { recursive: true, force: true });
   const r = await driveOnce({ tmpRoot: T, slug: 'estr', request: 'add estr(n) with a test', complexity: 'simple' });
-  const tl = JSON.parse(readFileSync(join(T, 'openspec', 'changes', 'estr', '.conductor', 'timeline.json'), 'utf8'));
+  const tl = JSON.parse(readFileSync(plumbPath(join(T, 'openspec', 'changes', 'estr'), 'timeline.json'), 'utf8'));
   assert(tl.estimate && Array.isArray(tl.estimate.phases) && tl.estimate.phases.length, 'estimate.phases presente en el timeline');
   for (const p of tl.estimate.phases) assert(Number.isFinite(p.estIn) && Number.isFinite(p.estOut), `fila de estimación completa (${p.phase})`);
   const estPhases = tl.estimate.phases.map((p) => p.phase);
@@ -46,7 +47,7 @@ await test('stats.estimator: agrega desviación y MAPE solo con datos reales; si
   const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
   const T = join(HERE, '.tmp-est-stats');
   rmSync(T, { recursive: true, force: true });
-  const cd = join(T, 'openspec', 'changes', 'one', '.conductor');
+  const cd = plumbPath(join(T, 'openspec', 'changes', 'one'));
   mkdirSync(cd, { recursive: true });
   writeFileSync(join(cd, 'timeline.json'), JSON.stringify({
     verdict: 'GREEN', request: 'x',

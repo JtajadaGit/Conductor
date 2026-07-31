@@ -153,6 +153,7 @@ const COPILOTIGNORE = [
   '*.log', '*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
   '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
   'openspec/changes/**/.conductor/',
+  '.conductor/',
 ].join('\n') + '\n';
 
 // openspec/config.yaml YA NO SE GENERA (2026-07-30). Era un ESPEJO de lo detectado que se reescribía en
@@ -164,7 +165,7 @@ const COPILOTIGNORE = [
 // .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
 // MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
 // commiteada en el repo del usuario. Append IDEMPOTENTE: jamás reescribe el .gitignore existente.
-const GITIGNORE_LINE = 'openspec/changes/**/.conductor/';
+const GITIGNORE_LINE = '.conductor/'; // punto ÚNICO de estado en la raíz (los runs legados quedan cubiertos por la línea antigua si existe)
 function ensureGitignore(root) {
   const p = join(root, '.gitignore');
   try {

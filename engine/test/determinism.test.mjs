@@ -5,6 +5,7 @@
 // "agente que no coopera → ABORTA sin saltar"); aquí el run progresa por TODAS las fases y se asegura que
 // el orden lo fija el CÓDIGO (orchestrate.PHASES/resolvePhases), nunca el modelo.
 import { drive } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { resolvePhases, next } from '../lib/pipeline/orchestrate.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,9 +143,9 @@ await test('resolvePhases: el pipeline configurable reordena/omite, pero verify 
 await test('anti-tamper: next() NUNCA declara GREEN por agotar el array sin pasar por verify (no-micro)', () => {
   fresh();
   const ch = join(TMP, 'openspec', 'changes', 'tamper');
-  mkdirSync(join(ch, '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(ch), { recursive: true });
   // estado manipulado: pipeline sin verify (lo que un coder con --allow-all-tools o un teammate podría dejar)
-  writeFileSync(join(ch, '.conductor', 'state.json'), JSON.stringify({ request: 'x', complexity: 'medium', domain: 'core', phases: ['apply'], idx: 0, status: 'running' }));
+  writeFileSync(plumbPath(ch, 'state.json'), JSON.stringify({ request: 'x', complexity: 'medium', domain: 'core', phases: ['apply'], idx: 0, status: 'running' }));
   writeFileSync(join(ch, 'apply-report.md'), '# Apply Report\nStatus: done');
   const r = next({ changeDir: ch, srcDir: TMP });
   eq(r.verdict, 'NOT-GREEN', 'un pipeline que termina sin gate verify es NOT-GREEN, jamás GREEN');
@@ -153,8 +154,8 @@ await test('anti-tamper: next() NUNCA declara GREEN por agotar el array sin pasa
 await test('anti-tamper: drive() con state.json manipulado (sin verify) NO da GREEN falso de 0 llamadas', async () => {
   fresh();
   const ch = join(TMP, 'openspec', 'changes', 'tamper2');
-  mkdirSync(join(ch, '.conductor'), { recursive: true });
-  writeFileSync(join(ch, '.conductor', 'state.json'), JSON.stringify({ request: 'do x', complexity: 'medium', domain: 'core', phases: ['apply'], idx: 0, status: 'running' }));
+  mkdirSync(plumbPath(ch), { recursive: true });
+  writeFileSync(plumbPath(ch, 'state.json'), JSON.stringify({ request: 'do x', complexity: 'medium', domain: 'core', phases: ['apply'], idx: 0, status: 'running' }));
   writeFileSync(join(ch, 'apply-report.md'), '# Apply Report\nStatus: done');
   const calls = [];
   const lazy = ({ phase }) => { calls.push(phase); return Promise.resolve({ code: 0 }); };
@@ -166,7 +167,7 @@ await test('anti-tamper: drive() con state.json manipulado (sin verify) NO da GR
 await test('anti-tamper C1: resume con phases:["verify"] forjado NO cuadra con la canónica → se descarta y ejecuta real', async () => {
   fresh();
   const ch = join(TMP, 'openspec', 'changes', 'forgeverify');
-  mkdirSync(join(ch, '.conductor'), { recursive: true });
+  mkdirSync(plumbPath(ch), { recursive: true });
   mkdirSync(join(ch, 'specs', 'core'), { recursive: true });
   // artefactos COHERENTES forjados + verify-report PASS + state posicionado YA en verify (idx:0, phases:["verify"])
   writeFileSync(join(ch, 'specs', 'core', 'spec.md'), REQSPEC);
@@ -175,7 +176,7 @@ await test('anti-tamper C1: resume con phases:["verify"] forjado NO cuadra con l
   writeFileSync(join(ch, 'verify-report.md'), '## Verdict\nPASS\n');
   mkdirSync(join(TMP, 'src'), { recursive: true });
   writeFileSync(join(TMP, 'src', 'x.js'), '// @conductor REQ-X\nexport const x = (n) => n + 1;\n');
-  writeFileSync(join(ch, '.conductor', 'state.json'), JSON.stringify({ request: 'do x', complexity: 'medium', domain: 'core', phases: ['verify'], idx: 0, status: 'running' }));
+  writeFileSync(plumbPath(ch, 'state.json'), JSON.stringify({ request: 'do x', complexity: 'medium', domain: 'core', phases: ['verify'], idx: 0, status: 'running' }));
   const calls = [];
   const lazy = ({ phase }) => { calls.push(phase); return Promise.resolve({ code: 0 }); };
   const r = await drive({ changeDir: ch, request: 'do x', complexity: 'medium', domain: 'core', srcDir: TMP, runAgent: lazy });
@@ -191,7 +192,7 @@ await test('anti-tamper C1: re-abrir un run COMPLETADO a status:running NO resel
   const r1 = await drive({ changeDir: ch, request: 'do x', complexity: 'simple', domain: 'core', srcDir: TMP, runAgent: fakeAgent(realOrder) });
   eq(r1.verdict, 'GREEN', 'el run real cierra GREEN');
   // 2) TAMPER: re-abrir el state a 'running' (idx ya en verify) — todo en disco es coherente y real
-  const sf = join(ch, '.conductor', 'state.json');
+  const sf = plumbPath(ch, 'state.json');
   const st = JSON.parse(readFileSync(sf, 'utf8')); st.status = 'running'; writeFileSync(sf, JSON.stringify(st));
   // 3) re-drive con un agente que NUNCA escribe: sin el backstop, el resume cerraría GREEN con 0 llamadas
   const calls = [];
