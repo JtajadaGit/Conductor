@@ -19,7 +19,7 @@ import { renderReceipt } from '../serving/dashboard.mjs';
 import { initConfig } from '../analysis/scaffold.mjs';
 import { assertConfined } from './confine.mjs';
 import { count } from '../core/report.mjs';
-import { plumbPath } from '../core/plumb.mjs';
+import { plumbPath, domainFromName } from '../core/plumb.mjs';
 import { summarizeArtifact } from '../core/estimate.mjs';
 
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
@@ -175,7 +175,7 @@ const TOOLS = {
       const root = resolve(projectRoot || process.cwd());
       const name = changeName ? slug(changeName) : featureName(request);
       const changeDir = join(root, 'openspec', 'changes', name);
-      const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : name.split('-')[0], srcDir: root, log: (m) => log(m) });
+      const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : domainFromName(name), srcDir: root, log: (m) => log(m) });
       return { verdict: r.verdict, gate: r.gate || null, phase: r.phase || null, trail: r.trail || [], changeDir };
     } },
   // RECIBO EN EL CHAT (feature completa SIN miniweb): tras conductor_drive, el agente presenta el recibo de

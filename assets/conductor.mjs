@@ -25,7 +25,18 @@ __M['plumb'] = (function(){
 const plumbPath = (changeDir, ...rest) => join(changeDir, '.conductor', ...rest);
 const plumbDir = (changeDir) => plumbPath(changeDir);
 
-return { plumbPath, plumbDir };
+// dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
+// "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
+// un dominio sin sentido que ensucia la fuente de verdad para siempre). Sin token útil → core.
+const DOMAIN_STOP = new Set('quiero quieres necesito necesitamos crea crear creame hazme haz hacer anade anadir agrega agregar implementa implementar genera generar pon poner un una unos unas el la los las de del en con sin para por que y o u a al es me mi tu se lo nuevo nueva componente pagina want need create make add build new please the of with without for and or to my this este esta'.split(' '));
+function domainFromName(name) {
+  for (const t of String(name || '').toLowerCase().split('-')) {
+    if (t && t.length >= 3 && !DOMAIN_STOP.has(t)) return t;
+  }
+  return 'core';
+}
+
+return { domainFromName, plumbPath, plumbDir };
 })();
 
 // ===== lib/core/theme.mjs =====
@@ -228,7 +239,7 @@ function ensureByokTemplate(home) {
 }
 
 const LITELLM_TEMPLATE = {
-  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se queda COMO LA ESCRIBAS (formato OpenCode; añade "seal": true si prefieres que conductor la cifre). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
+  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se queda COMO LA ESCRIBAS (añade "seal": true si prefieres que conductor la cifre). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
   baseUrl: 'https://TU-PROXY/v1',
   apiKey: 'sk-PEGA-AQUI-TU-KEY',
   models: {
@@ -3928,6 +3939,13 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
   // reintenta (mismo mecanismo que el fix de verify); tope de ciclos → BLOCKED. Las pruebas GATEAN el cierre.
   if (phase === 'test') {
     let tr = ''; try { tr = readFileSync(join(changeDir, 'test-report.md'), 'utf8'); } catch {}
+    // NO EJECUTABLE ≠ pruebas rojas: script/binario inexistente no lo arregla ningún ciclo fix → BLOCKED
+    // inmediato con la causa y el remedio (antes: 2 ciclos de fix a ciegas contra un comando que ni arrancaba).
+    if (/##\s*Verdict[^\n]*\n+\s*UNRUNNABLE/i.test(tr)) {
+      s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s);
+      const uline = (tr.match(/^UNRUNNABLE:.*/im) || ['comando de pruebas'])[0];
+      return { done: true, verdict: 'BLOCKED', phase: 'test', reason: `el comando de pruebas NO se pudo ejecutar (${uline.replace(/^UNRUNNABLE:\s*/i, '')}) — revisa el script "test" del package.json o declara "checks" en openspec/conductor.json. Un ciclo fix no puede arreglar esto.` };
+    }
     const failed = /##\s*Verdict[^\n]*\n+\s*FAIL/i.test(tr) || /^FAILED:/im.test(tr);
     if (failed) {
       const ti = s.idx;
@@ -3938,8 +3956,10 @@ function next({ changeDir, srcDir, override = null, overrideBy = null, strict = 
       s.testFixCycles = (s.testFixCycles || 0) + 1;
       if (s.testFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
       saveState(changeDir, s);
-      const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
-      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${instructionFor('fix')} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
+      // el fix recibe el OUTPUT REAL de las pruebas (tope 900 chars), no solo el nombre del comando: reparar
+      // a ciegas era re-pagar el ciclo entero para adivinar qué assertion falló.
+      const detail = tr.replace(/^##\s*Verdict[^\n]*\n+\s*\w+\s*/i, '').trim().slice(0, 900);
+      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${instructionFor('fix')} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. Salida real:\n${detail}` };
     }
     s.idx += 1; saveState(changeDir, s); // PASS → avanza a verify (gobierno terminal)
     return stepFor(changeDir, s);
@@ -4824,6 +4844,14 @@ function classifyFailure(r, producedEffect) {
   return r.code && r.code !== 0 ? 'error' : 'none';
 }
 const TRANSIENT_FAILS = new Set(['timeout', 'provider', 'crash']);
+// ¿el comando de pruebas NI SIQUIERA pudo ejecutarse? (script inexistente, binario no encontrado, shim
+// roto). Eso NO son pruebas rojas: ningún ciclo fix lo arregla — merece BLOCKED inmediato con la verdad.
+// Puro y exportado para test. (Caso real: npm.cmd sin shell → EINVAL a los 0ms → fix a ciegas ×2.)
+function checkUnrunnable(e, out) {
+  const code = String((e && e.code) || '');
+  if (code === 'ENOENT' || code === 'EINVAL' || code === 'EACCES') return true;
+  return /Missing script|not recognized as|no se reconoce como|command not found|no such file or directory/i.test(String(out || '') + String((e && e.message) || ''));
+}
 // limpieza de secuencias ANSI/CSI del crudo del agente (los terminales colorean la salida) — Ola 1.
 // Quita SGR/colores (\x1b[...m), CSI en general y OSC (\x1b]...BEL) para que el "crudo" sea legible.
 function stripAnsi(s) {
@@ -4997,6 +5025,17 @@ function persistSessionTrace(ssd, before, otelFile) {
     mkdirSync(dirname(dst), { recursive: true });
     appendFileSync(dst, readFileSync(f));
   } catch { /* best-effort: sin traza no se rompe la fase */ }
+}
+
+// cuenta las DENEGACIONES de permiso del CLI appendeadas a la traza (events.jsonl del change) desde
+// `fromByte` (el tamaño del fichero al arrancar el intento). Distingue "el modelo no hizo nada" de "el
+// modelo lo intentó y el CLI se lo denegó" — dos diagnósticos opuestos que antes eran el mismo "no-progress".
+function countDeniedPerms(evPath, fromByte = 0) {
+  try {
+    const buf = readFileSync(evPath);
+    if (buf.length <= fromByte) return 0;
+    return (buf.subarray(fromByte).toString('utf8').match(/denied-no-approval-rule-and-could-not-request-from-user/g) || []).length;
+  } catch { return 0; }
 }
 
 // argumentos del one-shot por fase. AHORRO por defecto: github-mcp builtin y el MCP de conductor se
@@ -5406,6 +5445,16 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
   try { const lk = JSON.parse(readFileSync(lockPath(changeDir), 'utf8')); const age = Date.now() - statSync(lockPath(changeDir)).mtimeMs; if (lk?.pid) log(`🔓 descarto lock previo huérfano (pid ${lk.pid}, ${Math.round(age / 1000)}s sin latir)`); } catch {}
   takeLock();
   const projectRoot = srcDir ? resolve(srcDir) : resolve(changeDir, '..', '..', '..');
+  // GUARD DE RAÍZ (caso real: un agente pasó `--src src` → projectRoot=subdirectorio sin openspec/ → el
+  // CLI denegó TODA escritura del artefacto fuera de su dir de confianza y la fase murió en "no-progress"
+  // tras 2 intentos pagados). Mejor morir AQUÍ con la verdad y la pista que contra un muro de permisos.
+  if (!existsSync(join(projectRoot, 'openspec'))) {
+    let hint = '';
+    let up = projectRoot;
+    for (let i = 0; i < 3; i++) { up = dirname(up); if (existsSync(join(up, 'openspec'))) { hint = ` — openspec/ SÍ existe en ${up}: lanza desde ahí (o corrige --src)`; break; } }
+    try { rmSync(lockPath(changeDir), { force: true }); } catch {}
+    throw new Error(`projectRoot sin openspec/ (${projectRoot})${hint}. El driver se ejecuta desde la raíz del proyecto inicializado (conductor init).`);
+  }
   const cfg = readDriveConfig(projectRoot); // config del usuario (openspec/conductor.json)
   // key BYOK (vive SOLO en ~/.conductor/byok.json, NO en el env del server → el patrón sk-/Bearer no la cubre si
   // es una virtual key con otro formato) para redactarla en TODOS los scrubs de captura del run. Sin esto, si el
@@ -5719,20 +5768,33 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       log('⏳ test (ejecución de pruebas del proyecto)');
       const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
       const consent = runTestsOpt === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
-      const failed = []; let detail = '';
+      const failed = []; const unrun = []; let detail = '';
       if (cmds.length && consent) {
         for (const chk of cmds) {
-          const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
-          if (!a.length) continue;
-          try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
-          catch (e) { failed.push(chk); detail += `FAILED: ${chk}\n${scrubSecrets(String(e.stdout || '') + String(e.stderr || ''), process.env, runSecretExtra).slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk}`); }
+          // SHELL REAL con consentimiento explícito (toggle test / CONDUCTOR_ALLOW_CHECKS): "npm test" en
+          // Windows es npm.cmd — execFile SIN shell moría en EINVAL a los 0ms y el fix "reparaba" pruebas
+          // que JAMÁS corrieron (caso real 2026-07-31). El comando es del dev: corre como en su terminal.
+          try {
+            // execSync = el comando ENTERO al shell nativo (cmd/sh), como lo escribiría el dev en su terminal.
+            // (El intento con `cmd /d /s /c` + array de args destrozaba el quoting interno: `node -e "…"`.)
+            execSync(String(chk), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true });
+            log(`   ✅ prueba: ${chk}`);
+          }
+          catch (e) {
+            const out = scrubSecrets(String(e.stdout || '') + String(e.stderr || ''), process.env, runSecretExtra);
+            const first = (out.trim().split(/\r?\n/).find((l) => l.trim()) || String(e.message || '')).slice(0, 160);
+            if (checkUnrunnable(e, out)) { unrun.push(chk); detail += `UNRUNNABLE: ${chk}\n${out.slice(-800)}\n`; log(`   🚫 prueba NO EJECUTABLE: ${chk} — ${first}`); }
+            else { failed.push(chk); detail += `FAILED: ${chk}\n${out.slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk} — ${first}`); }
+          }
         }
-        testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
+        testsResult = { ran: true, passed: failed.length === 0 && unrun.length === 0, failed, ...(unrun.length ? { unrunnable: unrun } : {}), cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
-      try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
+      // UNRUNNABLE gana en el veredicto: aunque otra prueba haya fallado "de verdad", primero hay que poder
+      // ejecutarlas todas — y ese arreglo es de CONFIG (checks/package.json), no de código: fix no aplica.
+      try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${unrun.length ? 'UNRUNNABLE' : failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
       timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: failed.length === 0, ...(failed.length ? { failureKind: 'tests-fail' } : {}) });
       currentInfo = null; writeTimeline('running');
-      log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
+      log(unrun.length ? `🚫 test: comando(s) NO ejecutables (${unrun.join(' · ')}) → BLOCKED (arreglo de config, no de código)` : failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
       trail.push('test');
       step = next({ changeDir, srcDir: projectRoot, strict: strictGate });
       if (step.gate === 'TESTS-FAIL') log(`   pruebas fallaron → ${step.phase || '(fix)'}`);
@@ -5906,6 +5968,10 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       // lastError solo persiste entre REINTENTOS de la misma fase (nunca entre fases)
       currentInfo = { phase, role, model: mspec.model || null, provider: mspec.provider, attempt, maxAttempts: maxRetries + 1 + (fbStr && !fallbackInfo ? 0 : (fallbackInfo ? 1 : 0)), startedAt: Date.now(), timeoutMs: tmo, lastError: (currentInfo?.phase === phase ? currentInfo?.lastError : null) || null };
       writeTimeline('running'); // publica la fase en curso (la mini-web la pinta viva)
+      // tamaño de la traza ANTES del intento (scope del BUCLE: el if(!ok) del final la necesita venga del
+      // branch que venga) → tras un fallo, contar SOLO las denegaciones de permiso de ESTE intento
+      const evPath = join(changeDir, '.conductor', 'events.jsonl');
+      const evBefore = (() => { try { return statSync(evPath).size; } catch { return 0; } })();
       let r;
       if (phase === 'verify' && lenses.length > 1) {
         // P2: lentes en PARALELO (correctitud/seguridad/tests...) — N one-shots baratos, merge determinista
@@ -6020,6 +6086,18 @@ ${readSafe(x.lp).trim()}`);
         if (existsSync(step.write_to_abs) && readSafe(step.write_to_abs).trim()) { ok = true; capturedFiles = [{ p: write_to, k: 'create' }]; } // el artefacto de la fase
       }
       if (!ok) {
+        // PERMISOS DENEGADOS ≠ modelo flojo: si la traza de ESTE intento tiene denegaciones del CLI, el
+        // artefacto no salió porque el CLI lo IMPIDIÓ (dir de confianza equivocado, no-interactivo sin regla).
+        // Reintentar es pagar otra vez contra el mismo muro → error CLARO y fatal, con el remedio.
+        const denials = countDeniedPerms(evPath, evBefore);
+        if (denials > 0) {
+          lastFailureKind = 'error';
+          const msg = `el CLI denegó ${denials} operación(es) por PERMISOS (escrituras fuera de su directorio de confianza: ${projectRoot}). Lanza el run desde la RAÍZ del proyecto (donde vive openspec/).`;
+          currentInfo.lastError = msg;
+          log(`   🔒 ${msg}`);
+          writeTimeline('running');
+          break;
+        }
         // R-A1/R-A7: clasifica el fallo y, SOLO si es transitorio (timeout/provider/crash) y queda reintento,
         // espera un backoff exponencial con jitter (un 429/5xx del proxy ya no se reintenta al instante). El
         // no-progreso conserva el retry escalado SIN espera (el modelo flojo necesita el prompt contundente ya).
@@ -6266,7 +6344,7 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, checkUnrunnable, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, countDeniedPerms, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
 })();
 
 // ===== lib/pipeline/evals.mjs =====
@@ -6807,7 +6885,7 @@ const { listCopilotCatalog } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } = __M['secret'];
-const { plumbPath } = __M['plumb'];
+const { plumbPath, domainFromName } = __M['plumb'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
   if (!root || !rel) return null;
@@ -7236,7 +7314,7 @@ function listChanges(root) {
 // spawner real (inyectable en tests): lanza el driver DETACHED con su propia web (sin abrir navegador)
 function defaultSpawnRun({ engine, root, name, request, complexity, domain, preset }) {
   const changeDir = join(root, 'openspec', 'changes', name);
-  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--serve'];
+  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || domainFromName(name), '--serve'];
   if (preset) args.push('--preset', preset);
   const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } });
   child.unref();
@@ -7487,7 +7565,7 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
-      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se queda como la escribas, formato OpenCode; "seal": true si prefieres cifrarla).';
+      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se queda como la escribas; "seal": true si prefieres cifrarla).';
       else if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
       else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}
@@ -7659,7 +7737,7 @@ function byokChildEnv(baseEnv) {
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
 function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset, pipeline, runTests }) {
   const changeDir = join(root, 'openspec', 'changes', name);
-  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--ipc'];
+  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || domainFromName(name), '--ipc'];
   if (auto) args.push('--auto');
   // dial de gobierno por run (los 4 presets): viaja como --preset; el driver le da máxima precedencia sobre conductor.json/env
   if (preset) args.push('--preset', preset);
@@ -8355,7 +8433,7 @@ const { renderReceipt } = __M['dashboard'];
 const { initConfig } = __M['scaffold'];
 const { assertConfined } = __M['confine'];
 const { count } = __M['report'];
-const { plumbPath } = __M['plumb'];
+const { plumbPath, domainFromName } = __M['plumb'];
 const { summarizeArtifact } = __M['estimate'];
 const PATH_ARGS = new Set(['changeDir', 'srcDir', 'base', 'head', 'target', 'jsonl', 'projectRoot']);
 
@@ -8510,7 +8588,7 @@ const TOOLS = {
       const root = resolve(projectRoot || process.cwd());
       const name = changeName ? slug(changeName) : featureName(request);
       const changeDir = join(root, 'openspec', 'changes', name);
-      const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : name.split('-')[0], srcDir: root, log: (m) => log(m) });
+      const r = await drive({ changeDir, request, complexity: complexity || 'medium', domain: domain ? slug(domain) : domainFromName(name), srcDir: root, log: (m) => log(m) });
       return { verdict: r.verdict, gate: r.gate || null, phase: r.phase || null, trail: r.trail || [], changeDir };
     } },
   // RECIBO EN EL CHAT (feature completa SIN miniweb): tras conductor_drive, el agente presenta el recibo de
@@ -8801,6 +8879,10 @@ switch (cmd) {
     // DRIVER DETERMINISTA: el código conduce el pipeline y llama al modelo (BYOK) por fase.
     // Garantiza la secuencia con cualquier modelo — un modelo flojo da peor contenido, no salta fases.
     const dir = pos[0]; if (!dir) bad('drive <changeDir> --request "..." [--src dir] [--complexity simple|medium|complex] [--domain name] [--preset quick-fix|visual|feature|migration] [--model-planner m] [--model-coder m] [--model-reviewer m]');
+    // BLINDAJE ANTI-IMPROVISACIÓN (caso real: un agente pasó `--src src` hacia un subdirectorio y otros
+    // flags plausibles): flag desconocido = ABORT con la lista válida — el agente se corrige a la primera.
+    const DRIVE_FLAGS = new Set(['--request', '--src', '--complexity', '--domain', '--pipeline', '--preset', '--runner', '--auto', '--ipc', '--run-tests', '--serve', '--model-planner', '--model-coder', '--model-reviewer']);
+    { const reqIdx = argv.indexOf('--request'); const unknown = argv.filter((a, i) => a.startsWith('--') && !DRIVE_FLAGS.has(a) && (reqIdx < 0 || i <= reqIdx)); if (unknown.length) bad(`drive: flag(s) desconocido(s): ${unknown.join(' ')}. Flags válidos: ${[...DRIVE_FLAGS].join(' ')}`); }
     // inmune a comillas perdidas: une todas las palabras tras --request hasta el siguiente --flag
     const reqI = argv.indexOf('--request');
     let request = '';
@@ -9112,7 +9194,7 @@ switch (cmd) {
       } catch {}
       if (tpl) { console.log(`LiteLLM: PLANTILLA sin rellenar en ${fRead} — ábrela y pega tu baseUrl y apiKey → disponible: ❌`); process.exit(0); }
       const encTxt = enc ? (sealedNow ? 'con "seal": true → sellada AHORA (AES-256-GCM) ✓' : (portable ? 'cifrada AES-256-GCM (portable Win/Mac/Linux)' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambiaste de SO'))
-        : 'en claro — tu fichero, tu formato (como OpenCode; añade "seal": true o usa `litellm login` si prefieres cifrarla)';
+        : 'en claro — tu fichero, tu formato (añade "seal": true o usa `litellm login` si prefieres cifrarla)';
       console.log(`LiteLLM por env: ${envOk ? 'SÍ' : 'no'} · fichero: ${fileOk ? 'SÍ (' + fRead + ', KEY ' + encTxt + keyTx + ')' : 'no'}${nDecl ? ` · ${nDecl} modelo(s) declarado(s)` : ''} → disponible: ${envOk || fileOk ? '✅' : '❌ ejecuta `conductor litellm login`'}`);
       process.exit(0);
     }
@@ -9140,6 +9222,9 @@ switch (cmd) {
     // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.
     const BODY_CMD = [
       'La petición del usuario: $ARGUMENTS',
+      // FAIL-CLOSED (caso real: VS Code con skill pero sin MCP → el agente improvisó CLI, flags inventados,
+      // init interactivo bloqueado y un run contra un muro de permisos): sin tools, se conecta y se PARA.
+      '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
@@ -9157,20 +9242,37 @@ switch (cmd) {
       // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
       { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md (skill estándar; OpenCode también la descubre)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
       { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      // VS Code Copilot Chat: LEE .github/skills (misma skill que Copilot CLI) pero necesita SU puente MCP
+      // en .vscode/mcp.json (fusión no destructiva) — sin él, el agente se queda con guion y sin tools.
+      { n: '4', key: 'vscode', label: 'VS Code (Copilot Chat)', det: existsSync(join(homeH, '.vscode')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md + .vscode/mcp.json (puente MCP del chat)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), mcpJson: join(rootI2, '.vscode', 'mcp.json') },
     ];
     let chosenH = HOSTS_PROJ.filter((h) => h.det);
-    const tty2 = process.stdin.isTTY || process.env.CONDUCTOR_TTY === '1';
+    // --hosts none | --hosts copilot,claude,opencode,vscode → SIN menú (la vía determinista para agentes,
+    // CI y scripts; el menú interactivo bloqueaba la terminal de un agente de chat esperando un Enter)
+    const hostsFlag = (flag('--hosts') || '').trim().toLowerCase();
+    if (hostsFlag) chosenH = hostsFlag === 'none' ? [] : HOSTS_PROJ.filter((h) => hostsFlag.split(',').map((s) => s.trim()).includes(h.key));
+    const tty2 = !hostsFlag && (process.stdin.isTTY || process.env.CONDUCTOR_TTY === '1');
     if (tty2) {
       const det = chosenH.map((h) => h.label).join(', ') || 'ninguno';
       const rl2 = createInterface({ input: process.stdin, output: process.stdout });
-      const ans = (await new Promise((res) => rl2.question(`  /conductor por-proyecto (committeable — tu equipo lo hereda al clonar):\n    [1] Copilot  [2] Claude Code  [3] OpenCode  ·  Enter = detectados (${det})  ·  n = ninguno\n  → `, res))).trim().toLowerCase();
+      const ans = (await new Promise((res) => rl2.question(`  /conductor por-proyecto (committeable — tu equipo lo hereda al clonar):\n    [1] Copilot CLI  [2] Claude Code  [3] OpenCode  [4] VS Code (chat)  ·  Enter = detectados (${det})  ·  n = ninguno\n  → `, res))).trim().toLowerCase();
       rl2.close();
       if (ans === 'n') chosenH = [];
       else if (ans) chosenH = HOSTS_PROJ.filter((h) => ans.includes(h.n));
     }
     let hostLines = '';
+    const engineI = resolve(process.argv[1]).split('\\').join('/');
+    const portableI = /node_modules[\\/]+conductor[\\/]/i.test(resolve(process.argv[1]));
     for (const h of chosenH) {
-      try { mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`; } catch {}
+      try {
+        mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`;
+        if (h.mcpJson) {
+          // el puente MCP del chat de VS Code: fusión NO destructiva (mergeMcpEntry conserva otros servers; backup si había fichero)
+          const prevM = existsSync(h.mcpJson) ? readFileSync(h.mcpJson, 'utf8') : '';
+          const rm = mergeMcpEntry(prevM, engineI, { key: 'servers', portable: portableI });
+          if (!rm.error && rm.changed) { mkdirSync(dirname(h.mcpJson), { recursive: true }); if (prevM) writeFileSync(h.mcpJson + '.bak', prevM); writeFileSync(h.mcpJson, rm.text); }
+        }
+      } catch {}
     }
     if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
@@ -9372,7 +9474,7 @@ switch (cmd) {
       let jD = null; try { jD = JSON.parse(readFileSync(fD, 'utf8')); } catch {}
       if (!jD) console.log('  credenciales LiteLLM: AUSENTES → `conductor setup` deja la plantilla en ~/.conductor/litellm.json (o `conductor litellm login`)');
       else if (isTemplateCreds(jD)) console.log(`  credenciales LiteLLM: PLANTILLA sin rellenar en ${fD} — ábrela y pega tu baseUrl y apiKey`);
-      else if (jD.apiKey) console.log(`  credenciales LiteLLM: en claro en ${fD} (formato OpenCode — válido; \"seal\": true si prefieres cifrarla)`);
+      else if (jD.apiKey) console.log(`  credenciales LiteLLM: en claro en ${fD} (válido; \"seal\": true si prefieres cifrarla)`);
       else if (jD.apiKeyEnc) console.log(`  credenciales LiteLLM: OK (${fD}, key ${isPortableBlob(jD.apiKeyEnc) ? 'cifrada AES-256-GCM' : 'blob DPAPI legacy — re-guarda con `litellm login` si cambias de SO'})${jD.models ? ` · ${Array.isArray(jD.models) ? jD.models.length : Object.keys(jD.models).length} modelo(s) declarado(s)` : ' · sin models declarados (el picker dependerá del proxy vivo)'}`);
       else console.log(`  credenciales LiteLLM: fichero ${fD} sin apiKey/apiKeyEnc → revísalo`);
     } catch { console.log('  credenciales LiteLLM: (no comprobable)'); }
@@ -9637,7 +9739,7 @@ switch (cmd) {
       console.log('✓ 1/3 · credenciales del proxy: ya configuradas');
     } else {
       if (!existsSync(credF)) { mkdirSync(homeI, { recursive: true }); writeFileSync(credF, JSON.stringify(LITELLM_TEMPLATE, null, 2) + '\n', { mode: 0o600 }); }
-      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (se quedan tal cual los escribas, como en OpenCode).\n     (alternativa con asistente: \`conductor litellm login\` — esa vía sí cifra la key)`);
+      console.log(`1/3 · credenciales del proxy: he dejado la PLANTILLA en ${credF}\n     → ábrela y sustituye baseUrl y apiKey por los de tu proxy (se quedan tal cual los escribas).\n     (alternativa con asistente: \`conductor litellm login\` — esa vía sí cifra la key)`);
     }
     // 2/3 · CONECTAR conductor a tus CLIs — TÚ eliges (Enter = los detectados). En cada host se instala el
     // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
@@ -9799,7 +9901,7 @@ function printHelp() {
 
   PRIMERA VEZ (tras npm i -g)
     setup                                elige tus CLIs (Copilot/Claude/OpenCode) → /conductor en su chat
-    ~/.conductor/litellm.json            tus credenciales+modelos del proxy, formato OpenCode (o \`litellm login\`)
+    ~/.conductor/litellm.json            tus credenciales+modelos del proxy (o \`litellm login\`)
 
   conductor help --all                   → la sala de máquinas completa (gates, sellos, ledger, CI…)`);
     process.exit(cmd && !['help', '--help', undefined].includes(cmd) ? 2 : 0);
@@ -9899,4 +10001,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: d014fa949caab4478e86581cd6c998791c80bf91d110ec54547217c6076a4eca
+// build-inputs-sha256: d254465f748728e00d6e194d9295e025a55722e49217bd453d4ebbbe6187dabf

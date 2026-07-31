@@ -90,13 +90,18 @@ export class SessionScreen extends CElement {
     }
     const s = d.summary;
     return html`
-      <div class="apphdr"><h1 class="trunc">Sesión · ${this.change}</h1><a class="btn sm sec" href=${this.runPath()}>Volver al run</a></div>
-      <p class="muted" style="margin:-.9rem 0 .9rem;font-size:.82rem">
-        ${s.start?.branch ? html`⎇ ${s.start.branch} · ` : nothing}${this.dur(s.durationMs)} · ${s.total} eventos
-        <span class="zero-tok" style="padding:.12rem .5rem;margin-left:.4rem">Visor local · 0 tokens</span>
-        ${s.reconstructed ? html`<span class="zero-tok" style="padding:.12rem .5rem;margin-left:.4rem" title="Reconstruida desde la telemetría OTel del run (los modelos LiteLLM no emiten la traza nativa del CLI)">Reconstruida desde telemetría</span>` : nothing}
-      </p>
-      ${s.models.length ? html`<p class="se-models"><span class="se-mlbl">Modelos usados</span>${s.models.map((m) => html`<code class="ctx-chip">${m}</code>`)}</p>` : nothing}
+      <header class="se-head">
+        <span class="se-eyebrow">Sesión del agente</span>
+        <div class="se-titlerow"><h1 class="trunc">${this.change}</h1><a class="btn sm sec" href=${this.runPath()}>Volver al run</a></div>
+        <div class="se-stats">
+          ${s.start?.branch ? html`<span title="rama de git">⎇ ${s.start.branch}</span>` : nothing}
+          <span title="duración total">${this.dur(s.durationMs)}</span>
+          <span>${s.total} eventos</span>
+          <span class="zero-tok">Visor local · 0 tokens</span>
+          ${s.reconstructed ? html`<span class="zero-tok" title="Reconstruida desde la telemetría OTel del run (los modelos LiteLLM no emiten la traza nativa del CLI)">Reconstruida desde telemetría</span>` : nothing}
+        </div>
+        ${s.models.length ? html`<p class="se-models" style="margin:0"><span class="se-mlbl">Modelos usados</span>${s.models.map((m) => html`<code class="ctx-chip">${m}</code>`)}</p>` : nothing}
+      </header>
       <div class="se-filters">
         <button class="chip ${this.cats.size === 0 ? 'on' : ''}" @click=${() => { this.cats = new Set(); void this.load(); }}>Todo · ${s.total}</button>
         ${CATS.filter((c) => s.byCategory[c.key]).map((c) => html`<button class="chip ${this.cats.has(c.key) ? 'on' : ''}" @click=${() => this.toggleCat(c.key)}>${c.icon} ${c.label} · ${s.byCategory[c.key]}</button>`)}

@@ -134,6 +134,14 @@ export function classifyFailure(r, producedEffect) {
   return r.code && r.code !== 0 ? 'error' : 'none';
 }
 const TRANSIENT_FAILS = new Set(['timeout', 'provider', 'crash']);
+// ¿el comando de pruebas NI SIQUIERA pudo ejecutarse? (script inexistente, binario no encontrado, shim
+// roto). Eso NO son pruebas rojas: ningún ciclo fix lo arregla — merece BLOCKED inmediato con la verdad.
+// Puro y exportado para test. (Caso real: npm.cmd sin shell → EINVAL a los 0ms → fix a ciegas ×2.)
+export function checkUnrunnable(e, out) {
+  const code = String((e && e.code) || '');
+  if (code === 'ENOENT' || code === 'EINVAL' || code === 'EACCES') return true;
+  return /Missing script|not recognized as|no se reconoce como|command not found|no such file or directory/i.test(String(out || '') + String((e && e.message) || ''));
+}
 // limpieza de secuencias ANSI/CSI del crudo del agente (los terminales colorean la salida) — Ola 1.
 // Quita SGR/colores (\x1b[...m), CSI en general y OSC (\x1b]...BEL) para que el "crudo" sea legible.
 export function stripAnsi(s) {
@@ -307,6 +315,17 @@ function persistSessionTrace(ssd, before, otelFile) {
     mkdirSync(dirname(dst), { recursive: true });
     appendFileSync(dst, readFileSync(f));
   } catch { /* best-effort: sin traza no se rompe la fase */ }
+}
+
+// cuenta las DENEGACIONES de permiso del CLI appendeadas a la traza (events.jsonl del change) desde
+// `fromByte` (el tamaño del fichero al arrancar el intento). Distingue "el modelo no hizo nada" de "el
+// modelo lo intentó y el CLI se lo denegó" — dos diagnósticos opuestos que antes eran el mismo "no-progress".
+export function countDeniedPerms(evPath, fromByte = 0) {
+  try {
+    const buf = readFileSync(evPath);
+    if (buf.length <= fromByte) return 0;
+    return (buf.subarray(fromByte).toString('utf8').match(/denied-no-approval-rule-and-could-not-request-from-user/g) || []).length;
+  } catch { return 0; }
 }
 
 // argumentos del one-shot por fase. AHORRO por defecto: github-mcp builtin y el MCP de conductor se
@@ -716,6 +735,16 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   try { const lk = JSON.parse(readFileSync(lockPath(changeDir), 'utf8')); const age = Date.now() - statSync(lockPath(changeDir)).mtimeMs; if (lk?.pid) log(`🔓 descarto lock previo huérfano (pid ${lk.pid}, ${Math.round(age / 1000)}s sin latir)`); } catch {}
   takeLock();
   const projectRoot = srcDir ? resolve(srcDir) : resolve(changeDir, '..', '..', '..');
+  // GUARD DE RAÍZ (caso real: un agente pasó `--src src` → projectRoot=subdirectorio sin openspec/ → el
+  // CLI denegó TODA escritura del artefacto fuera de su dir de confianza y la fase murió en "no-progress"
+  // tras 2 intentos pagados). Mejor morir AQUÍ con la verdad y la pista que contra un muro de permisos.
+  if (!existsSync(join(projectRoot, 'openspec'))) {
+    let hint = '';
+    let up = projectRoot;
+    for (let i = 0; i < 3; i++) { up = dirname(up); if (existsSync(join(up, 'openspec'))) { hint = ` — openspec/ SÍ existe en ${up}: lanza desde ahí (o corrige --src)`; break; } }
+    try { rmSync(lockPath(changeDir), { force: true }); } catch {}
+    throw new Error(`projectRoot sin openspec/ (${projectRoot})${hint}. El driver se ejecuta desde la raíz del proyecto inicializado (conductor init).`);
+  }
   const cfg = readDriveConfig(projectRoot); // config del usuario (openspec/conductor.json)
   // key BYOK (vive SOLO en ~/.conductor/byok.json, NO en el env del server → el patrón sk-/Bearer no la cubre si
   // es una virtual key con otro formato) para redactarla en TODOS los scrubs de captura del run. Sin esto, si el
@@ -1029,20 +1058,33 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       log('⏳ test (ejecución de pruebas del proyecto)');
       const cmds = (Array.isArray(cfg.checks) && cfg.checks.length) ? cfg.checks : (stack.testCmd ? [stack.testCmd] : []);
       const consent = runTestsOpt === true || process.env.CONDUCTOR_ALLOW_CHECKS === '1';
-      const failed = []; let detail = '';
+      const failed = []; const unrun = []; let detail = '';
       if (cmds.length && consent) {
         for (const chk of cmds) {
-          const a = (String(chk).match(/"[^"]*"|'[^']*'|\S+/g) || []).map((t) => t.replace(/^["']|["']$/g, ''));
-          if (!a.length) continue;
-          try { execFileSync(a[0], a.slice(1), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true }); log(`   ✅ prueba: ${chk}`); }
-          catch (e) { failed.push(chk); detail += `FAILED: ${chk}\n${scrubSecrets(String(e.stdout || '') + String(e.stderr || ''), process.env, runSecretExtra).slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk}`); }
+          // SHELL REAL con consentimiento explícito (toggle test / CONDUCTOR_ALLOW_CHECKS): "npm test" en
+          // Windows es npm.cmd — execFile SIN shell moría en EINVAL a los 0ms y el fix "reparaba" pruebas
+          // que JAMÁS corrieron (caso real 2026-07-31). El comando es del dev: corre como en su terminal.
+          try {
+            // execSync = el comando ENTERO al shell nativo (cmd/sh), como lo escribiría el dev en su terminal.
+            // (El intento con `cmd /d /s /c` + array de args destrozaba el quoting interno: `node -e "…"`.)
+            execSync(String(chk), { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, windowsHide: true });
+            log(`   ✅ prueba: ${chk}`);
+          }
+          catch (e) {
+            const out = scrubSecrets(String(e.stdout || '') + String(e.stderr || ''), process.env, runSecretExtra);
+            const first = (out.trim().split(/\r?\n/).find((l) => l.trim()) || String(e.message || '')).slice(0, 160);
+            if (checkUnrunnable(e, out)) { unrun.push(chk); detail += `UNRUNNABLE: ${chk}\n${out.slice(-800)}\n`; log(`   🚫 prueba NO EJECUTABLE: ${chk} — ${first}`); }
+            else { failed.push(chk); detail += `FAILED: ${chk}\n${out.slice(-1000)}\n`; log(`   ❌ prueba FALLÓ: ${chk} — ${first}`); }
+          }
         }
-        testsResult = { ran: true, passed: failed.length === 0, failed, cmds };
+        testsResult = { ran: true, passed: failed.length === 0 && unrun.length === 0, failed, ...(unrun.length ? { unrunnable: unrun } : {}), cmds };
       } else log(`   ℹ️ test: no ejecutado (${!cmds.length ? 'sin comando de pruebas' : 'sin consentimiento'}) — la fase pasa sin bloquear`);
-      try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
+      // UNRUNNABLE gana en el veredicto: aunque otra prueba haya fallado "de verdad", primero hay que poder
+      // ejecutarlas todas — y ese arreglo es de CONFIG (checks/package.json), no de código: fix no aplica.
+      try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(join(changeDir, 'test-report.md'), `## Verdict\n${unrun.length ? 'UNRUNNABLE' : failed.length ? 'FAIL' : 'PASS'}\n${detail}`); } catch {}
       timeline.push({ phase: 'test', role: 'tester', model: null, modelRequested: null, modelReported: null, provider: null, attempts: 1, files: [], ms: 0, tokens: null, ok: failed.length === 0, ...(failed.length ? { failureKind: 'tests-fail' } : {}) });
       currentInfo = null; writeTimeline('running');
-      log(failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
+      log(unrun.length ? `🚫 test: comando(s) NO ejecutables (${unrun.join(' · ')}) → BLOCKED (arreglo de config, no de código)` : failed.length ? `⚠ test: ${failed.length} prueba(s) fallaron → fix` : '✅ test');
       trail.push('test');
       step = next({ changeDir, srcDir: projectRoot, strict: strictGate });
       if (step.gate === 'TESTS-FAIL') log(`   pruebas fallaron → ${step.phase || '(fix)'}`);
@@ -1216,6 +1258,10 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       // lastError solo persiste entre REINTENTOS de la misma fase (nunca entre fases)
       currentInfo = { phase, role, model: mspec.model || null, provider: mspec.provider, attempt, maxAttempts: maxRetries + 1 + (fbStr && !fallbackInfo ? 0 : (fallbackInfo ? 1 : 0)), startedAt: Date.now(), timeoutMs: tmo, lastError: (currentInfo?.phase === phase ? currentInfo?.lastError : null) || null };
       writeTimeline('running'); // publica la fase en curso (la mini-web la pinta viva)
+      // tamaño de la traza ANTES del intento (scope del BUCLE: el if(!ok) del final la necesita venga del
+      // branch que venga) → tras un fallo, contar SOLO las denegaciones de permiso de ESTE intento
+      const evPath = join(changeDir, '.conductor', 'events.jsonl');
+      const evBefore = (() => { try { return statSync(evPath).size; } catch { return 0; } })();
       let r;
       if (phase === 'verify' && lenses.length > 1) {
         // P2: lentes en PARALELO (correctitud/seguridad/tests...) — N one-shots baratos, merge determinista
@@ -1330,6 +1376,18 @@ ${readSafe(x.lp).trim()}`);
         if (existsSync(step.write_to_abs) && readSafe(step.write_to_abs).trim()) { ok = true; capturedFiles = [{ p: write_to, k: 'create' }]; } // el artefacto de la fase
       }
       if (!ok) {
+        // PERMISOS DENEGADOS ≠ modelo flojo: si la traza de ESTE intento tiene denegaciones del CLI, el
+        // artefacto no salió porque el CLI lo IMPIDIÓ (dir de confianza equivocado, no-interactivo sin regla).
+        // Reintentar es pagar otra vez contra el mismo muro → error CLARO y fatal, con el remedio.
+        const denials = countDeniedPerms(evPath, evBefore);
+        if (denials > 0) {
+          lastFailureKind = 'error';
+          const msg = `el CLI denegó ${denials} operación(es) por PERMISOS (escrituras fuera de su directorio de confianza: ${projectRoot}). Lanza el run desde la RAÍZ del proyecto (donde vive openspec/).`;
+          currentInfo.lastError = msg;
+          log(`   🔒 ${msg}`);
+          writeTimeline('running');
+          break;
+        }
         // R-A1/R-A7: clasifica el fallo y, SOLO si es transitorio (timeout/provider/crash) y queda reintento,
         // espera un backoff exponencial con jitter (un 429/5xx del proxy ya no se reintenta al instante). El
         // no-progreso conserva el retry escalado SIN espera (el modelo flojo necesita el prompt contundente ya).

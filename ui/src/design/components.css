@@ -281,6 +281,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 /* VISOR DE SESIÓN — timeline "qué hizo la IA" (events.jsonl): gutter de tiempo · dot por categoría · indent por profundidad · pill de duración */
 .se-models { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: 0 0 .7rem; }
 .se-mlbl { font: 600 .64rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--tx3); margin-right: .2rem; }
+/* cabecera de sesión: bloque INSTRUMENTO con aire y jerarquía (antes: línea apretada con margen negativo).
+   Eyebrow mono → título → strip de stats tabulares → chips de modelos; cierre con hairline. */
+.se-head { display: flex; flex-direction: column; gap: .55rem; margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--bd); }
+.se-head .se-eyebrow { font: 700 .6rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--tx3); }
+.se-head .se-titlerow { display: flex; align-items: center; gap: .9rem; }
+.se-head .se-titlerow h1 { margin: 0; flex: 1; min-width: 0; }
+.se-stats { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.1rem; font: .74rem/1.5 var(--mono); color: var(--tx2); font-variant-numeric: tabular-nums; }
 .se-filters { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 0 0 .8rem; }
 .se-filters .chip.on { border-color: var(--accent); color: var(--accent); background: var(--accentbg); }
 .se-q { flex: 1; min-width: 12rem; }

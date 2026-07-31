@@ -34,7 +34,7 @@ import { listCopilotCatalog } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } from '../provenance/secret.mjs';
-import { plumbPath } from '../core/plumb.mjs';
+import { plumbPath, domainFromName } from '../core/plumb.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -464,7 +464,7 @@ export function listChanges(root) {
 // spawner real (inyectable en tests): lanza el driver DETACHED con su propia web (sin abrir navegador)
 function defaultSpawnRun({ engine, root, name, request, complexity, domain, preset }) {
   const changeDir = join(root, 'openspec', 'changes', name);
-  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--serve'];
+  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || domainFromName(name), '--serve'];
   if (preset) args.push('--preset', preset);
   const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, CONDUCTOR_SERVE_OPEN: '0' } });
   child.unref();
@@ -887,7 +887,7 @@ export function byokChildEnv(baseEnv) {
 // spawner IPC real (inyectable en tests): driver hijo SIN server propio, control por canal IPC
 function spawnIpcRun({ engine, root, name, request, complexity, domain, models, auto, preset, pipeline, runTests }) {
   const changeDir = join(root, 'openspec', 'changes', name);
-  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || name.split('-')[0], '--ipc'];
+  const args = [engine, 'drive', changeDir, '--request', request, '--src', root, '--complexity', complexity || 'medium', '--domain', domain || domainFromName(name), '--ipc'];
   if (auto) args.push('--auto');
   // dial de gobierno por run (los 4 presets): viaja como --preset; el driver le da máxima precedencia sobre conductor.json/env
   if (preset) args.push('--preset', preset);

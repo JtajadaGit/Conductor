@@ -344,6 +344,13 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
   // reintenta (mismo mecanismo que el fix de verify); tope de ciclos → BLOCKED. Las pruebas GATEAN el cierre.
   if (phase === 'test') {
     let tr = ''; try { tr = readFileSync(join(changeDir, 'test-report.md'), 'utf8'); } catch {}
+    // NO EJECUTABLE ≠ pruebas rojas: script/binario inexistente no lo arregla ningún ciclo fix → BLOCKED
+    // inmediato con la causa y el remedio (antes: 2 ciclos de fix a ciegas contra un comando que ni arrancaba).
+    if (/##\s*Verdict[^\n]*\n+\s*UNRUNNABLE/i.test(tr)) {
+      s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s);
+      const uline = (tr.match(/^UNRUNNABLE:.*/im) || ['comando de pruebas'])[0];
+      return { done: true, verdict: 'BLOCKED', phase: 'test', reason: `el comando de pruebas NO se pudo ejecutar (${uline.replace(/^UNRUNNABLE:\s*/i, '')}) — revisa el script "test" del package.json o declara "checks" en openspec/conductor.json. Un ciclo fix no puede arreglar esto.` };
+    }
     const failed = /##\s*Verdict[^\n]*\n+\s*FAIL/i.test(tr) || /^FAILED:/im.test(tr);
     if (failed) {
       const ti = s.idx;
@@ -354,8 +361,10 @@ export function next({ changeDir, srcDir, override = null, overrideBy = null, st
       s.testFixCycles = (s.testFixCycles || 0) + 1;
       if (s.testFixCycles > 2) { s.status = 'done'; s.verdict = 'BLOCKED'; saveState(changeDir, s); return { done: true, verdict: 'BLOCKED', phase: 'test', reason: 'las pruebas del proyecto siguen fallando tras 2 ciclos de fix — escalar a humano (corrige y reanuda)' }; }
       saveState(changeDir, s);
-      const detail = (tr.match(/^FAILED:.*/im) || [''])[0];
-      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${instructionFor('fix')} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. ${detail}` };
+      // el fix recibe el OUTPUT REAL de las pruebas (tope 900 chars), no solo el nombre del comando: reparar
+      // a ciegas era re-pagar el ciclo entero para adivinar qué assertion falló.
+      const detail = tr.replace(/^##\s*Verdict[^\n]*\n+\s*\w+\s*/i, '').trim().slice(0, 900);
+      return { ...stepFor(changeDir, s), gate: 'TESTS-FAIL', instruction: `${instructionFor('fix')} Las PRUEBAS del proyecto FALLAN — corrige el código para que pasen. Salida real:\n${detail}` };
     }
     s.idx += 1; saveState(changeDir, s); // PASS → avanza a verify (gobierno terminal)
     return stepFor(changeDir, s);

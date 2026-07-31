@@ -138,6 +138,10 @@ switch (cmd) {
     // DRIVER DETERMINISTA: el código conduce el pipeline y llama al modelo (BYOK) por fase.
     // Garantiza la secuencia con cualquier modelo — un modelo flojo da peor contenido, no salta fases.
     const dir = pos[0]; if (!dir) bad('drive <changeDir> --request "..." [--src dir] [--complexity simple|medium|complex] [--domain name] [--preset quick-fix|visual|feature|migration] [--model-planner m] [--model-coder m] [--model-reviewer m]');
+    // BLINDAJE ANTI-IMPROVISACIÓN (caso real: un agente pasó `--src src` hacia un subdirectorio y otros
+    // flags plausibles): flag desconocido = ABORT con la lista válida — el agente se corrige a la primera.
+    const DRIVE_FLAGS = new Set(['--request', '--src', '--complexity', '--domain', '--pipeline', '--preset', '--runner', '--auto', '--ipc', '--run-tests', '--serve', '--model-planner', '--model-coder', '--model-reviewer']);
+    { const reqIdx = argv.indexOf('--request'); const unknown = argv.filter((a, i) => a.startsWith('--') && !DRIVE_FLAGS.has(a) && (reqIdx < 0 || i <= reqIdx)); if (unknown.length) bad(`drive: flag(s) desconocido(s): ${unknown.join(' ')}. Flags válidos: ${[...DRIVE_FLAGS].join(' ')}`); }
     // inmune a comillas perdidas: une todas las palabras tras --request hasta el siguiente --flag
     const reqI = argv.indexOf('--request');
     let request = '';
@@ -477,6 +481,9 @@ switch (cmd) {
     // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.
     const BODY_CMD = [
       'La petición del usuario: $ARGUMENTS',
+      // FAIL-CLOSED (caso real: VS Code con skill pero sin MCP → el agente improvisó CLI, flags inventados,
+      // init interactivo bloqueado y un run contra un muro de permisos): sin tools, se conecta y se PARA.
+      '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
@@ -494,20 +501,37 @@ switch (cmd) {
       // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
       { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md (skill estándar; OpenCode también la descubre)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
       { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      // VS Code Copilot Chat: LEE .github/skills (misma skill que Copilot CLI) pero necesita SU puente MCP
+      // en .vscode/mcp.json (fusión no destructiva) — sin él, el agente se queda con guion y sin tools.
+      { n: '4', key: 'vscode', label: 'VS Code (Copilot Chat)', det: existsSync(join(homeH, '.vscode')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md + .vscode/mcp.json (puente MCP del chat)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), mcpJson: join(rootI2, '.vscode', 'mcp.json') },
     ];
     let chosenH = HOSTS_PROJ.filter((h) => h.det);
-    const tty2 = process.stdin.isTTY || process.env.CONDUCTOR_TTY === '1';
+    // --hosts none | --hosts copilot,claude,opencode,vscode → SIN menú (la vía determinista para agentes,
+    // CI y scripts; el menú interactivo bloqueaba la terminal de un agente de chat esperando un Enter)
+    const hostsFlag = (flag('--hosts') || '').trim().toLowerCase();
+    if (hostsFlag) chosenH = hostsFlag === 'none' ? [] : HOSTS_PROJ.filter((h) => hostsFlag.split(',').map((s) => s.trim()).includes(h.key));
+    const tty2 = !hostsFlag && (process.stdin.isTTY || process.env.CONDUCTOR_TTY === '1');
     if (tty2) {
       const det = chosenH.map((h) => h.label).join(', ') || 'ninguno';
       const rl2 = createInterface({ input: process.stdin, output: process.stdout });
-      const ans = (await new Promise((res) => rl2.question(`  /conductor por-proyecto (committeable — tu equipo lo hereda al clonar):\n    [1] Copilot  [2] Claude Code  [3] OpenCode  ·  Enter = detectados (${det})  ·  n = ninguno\n  → `, res))).trim().toLowerCase();
+      const ans = (await new Promise((res) => rl2.question(`  /conductor por-proyecto (committeable — tu equipo lo hereda al clonar):\n    [1] Copilot CLI  [2] Claude Code  [3] OpenCode  [4] VS Code (chat)  ·  Enter = detectados (${det})  ·  n = ninguno\n  → `, res))).trim().toLowerCase();
       rl2.close();
       if (ans === 'n') chosenH = [];
       else if (ans) chosenH = HOSTS_PROJ.filter((h) => ans.includes(h.n));
     }
     let hostLines = '';
+    const engineI = resolve(process.argv[1]).split('\\').join('/');
+    const portableI = /node_modules[\\/]+conductor[\\/]/i.test(resolve(process.argv[1]));
     for (const h of chosenH) {
-      try { mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`; } catch {}
+      try {
+        mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`;
+        if (h.mcpJson) {
+          // el puente MCP del chat de VS Code: fusión NO destructiva (mergeMcpEntry conserva otros servers; backup si había fichero)
+          const prevM = existsSync(h.mcpJson) ? readFileSync(h.mcpJson, 'utf8') : '';
+          const rm = mergeMcpEntry(prevM, engineI, { key: 'servers', portable: portableI });
+          if (!rm.error && rm.changed) { mkdirSync(dirname(h.mcpJson), { recursive: true }); if (prevM) writeFileSync(h.mcpJson + '.bak', prevM); writeFileSync(h.mcpJson, rm.text); }
+        }
+      } catch {}
     }
     if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
