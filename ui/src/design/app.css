@@ -23,6 +23,9 @@ app-sidebar {
   padding: 1rem .85rem; overflow: hidden auto;
 }
 .layout.sbhide aside.sb { display: none; }
+/* con el aside en display:none, main pasa a ser el PRIMER hijo del grid y caía en la columna de 0px
+   (pantalla «apagado» estrujada a ~120px — cazado por el loop visual it.2, 2026-07-31): que abarque todo */
+.layout.sbhide main.content { grid-column: 1 / -1; }
 
 /* ── Marca (NO es un enlace: el Dashboard ya lleva a "/"). Identidad, no acción. ── */
 .sb-logo {
@@ -238,6 +241,11 @@ h1 { font-size: 1.55rem; }
 @keyframes veilTick { 0%, 12% { background: var(--bd2); box-shadow: none } 18%, 55% { background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent) } 72%, 100% { background: var(--bd2); box-shadow: none } }
 .veil-lbl { font: 700 .62rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--tx2); }
 @media (prefers-reduced-motion: reduce) {
+  /* loop visual it.4 (2026-07-31): phpulse seguía INFINITO con reduced-motion (cazado midiendo, no mirando).
+     Se apaga TODA la animación decorativa: pulsos (fase activa, dot en curso, barra), entradas (slideUp/
+     slideInLeft/fadeIn) y el velo. El estado sigue legible por color/posición — sin movimiento. */
+  .ph.now::before, .ph.pending::before, .sb-run .dot.CURSO, .ph.now .bar > i,
+  .rail .ph, .apphdr h1, aside.sb, main.content, .tpanel { animation: none; }
   .veil { animation: none }
   .veil-ticks i { animation: none }
   .veil-ticks i:nth-child(-n+3) { background: var(--accent) }

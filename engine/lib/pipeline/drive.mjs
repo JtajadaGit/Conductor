@@ -39,6 +39,8 @@ import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
 import { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } from '../provenance/secret.mjs';
 import { plumbPath } from '../core/plumb.mjs';
+import { validate } from '../core/jsonschema.mjs';
+import { CONFIG_SCHEMA } from '../analysis/scaffold.mjs';
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -286,11 +288,21 @@ export function byokCreds(env = process.env) {
 //     "maxRetries": 1, "serve": true|false, "runner": "spawn"|"sdk", "gitCommit": true|false }
 // "models" se fusiona POR CLAVE (tu default de planner sobrevive aunque el equipo solo fije el coder).
 export function readDriveConfig(projectRoot) {
+  // OJO con el catch: "no hay config" (legítimo, todo es opcional) y "la config EXISTE pero está rota" son
+  // dos cosas MUY distintas. Antes ambas caían en el mismo `catch {}` vacío: una coma de más en el JSON
+  // borraba en silencio TODO el gobierno del equipo (preset, gates, budget, models, rules) y el run seguía
+  // con los defaults hasta cerrar en GREEN — un verificado que no verificó lo que el equipo creía. Se
+  // distingue por e.code === 'ENOENT'.
   let user = {};
-  try { user = JSON.parse(readFileSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'config.json'), 'utf8')) || {}; } catch {}
-  let proj = {};
-  try { proj = JSON.parse(readFileSync(join(projectRoot, 'openspec', 'conductor.json'), 'utf8')) || {}; } catch {}
+  try { user = JSON.parse(readFileSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'config.json'), 'utf8')) || {}; }
+  catch (e) { if (e && e.code !== 'ENOENT') { try { process.stderr.write(`⚠ ~/.conductor/config.json ilegible (${e.message}) — se ignoran tus preferencias personales\n`); } catch {} } }
+  let proj = {}, cfgError = null;
+  const projCfgPath = join(projectRoot, 'openspec', 'conductor.json');
+  try { proj = JSON.parse(readFileSync(projCfgPath, 'utf8')) || {}; }
+  catch (e) { if (e && e.code !== 'ENOENT') cfgError = `${projCfgPath} ilegible: ${e.message}`; }
   const merged = { ...user, ...proj };
+  // el gobierno del EQUIPO no se degrada en silencio: se marca y el driver lo convierte en BLOCKED
+  if (cfgError) merged.__configError = cfgError;
   if (user.models || proj.models) merged.models = { ...(user.models || {}), ...(proj.models || {}) };
   return merged;
 }
@@ -324,29 +336,47 @@ function persistSessionTrace(ssd, before, otelFile) {
     mkdirSync(dirname(dst), { recursive: true });
     const raw = readFileSync(f);
     appendFileSync(dst, raw);
-    // TOKENS REALES del CLI moderno (1.0.70 ya no honra COPILOT_OTEL_FILE_EXPORTER_PATH → readTokens veía
-    // null y tokens/AIC/estimador quedaban CIEGOS): el evento session.shutdown de la propia traza trae
-    // tokenDetails (input/output/cache) y totalPremiumRequests (AI credits REALES). in = todo lo presentado
-    // al modelo (input + cache_read + cache_write — comparable con el estimador); cached se declara aparte.
+    // TOKENS REALES del CLI moderno (1.0.70+ ya no honra COPILOT_OTEL_FILE_EXPORTER_PATH → readTokens veía
+    // null y tokens/AIC/estimador quedaban CIEGOS): el evento session.shutdown de la propia traza trae el
+    // consumo (tokenDetails o modelMetrics según el proveedor), el modelo real y totalPremiumRequests.
     return parseSessionUsage(raw.toString('utf8'));
   } catch { return null; /* best-effort: sin traza no se rompe la fase */ }
 }
 
 // suma el usage de TODOS los session.shutdown de una traza (una sesión por intento; robusto si hay varias).
-// Puro y exportado para test. Devuelve null si la traza no trae cierres con tokenDetails.
+// Puro y exportado para test. Devuelve null si la traza no trae ningún cierre con datos de consumo.
+//
+// DOS FORMAS en el mismo evento, y hay que aceptar las dos: `tokenDetails` (categorías DISJUNTAS a nivel de
+// sesión) y `modelMetrics[<modelo>].usage` (totales por modelo). Las sesiones contra BYOK/LiteLLM traen SOLO
+// la segunda — exigir la primera dejaba el runner spawn con `tokens: null` teniendo el dato delante (medido
+// 2026-07-31: una sesión de deepseek daba null aquí y {in:99361,out:9278,cached:170496} leyendo modelMetrics).
+// CONVENIO (idéntico al de usageFromShutdown en sdk-runner.mjs): `in` y `cached` son DISJUNTOS y suman el
+// prompt total. Antes `in` incluía cache_read y encima se declaraba aparte en `cached` → el mismo run costaba
+// distinto según el runner. `cache_write` NO es caché servida: se paga, así que va en `in`.
 export function parseSessionUsage(text) {
-  let tin = 0, tout = 0, cached = 0, aic = 0, seen = false;
+  let tin = 0, tout = 0, cached = 0, aic = 0, model = null, seen = false;
   for (const ln of String(text || '').split('\n')) {
     if (!ln.includes('"session.shutdown"')) continue;
     try {
       const d = JSON.parse(ln).data || {};
       const td = d.tokenDetails || {};
       const n = (k) => Number(td[k]?.tokenCount) || 0;
-      if (d.tokenDetails) { seen = true; tin += n('input') + n('cache_read') + n('cache_write'); tout += n('output'); cached += n('cache_read'); }
+      if (d.tokenDetails) { seen = true; tin += n('input') + n('cache_write'); tout += n('output'); cached += n('cache_read'); }
+      else if (d.modelMetrics && typeof d.modelMetrics === 'object') {
+        for (const m of Object.values(d.modelMetrics)) {
+          const u = (m && m.usage) || {};
+          const i = Number(u.inputTokens) || 0, o = Number(u.outputTokens) || 0, cr = Number(u.cacheReadTokens) || 0;
+          if (!i && !o && !cr) continue;
+          seen = true; tin += Math.max(0, i - cr); tout += o; cached += cr; // inputTokens INCLUYE lo servido de caché
+        }
+      }
+      // el modelo REAL que ejecutó — sin esto `modelReported` salía null en spawn y el informe AI Act afirmaba
+      // que "el runtime no lo expone por fase", cosa que era falsa: lo expone aquí.
+      if (!model && typeof d.currentModel === 'string' && d.currentModel) model = d.currentModel;
       if (Number.isFinite(Number(d.totalPremiumRequests))) aic += Number(d.totalPremiumRequests);
     } catch { /* línea corrupta: se ignora */ }
   }
-  return seen ? { in: tin, out: tout, cached, ...(aic ? { aic: +aic.toFixed(2) } : {}) } : null;
+  return seen || model ? { in: tin, out: tout, cached, model, ...(aic ? { aic: +aic.toFixed(2) } : {}) } : null;
 }
 
 // cuenta las DENEGACIONES de permiso del CLI appendeadas a la traza (events.jsonl del change) desde
@@ -380,10 +410,15 @@ const DEFAULT_ALLOW = { planner: 'write', reviewer: 'write', coder: 'all', orche
 // modelo/tool/servidor MCP → set acotado. Cualquier otra cosa degrada al default seguro.
 const _SAFE_CFG = /^[A-Za-z0-9_.,:/@+-]+$/;
 const _safeCfg = (s) => { const v = String(s == null ? '' : s); return _SAFE_CFG.test(v) ? v : null; };
+// La allowlist EFECTIVA de un rol, en un solo sitio: la usan el spawn (→ flags del CLI) y el runner sdk
+// (→ handler de permisos por sesión). El driver es quien manda la política; el runner solo la ejecuta.
+export function resolveAllow(role, allowCfg = {}) {
+  const raw = allowCfg[role] || DEFAULT_ALLOW[role] || 'all';
+  return raw === 'all' ? 'all' : (_safeCfg(raw) || 'write'); // metachars → degrada a 'write' seguro
+}
 export function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_ARGS, allowCfg = {}) {
   if (envArgs) return envArgs.split(/\s+/).filter(Boolean); // override total del usuario (su propio env, confiable)
-  const allowRaw = allowCfg[role] || DEFAULT_ALLOW[role] || 'all';
-  const allow = allowRaw === 'all' ? 'all' : (_safeCfg(allowRaw) || 'write'); // metachars → degrada a 'write' seguro
+  const allow = resolveAllow(role, allowCfg);
   const args = [];
   if (allow === 'all') args.push('--allow-all-tools');
   else args.push('--allow-tool', allow);
@@ -793,6 +828,23 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     throw new Error(`projectRoot sin openspec/ (${projectRoot})${hint}. El driver se ejecuta desde la raíz del proyecto inicializado (conductor init).`);
   }
   const cfg = readDriveConfig(projectRoot); // config del usuario (openspec/conductor.json)
+  // FAIL-CLOSED sobre el gobierno del equipo: si openspec/conductor.json existe pero no se puede leer, sus
+  // gates/preset/budget/models NO se están aplicando. Seguir con los defaults produciría un GREEN que el
+  // equipo leería como "verificado con nuestras reglas", que es la mentira más cara del producto. Se corta
+  // ANTES de gastar un token, con el error de parseo literal para que se arregle de un vistazo.
+  if (cfg.__configError) {
+    const why = `configuración del equipo ilegible — ${cfg.__configError}. Arregla el JSON (o bórralo para usar los defaults): con él roto, tus gates, preset y presupuesto NO se aplican.`;
+    logOut(`⛔ ${why}`);
+    return { done: false, verdict: 'BLOCKED', phase: null, reason: why, trail: [], timeline: [] };
+  }
+  // CONFIG VÁLIDA COMO JSON PERO CON ERRATAS: un `presset: "feature"` o un `strictTests: "false"` (string)
+  // se ignoraban sin decir nada, y el equipo creía tener un gobierno que no estaba puesto. Aquí solo se
+  // AVISA (no se bloquea) a propósito: una clave desconocida también puede ser una config más nueva que el
+  // motor, y romper por eso impediría actualizar por fases. El validador ya existía; nadie lo consultaba.
+  try {
+    const v = validate(CONFIG_SCHEMA, Object.fromEntries(Object.entries(cfg).filter(([k]) => !k.startsWith('__'))));
+    if (!v.valid) for (const e of (v.errors || []).slice(0, 6)) logOut(`   ⚠ conductor.json: ${e.instancePath || '/'} ${e.message} — ese ajuste NO se está aplicando`);
+  } catch { /* el aviso jamás puede tumbar un run */ }
   // key BYOK (vive SOLO en ~/.conductor/byok.json, NO en el env del server → el patrón sk-/Bearer no la cubre si
   // es una virtual key con otro formato) para redactarla en TODOS los scrubs de captura del run. Sin esto, si el
   // proveedor la ecoa en un error, se persistía en timeline.json (lastError/raw) y se servía por /api/state.
@@ -1316,7 +1368,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
           const lensPrompt = prompt.split(step.write_to_abs).join(lp) + `
 
 LENS - review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.`;
-          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: plumbPath(changeDir, 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then((rr) => ({ ln, lp, rr }));
+          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: plumbPath(changeDir, 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow(role, cfg.allowTools || {}) }).then((rr) => ({ ln, lp, rr }));
         }));
         if (stopSignal?.requested) return stopped();
         // merge determinista → verify-report.md por secciones (el gate lee el merged)
@@ -1348,7 +1400,7 @@ ${readSafe(x.lp).trim()}`);
           // informe, NO abortamos la fase — caemos a UNA verify simple (1 llamada, más fiable que 3 en
           // paralelo). El gate determinista corre igual después; solo cambia cómo se obtuvo el informe.
           log('   ⚠ ninguna lente escribió → fallback a verify simple (1 llamada, más fiable con qwen)');
-          const fb = await runAgent({ phase, role, prompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} });
+          const fb = await runAgent({ phase, role, prompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow(role, cfg.allowTools || {}) });
           if (existsSync(step.write_to_abs) && readSafe(step.write_to_abs).trim()) { r = { code: 0 }; rawOut = fb && typeof fb.out === 'string' ? fb.out : ''; }
           else { r = { code: 1, err: 'ni lentes ni verify simple produjeron informe' }; rawOut = results.map((x) => (x.rr && typeof x.rr.out === 'string' ? x.rr.out : '')).join('\n\n'); }
         }
@@ -1383,7 +1435,7 @@ ${readSafe(x.lp).trim()}`);
         } else {
           usePrompt = prompt;
         }
-        r = await runAgent({ phase, role, prompt: usePrompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, onActivity: (a) => {
+        r = await runAgent({ phase, role, prompt: usePrompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow(role, cfg.allowTools || {}), onActivity: (a) => {
           if (!currentInfo) return;
           currentInfo.lastActivity = scrubSecrets(String(a), process.env, runSecretExtra).slice(0, 140);
           const tNow = Date.now();
@@ -1496,10 +1548,27 @@ ${readSafe(x.lp).trim()}`);
       const totIn = timeline.reduce((s, p) => s + (Number(p.tokens?.in) || 0), 0);
       const totOut = timeline.reduce((s, p) => s + (Number(p.tokens?.out) || 0), 0);
       const totCost = timeline.reduce((s, p) => { const pr = priceOf(p.model || p.modelReported || ''); return s + ((Number(p.tokens?.in) || 0) * pr.in + (Number(p.tokens?.out) || 0) * pr.out) / 1e6; }, 0);
+      // UN PRESUPUESTO QUE NO PUEDE MEDIR NO ES UN FRENO. Antes, con `tokens: null` los totales valían 0, el
+      // techo no saltaba JAMÁS y no se avisaba — fail-open silencioso, mientras el schema promete "freno REAL"
+      // y la pantalla /ahorro promete "sin sustos a fin de mes". Ahora: si falta medición en algunas fases se
+      // AVISA; si no se pudo medir NINGUNA, el freno es ciego y se trata como superado, con la misma política
+      // onExceed que el resto del gobierno (block por defecto, pause si hay revisor). Fail-closed, como el
+      // byok-hardfail: preferimos parar y decirlo a seguir fingiendo que hay un tope.
+      const paid = timeline.filter((p) => p.ok !== false);
+      const unmeasured = paid.filter((p) => !p.tokens).length;
+      const blind = paid.length > 0 && unmeasured === paid.length;
+      if (unmeasured && !blind) log(`   ⚠ presupuesto: ${unmeasured}/${paid.length} fase(s) sin medición de tokens — el freno está contando de menos`);
+      // maxCostUsd con modelos sin precio conocido: priceOf devuelve 0 con known:false y el techo en $ nunca
+      // saltaría por esas fases. Se dice en voz alta en vez de dejar que el 0 se propague como si fuera gratis.
+      if (Number(budget.maxCostUsd) > 0 && paid.some((p) => p.tokens && !priceOf(p.model || p.modelReported || '').known)) {
+        log(`   ⚠ presupuesto en $: hay fase(s) con modelo SIN precio conocido — su coste NO cuenta para el techo (\`conductor litellm login\` trae el precio real de tu proxy)`);
+      }
       const overTok = Number(budget.maxTokens) > 0 && (totIn + totOut) > Number(budget.maxTokens);
       const overCost = Number(budget.maxCostUsd) > 0 && totCost > Number(budget.maxCostUsd);
-      if (overTok || overCost) {
-        const why = `presupuesto superado tras "${phase}": ${totIn + totOut} tokens · $${totCost.toFixed(4)} (límite ${budget.maxTokens || '∞'} tok · $${budget.maxCostUsd || '∞'})`;
+      if (overTok || overCost || blind) {
+        const why = blind
+          ? `presupuesto NO verificable tras "${phase}": el proveedor no reportó consumo en ninguna fase, así que el tope (${budget.maxTokens || '∞'} tok · $${budget.maxCostUsd || '∞'}) no se puede garantizar — usa "onExceed":"pause" para decidir tú, o quita "budget" si asumes el gasto`
+          : `presupuesto superado tras "${phase}": ${totIn + totOut} tokens · $${totCost.toFixed(4)} (límite ${budget.maxTokens || '∞'} tok · $${budget.maxCostUsd || '∞'})`;
         const mode = budget.onExceed === 'pause' && onPause ? 'pause' : 'block';
         if (mode === 'pause') {
           log(`⏸ ${why} — pido decisión humana (onExceed:pause)`);
@@ -1542,7 +1611,7 @@ ${readSafe(x.lp).trim()}`);
         const rev = await Promise.all(applyLenses.map((ln) => {
           const lp = plumbPath(changeDir, `post-apply-${ln}.md`);
           const pp = `REVIEWER. The APPLY phase is DONE. Re-read the spec (specs/${domain}/spec.md) WITHOUT memory of the proposal/design, and assess whether the written code SATISFIES every requirement and scenario. Do NOT run tests. Review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.\nArtifacts under ${changeDir}: specs/${domain}/spec.md (the requirements), apply-report.md (what was implemented).`;
-          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: plumbPath(changeDir, 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then(() => ({ ln, lp })).catch(() => null);
+          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: plumbPath(changeDir, 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow('reviewer', cfg.allowTools || {}) }).then(() => ({ ln, lp })).catch(() => null);
         }));
         if (stopSignal?.requested) return stopped();
         const sections = rev.filter((x) => x && existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}\n\n${readSafe(x.lp).trim()}`);

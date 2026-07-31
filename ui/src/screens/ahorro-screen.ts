@@ -62,10 +62,11 @@ export class AhorroScreen extends CElement {
 
       <h2 class="sect">Las técnicas</h2>
       <div class="ahorro-grid">
-        ${this.tecnicas.map((x, i) => html`
+        ${this.tecnicas.map((x) => html`
           <div class="ahorro-card">
+            <!-- sin círculo numerado (loop visual it.1, 2026-07-31): las técnicas NO son una secuencia — el
+                 número era decoración y repetía el acento ×10; el título mono es identidad suficiente -->
             <div class="ah-top">
-              <span class="ah-n">${i + 1}</span>
               <span class="ah-t">${x.t}</span>
               ${x.nuevo ? html`<span class="ah-new">Novedad</span>` : nothing}
             </div>

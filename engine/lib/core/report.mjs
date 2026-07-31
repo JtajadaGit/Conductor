@@ -10,17 +10,25 @@ export const BLOCKING = new Set(['breaking', 'error']);
 // colarse como no-bloqueante (fail-open). Comparación canónica en minúsculas/trim.
 const normSev = (s) => String(s == null ? '' : s).toLowerCase().trim();
 export const isBlocking = (findings) => (findings || []).some((f) => BLOCKING.has(normSev(f && f.severity)));
+// TODOS los reporteros deben mirar la severidad por AQUÍ. Antes solo la normalizaba isBlocking, así que un
+// 'Error'/' error ' salía bloqueante en el EXIT CODE y a la vez como info/note/no-failure en junit, sarif y
+// rdjson: el job de CI se veía verde mientras el comando fallaba. El fail-open no estaba cerrado, estaba
+// movido de sitio. Severidad ausente o desconocida → 'info' (no bloqueante), igual que decide isBlocking.
+const sevOf = (f) => { const s = normSev(f && f.severity); return s in sevRank ? s : 'info'; };
 
 const xmlEsc = (s) => String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
 const sevRank = { breaking: 0, error: 1, warning: 2, info: 3 };
 
 export function human(findings, title = 'conductor') {
   const lines = [`\n${title}`];
-  const sorted = [...findings].sort((a, b) => sevRank[a.severity] - sevRank[b.severity]);
+  // un hallazgo SIN severity reventaba aquí (`f.severity.toUpperCase()` de undefined) y se llevaba por
+  // delante el informe entero: un solo finding malformado dejaba al usuario sin ninguna salida.
+  const sorted = [...(findings || [])].sort((a, b) => sevRank[sevOf(a)] - sevRank[sevOf(b)]);
   for (const f of sorted) {
-    const tag = f.severity === 'breaking' ? 'BREAKING' : f.severity.toUpperCase().padEnd(8);
+    const s = sevOf(f);
+    const tag = s === 'breaking' ? 'BREAKING' : s.toUpperCase().padEnd(8);
     const loc = f.file ? ` ${f.file}${f.line ? ':' + f.line : ''}` : f.pointer ? ` ${f.pointer}` : '';
-    lines.push(`  ${tag.padEnd(9)} [${f.rule}]${loc}  ${f.message}`);
+    lines.push(`  ${tag.padEnd(9)} [${f.rule || '—'}]${loc}  ${f.message || ''}`);
   }
   const c = count(findings);
   lines.push(`\n  → ${isBlocking(findings) ? 'FAIL' : 'PASS'}  (${c.breaking} breaking, ${c.error} error, ${c.warning} warn, ${c.info} info)\n`);
@@ -29,7 +37,9 @@ export function human(findings, title = 'conductor') {
 
 export function count(findings) {
   const c = { breaking: 0, error: 0, warning: 0, info: 0 };
-  for (const f of findings) c[f.severity] = (c[f.severity] || 0) + 1;
+  // con la severidad cruda, un 'Error' creaba la clave espuria c['Error'] y NO sumaba a c.error: el json
+  // salía con verdict FAIL y count {error:0}, que es justo lo que lee un consumidor de CI para decidir.
+  for (const f of findings || []) c[sevOf(f)]++;
   return c;
 }
 
@@ -44,7 +54,7 @@ export function rdjson(findings, toolName = 'conductor-gate') {
     source: { name: toolName, url: 'https://conductor.local' },
     diagnostics: findings.map((f) => ({
       message: `[${f.rule}] ${f.message}`,
-      severity: sevMap[f.severity] || 'INFO',
+      severity: sevMap[sevOf(f)] || 'INFO',
       location: { path: f.file || 'openspec', range: { start: { line: f.line || 1, column: f.col || 1 } } },
       code: { value: f.rule },
     })),
@@ -62,7 +72,7 @@ export function sarif(findings, toolName = 'conductor') {
       tool: { driver: { name: toolName, informationUri: 'https://conductor.local', rules } },
       results: findings.map((f) => ({
         ruleId: f.rule,
-        level: sevMap[f.severity] || 'note',
+        level: sevMap[sevOf(f)] || 'note',
         message: { text: f.message },
         locations: [{ physicalLocation: {
           artifactLocation: { uri: f.file || 'openspec' },
@@ -76,10 +86,12 @@ export function sarif(findings, toolName = 'conductor') {
 
 // JUnit XML — cualquier CI que lea test reports
 export function junit(findings, suite = 'conductor.gate') {
-  const failures = findings.filter((f) => BLOCKING.has(f.severity));
-  const cases = findings.map((f) => {
-    const name = xmlEsc(`${f.rule}: ${f.message}`);
-    if (BLOCKING.has(f.severity))
+  // el más peligroso de los tres: con la severidad cruda, un 'Error' NO entraba en failures y el job de CI
+  // salía VERDE mientras `conductor gate` devolvía exit != 0 por ese mismo hallazgo.
+  const failures = (findings || []).filter((f) => BLOCKING.has(sevOf(f)));
+  const cases = (findings || []).map((f) => {
+    const name = xmlEsc(`${f.rule || '—'}: ${f.message || ''}`);
+    if (BLOCKING.has(sevOf(f)))
       return `    <testcase classname="${xmlEsc(suite)}" name="${name}"><failure message="${xmlEsc(f.message)}" type="${xmlEsc(f.rule)}">${xmlEsc(f.pointer || f.file || '')}</failure></testcase>`;
     return `    <testcase classname="${xmlEsc(suite)}" name="${name}"/>`;
   });

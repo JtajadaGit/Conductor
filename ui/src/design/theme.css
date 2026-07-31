@@ -17,8 +17,10 @@
   /* verdicts = el lenguaje de estado. Colores de TEXTO oscurecidos un punto para despejar AA 4.5 sobre su
      tinte de fondo (antes 4.3-4.45, justo por debajo). Los *bg quedan igual — la identidad no cambia. */
   --ok:#0b6b57;--okbg:#daf0e9;--bad:#af2a24;--badbg:#fbe3e1;--warn:#795009;--warnbg:#f6ecd4;
-  /* azul corporativo — acento para links/foco. --accent-btn = fondo de BOTÓN primario (blanco encima ≥4.5) */
-  --accent:#2563eb;--accent2:#5b93ff;--accentbg:#e7efff;--blue:#2563eb;--accent-btn:#2563eb;
+  /* azul corporativo — acento para links/foco. --accent-btn = fondo de BOTÓN primario (blanco encima ≥4.5).
+     2026-07-31: #2563eb daba 4.48 (por un pelo <4.5) como TEXTO sobre los tintes claros (accentbg/bg2:
+     chip activo, req-badge, flink activa, ah-new) → #1d5ae0 ≈5.1:1 manteniendo la señal. */
+  --accent:#1d5ae0;--accent2:#5b93ff;--accentbg:#e7efff;--blue:#1d5ae0;--accent-btn:#2563eb;
   /* violeta de GOBIERNO (AI Act): identidad propia para la acción regulatoria, distinta del azul de evidencia.
      No es color de verdict → no colisiona con los pills de estado. #6d28d9 ≈ 6:1 sobre blanco (AA). */
   --gov:#6d28d9;--govbg:#efe7fd;

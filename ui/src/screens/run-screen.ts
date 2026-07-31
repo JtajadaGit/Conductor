@@ -6,7 +6,7 @@ import { RunPoller } from '../api/poller';
 import type { RunState, Phase, CurrentPhase, PendingDecision, DecisionFinding, FileChange, ModelsResponse, RunFiles, ContinueBody } from '../api/types';
 import { fmt, secs, verdictClass } from '../lib/format';
 import { loader } from '../lib/loader';
-import { phaseIcon, modelIcon } from '../lib/icons';
+import { icon } from '../lib/svg-icons';
 import '../components/status-pill';
 import '../components/raw-output';
 import '../components/model-breakdown';
@@ -28,6 +28,7 @@ export class RunScreen extends CElement {
   @state() private busy = ''; // acción POST en vuelo ('resume'|'approve'|'rollback'|'archive') → botón deshabilitado con texto de progreso
   @state() private actionErr = ''; // error de la última acción — inline, nunca en silencio
   @state() private archivedMsg = ''; // resultado del archivado (promoted/needsManualMerge)
+  @state() private tool: Record<string, string> = {}; // tab abierto por tarjeta de fase (clave índice:fase)
   @state() private redoTarget = ''; // fase de planificación elegida en «Rehacer fase…» (chat-en-pausa)
   @state() private redoErr = ''; // validación inline del rehacer (nota vacía / fase sin elegir) — nunca en silencio
   @state() private copiedReceipt = false; // feedback «Copiado ✓» (2 s) del botón de descripción de PR
@@ -155,9 +156,6 @@ export class RunScreen extends CElement {
   }
   // la línea «árbol a salvo» enlaza la UI de restauración que YA existe: los botones «↩ Deshacer» de apply/fix
   // viven en las tarjetas del pipeline (light DOM → this.querySelector alcanza el rail).
-  private scrollToPipeline(): void {
-    this.querySelector('.rail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
   // Reanudar reinicia el POLLER: éste se auto-detiene en done, así que sin restart() la pantalla quedaba
   // congelada mostrando el estado terminado aunque el run ya corría de nuevo en el servidor.
   private async resumeRun(): Promise<void> {
@@ -226,29 +224,28 @@ export class RunScreen extends CElement {
     if (!s) return loader('Cargando run');
     const isDemo = this.apiBase.includes('/demo');
     return html`
-      ${isDemo ? html`<div class="whybox ok" role="note" style="margin-bottom:1rem"><b>Demo</b> — pantalla de muestra con datos ficticios (modelos, cambios y coste no son reales). <a href="/">Ir a tu panel</a></div>` : nothing}
+      ${isDemo ? html`<p class="alert info" role="note" style="margin-bottom:1rem"><span><b>Demo</b> — pantalla de muestra con datos ficticios (modelos, cambios y coste no son reales). <a class="lnk" href="/">Ir a tu panel</a></span></p>` : nothing}
       <div class="apphdr">
         <h1 class="trunc">${this.change || s.project || 'run'}</h1>
         <span role="status" aria-live="polite"><status-pill .verdict=${s.pending ? 'EN PAUSA' : (s.verdict ?? 'EN CURSO')}></status-pill></span>
       </div>
       <p class="subhead">${s.project || '—'}${s.branch ? html` <span class="chip-branch" title="rama de git del proyecto">⎇ ${s.branch}</span>` : ''}</p>
       <div class="actbar">
-        <a class="btn sm sec" href=${this.sessionHref()}>📃 Ver sesión</a>
-        ${(s.done || s.verdict === 'INTERRUMPIDO') && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()} title=${s.verdict === 'INTERRUMPIDO' ? 'El proceso del run murió sin cerrar (¿equipo suspendido / terminal cerrada?) — reanuda desde la última fase completada' : 'reanudar el run'}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
-        ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : '⬆ Archivar'}</button>` : nothing}
-        ${s.done && verdictClass(s.verdict) === 'GREEN' ? html`<button class="btn sm receipt" ?disabled=${this.busy === 'receipt'} aria-live="polite" @click=${() => void this.copyReceipt()}>${this.copiedReceipt ? 'Copiado ✓' : this.busy === 'receipt' ? 'Copiando…' : '📋 Copiar descripción de PR'}</button>` : nothing}
-        ${s.hasDashboard ? html`<a class="btn sm dash" href=${this.dashboardHref()} target="_blank">📊 Informe</a>` : nothing}
-        <a class="btn sm aiact" href=${this.apiBase + 'aiact'} target="_blank">🛡 AI Act</a>
-        ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
+        <a class="btn sm sec" href=${this.sessionHref()}>${icon('session')} Ver sesión</a>
+        ${(s.done || s.verdict === 'INTERRUMPIDO') && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()} title=${s.verdict === 'INTERRUMPIDO' ? 'El proceso del run murió sin cerrar (¿equipo suspendido / terminal cerrada?) — reanuda desde la última fase completada' : 'reanudar el run'}>${this.busy === 'resume' ? 'Reanudando…' : html`${icon('play')} Reanudar`}</button>` : nothing}
+        ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : html`${icon('archive')} Archivar`}</button>` : nothing}
+        ${s.done && verdictClass(s.verdict) === 'GREEN' ? html`<button class="btn sm sec" ?disabled=${this.busy === 'receipt'} aria-live="polite" @click=${() => void this.copyReceipt()}>${this.copiedReceipt ? 'Copiado ✓' : this.busy === 'receipt' ? 'Copiando…' : html`${icon('copy')} Copiar descripción de PR`}</button>` : nothing}
+        ${s.hasDashboard ? html`<a class="btn sm sec" href=${this.dashboardHref()} target="_blank">${icon('report')} Informe</a>` : nothing}
+        <a class="btn sm sec" href=${this.apiBase + 'aiact'} target="_blank">${icon('shield')} AI Act</a>
+        ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : html`${icon('stop')} Detener`}</button>` : nothing}
       </div>
       <!-- FUERA de .actbar: dentro era un item flex más y partía la barra de botones en dos filas -->
-      ${s.verdict === 'INTERRUMPIDO' ? html`<p class="alert warn" role="status"><span class="al-ic" aria-hidden="true">⏸</span><span>El proceso del run murió sin cerrar (¿equipo suspendido?). Nada se ha perdido: <b>↻ Reanudar</b> continúa desde la última fase completada.</span></p>` : nothing}
-      <p class="alert info" role="note"><span class="al-ic" aria-hidden="true">🛟</span><span>Red de seguridad: antes de cada fase que toca tu código (apply/fix) se guarda un <b>checkpoint</b> de tu árbol. Si el resultado no te convence, <button type="button" class="lnk" @click=${() => this.scrollToPipeline()}>«↩ Deshacer» en esa fase</button> lo restaura tal cual estaba.</span></p>
+      ${s.verdict === 'INTERRUMPIDO' ? html`<p class="alert warn" role="status"><span>Run <b>interrumpido</b>: el proceso murió sin cerrar (¿equipo suspendido?). Nada se ha perdido — <b>↻ Reanudar</b> continúa desde la última fase completada.</span></p>` : nothing}
       ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
       ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><svg class="why-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.3v4.4M8 11.0v.05" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span><b>Por qué:</b> ${s.reason}</span></div>` : nothing}
       ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (antes de verify): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
-      ${s.done ? (() => { const arts = this.reviewArtifacts(s); return arts.length ? html`<div class="decision-arts" style="margin:0 0 .9rem"><span class="ctx-lbl">Artefactos</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}<button type="button" class="lnk" title="abrir verify-report.md" @click=${() => this.viewArtifact('verify-report.md')}>📄 verify-report.md</button>${this.specDomain(s) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(s)!)}>± vs spec viva</button>` : nothing}</div>` : nothing; })() : nothing}
+      ${s.done ? (() => { const arts = this.reviewArtifacts(s); return arts.length ? html`<div class="decision-arts" style="margin:0 0 .9rem"><span class="ctx-lbl">Artefactos</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>${icon('doc')} ${a.label}</button>`)}<button type="button" class="lnk" title="abrir verify-report.md" @click=${() => this.viewArtifact('verify-report.md')}>${icon('doc')} verify-report.md</button>${this.specDomain(s) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(s)!)}>± vs spec viva</button>` : nothing}</div>` : nothing; })() : nothing}
       ${this.requestBox(s)}
       ${this.phaseId ? this.phaseDetail(s) : nothing}
       ${s.pending ? this.pendingCard(s.pending, s) : nothing}
@@ -272,11 +269,11 @@ export class RunScreen extends CElement {
     if (!p) return nothing;
     return html`<div class="ph">
       <div class="row">
-        <span class="name">${phaseIcon(p.phase)} Detalle: ${p.phase}</span>
+        <span class="name">Detalle: ${p.phase}</span>
         <span class="role">${p.role}</span>
         <span class="right">${secs(p.ms)} · ↓${fmt(p.tokens?.in)} ↑${fmt(p.tokens?.out)}</span>
       </div>
-      ${this.fileList(p.files)}
+      <div class="tpanel">${this.filesPanel(p.files)}</div>
       ${p.hasRaw ? html`<raw-output .apiBase=${this.apiBase} .phase=${p.phase}></raw-output>` : nothing}
       <div style="margin-top:var(--sp-2)"><a class="btn sm sec" href=${this.runPath()}>← volver</a></div>
     </div>`;
@@ -295,7 +292,8 @@ export class RunScreen extends CElement {
   }
 
   private viewSpecDiff(dom: string): void {
-    window.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'specdiff', path: dom } }));
+    // en document, NO en window: el visor escucha en document y un evento despachado en window jamás le llega (bug it.7)
+    document.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'specdiff', path: dom } }));
   }
 
   private reviewArtifacts(s: RunState): Array<{ label: string; path: string }> {
@@ -335,7 +333,7 @@ export class RunScreen extends CElement {
         </div>
       </header>
       <div class="decision-body">
-        ${arts.length ? html`<div class="decision-arts"><span class="ctx-lbl">Revisar</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>📄 ${a.label}</button>`)}${this.specDomain(this.s!) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(this.s!)!)}>± vs spec viva</button>` : nothing}</div>` : nothing}
+        ${arts.length ? html`<div class="decision-arts"><span class="ctx-lbl">Revisar</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>${icon('doc')} ${a.label}</button>`)}${this.specDomain(this.s!) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(this.s!)!)}>± vs spec viva</button>` : nothing}</div>` : nothing}
         ${fnd.length ? html`<ul class="decision-findings">${fnd.map((f, i) => html`
           <li>
             <label><input type="checkbox" .checked=${this.selected.has(i)} @change=${(e: Event) => this.toggleSel(i, (e.target as HTMLInputElement).checked)}>
@@ -356,7 +354,7 @@ export class RunScreen extends CElement {
           ${redoOpts.length ? html`<div class="redo-inline">
             <select aria-label="fase de planificación a rehacer" .value=${this.redoTarget} @change=${(e: Event) => { this.redoTarget = (e.target as HTMLSelectElement).value; this.redoErr = ''; }}>
               <option value="">Rehacer fase…</option>
-              ${redoOpts.map((ph) => html`<option value=${ph}>${phaseIcon(ph)} ${ph}</option>`)}
+              ${redoOpts.map((ph) => html`<option value=${ph}>${ph}</option>`)}
             </select>
             <button type="button" class="redo-btn" ?disabled=${this.busy !== ''} @click=${() => void this.redoPhase()}>${this.busy === 'redo' ? 'Rehaciendo…' : '↺ Rehacer'}</button>
           </div>` : nothing}
@@ -413,9 +411,9 @@ export class RunScreen extends CElement {
     const pending = (Array.isArray(s.plan) ? s.plan : []).filter((ph) => !doneNames.has(ph) && (!s.current || s.current.phase !== ph));
     return html`<h2 class="sect">Pipeline</h2>
       <div class="rail">
-        ${s.phases.map((p) => this.phaseCard(p))}
+        ${s.phases.map((p, i) => this.phaseCard(p, i))}
         ${s.current ? this.currentCard(s.current, s.now) : nothing}
-        ${pending.map((ph) => html`<div class="ph todo"><div class="row"><span class="name muted">○ ${phaseIcon(ph)} ${ph}</span></div></div>`)}
+        ${pending.map((ph) => html`<div class="ph todo"><div class="row"><span class="name muted">○ ${ph}</span></div></div>`)}
       </div>
     `;
   }
@@ -423,24 +421,38 @@ export class RunScreen extends CElement {
   // ROBUSTEZ: los campos internos de una fase (files, lenses…) NO los coacciona el poller (solo `phases`).
   // Un timeline.json corrupto (el coder escribe en .conductor con --allow-all-tools, o disco) podía traer
   // files:"string" → `.map`/`.length` crasheaban TODO el run. Se exige Array.isArray donde se itera.
-  private fileList(files: FileChange[] | undefined): TemplateResult | typeof nothing {
+  // contenido de los paneles de la tarjeta de fase (los TABS deciden cuál se ve; el contenido no lleva
+  // su propio marco — el .tpanel único pone la voz común)
+  private filesPanel(files: FileChange[] | undefined): TemplateResult | typeof nothing {
     if (!Array.isArray(files) || !files.length) return nothing;
-    return html`<details class="files"><summary>${files.length} ${files.length === 1 ? 'fichero' : 'ficheros'}</summary><ul>
+    return html`<ul class="tp-files">
       ${files.map((f) => html`<li><span class="k ${f.k}">${this.sign(f.k)}</span> <button class="lnk" @click=${() => this.viewDiff(f.p)}>${f.p}</button></li>`)}
-    </ul></details>`;
+    </ul>`;
   }
 
-  private phaseContext(p: Phase): TemplateResult | typeof nothing {
+  private hasCtx(p: Phase): boolean {
+    const ctx = p.context;
+    return !!ctx && ((Array.isArray(ctx.instructions) && ctx.instructions.length > 0) || (Array.isArray(ctx.contextFiles) && ctx.contextFiles.length > 0));
+  }
+  private ctxPanel(p: Phase): TemplateResult | typeof nothing {
     const ctx = p.context;
     if (!ctx) return nothing;
     const ins = Array.isArray(ctx.instructions) ? ctx.instructions : [];
     const files = Array.isArray(ctx.contextFiles) ? ctx.contextFiles : [];
-    if (!ins.length && !files.length) return nothing;
-    return html`<details class="ph-ctx">
-      <summary>Contexto del agente</summary>
+    return html`
       ${ins.length ? html`<div class="ctx-row"><span class="ctx-lbl">Instrucciones</span><span class="ctx-chips">${ins.map((f) => html`<code class="ctx-chip">${f.split('/').pop()}</code>`)}</span></div>` : nothing}
-      ${files.length ? html`<div class="ctx-row"><span class="ctx-lbl">Archivos</span><span class="ctx-chips">${files.map((f) => html`<code class="ctx-chip">${f}</code>`)}</span></div>` : nothing}
-    </details>`;
+      ${files.length ? html`<div class="ctx-row"><span class="ctx-lbl">Archivos</span><span class="ctx-chips">${files.map((f) => html`<code class="ctx-chip">${f}</code>`)}</span></div>` : nothing}`;
+  }
+
+  // tab abierto por tarjeta — clave índice:fase (verify×3 / fix×2 no colisionan entre sí)
+  private toggleTool(key: string, tab: string): void {
+    this.tool = { ...this.tool, [key]: this.tool[key] === tab ? '' : tab };
+  }
+  // icono por pestaña (dirección 2026-07-31 "añade tabs de fase"): doc=ficheros escritos, eye=lo que vio el agente, terminal=salida cruda
+  private tchip(key: string, tab: string, label: string): TemplateResult {
+    const ic = tab === 'files' ? 'doc' : tab === 'ctx' ? 'eye' : 'terminal';
+    const on = this.tool[key] === tab;
+    return html`<button type="button" class="tchip ${on ? 'on' : ''}" aria-pressed=${on} @click=${() => this.toggleTool(key, tab)}>${icon(ic)} ${label}</button>`;
   }
 
   // T3: fila de estimación preflight de una fase (null si el run no la persistió — runs antiguos)
@@ -451,23 +463,30 @@ export class RunScreen extends CElement {
     return r ? { estIn: r.estIn, estOut: r.estOut } : null;
   }
 
-  private phaseCard(p: Phase): TemplateResult {
+  private phaseCard(p: Phase, idx = 0): TemplateResult {
+    const tkey = `${idx}:${p.phase}`;
+    const sel = this.tool[tkey] || '';
     return html`<div class="ph ${p.ok ? 'done' : 'bad'}">
       <div class="row">
-        <span class="name"><a href="${this.runPath()}?phase=${p.phase}">${phaseIcon(p.phase)} ${p.phase}</a></span>
+        <span class="name"><a href="${this.runPath()}?phase=${p.phase}">${p.phase}</a></span>
         <span class="role">${p.role}</span>
-        ${p.model ? html`<span class="badge prov-${p.provider ?? 'none'}">${modelIcon(p.model, p.provider)} ${p.model}</span>` : nothing}
-        ${p.modelMismatch ? html`<span class="badge warn" title="pedido ${p.modelRequested ?? '?'} → el proveedor reportó ${p.modelReported ?? '?'}">⚠ modelo</span>` : nothing}
-        ${p.fallback ? html`<span class="badge warn" title="pedido ${p.fallback.from} → reserva ${p.fallback.to} tras ${p.fallback.afterKind} (opt-in fallback)">🛟 fallback</span>` : nothing}
+        ${p.model ? html`<span class="badge prov-${p.provider ?? 'none'}">${p.model}</span>` : nothing}
+        ${p.modelMismatch ? html`<span class="badge warn" title="pedido ${p.modelRequested ?? '?'} → el proveedor reportó ${p.modelReported ?? '?'}">${icon('warn')} modelo</span>` : nothing}
+        ${p.fallback ? html`<span class="badge warn" title="pedido ${p.fallback.from} → reserva ${p.fallback.to} tras ${p.fallback.afterKind} (opt-in fallback)">${icon('buoy')} fallback</span>` : nothing}
         ${p.attempts > 1 ? html`<span class="badge">${p.attempts}×</span>` : nothing}
-        ${Array.isArray(p.lenses) && p.lenses.length ? html`<span class="badge">${p.lenses.length} lentes</span>` : nothing}
-        ${p.resumed ? html`<span class="badge">⏯ heredada</span>` : nothing}
+        ${Array.isArray(p.lenses) && p.lenses.length ? html`<span class="badge" title="verify revisó en PARALELO con ${p.lenses.length} lentes independientes (${p.lenses.join(', ')}) y fusionó sus hallazgos">${p.lenses.length} lentes</span>` : nothing}
+        ${p.resumed ? html`<span class="badge" title="fase completada en el run anterior (interrumpido/reanudado) — se reutiliza su artefacto SIN volver a pagarla">${icon('redo')} heredada</span>` : nothing}
         <span class="right"><b class="ph-time">${secs(p.ms)}</b>${p.tokens ? html`<span class="ph-real" title="tokens reales de la fase">↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}</span>` : nothing}${this.estFor(p.phase) ? html`<span class="ph-est" title="estimación preflight (sin gastar API)">est ↓${fmt(this.estFor(p.phase)!.estIn)} ↑${fmt(this.estFor(p.phase)!.estOut)}</span>` : nothing}</span>
       </div>
-      ${this.fileList(p.files)}
-      ${this.phaseContext(p)}
-      ${(p.phase === 'apply' || p.phase === 'fix') ? html`<div style="margin-top:var(--sp-2)"><button class="rollbtn" ?disabled=${this.busy === 'rollback'} @click=${() => void this.rollback(p.phase)}>${this.busy === 'rollback' ? 'Deshaciendo…' : '↩ Deshacer'}</button></div>` : nothing}
-      ${p.hasRaw ? html`<raw-output .apiBase=${this.apiBase} .phase=${p.phase}></raw-output>` : nothing}
+      <!-- TABS FIJOS de la tarjeta (rediseño 2026-07-31, feedback "saltos al interactuar"): los botones
+           JAMÁS se mueven; el contenido vive en UN panel único debajo que solo intercambia contenido. -->
+      <div class="ph-tools" role="tablist" aria-label="detalle de la fase ${p.phase}">
+        ${Array.isArray(p.files) && p.files.length ? this.tchip(tkey, 'files', `${p.files.length} ${p.files.length === 1 ? 'fichero' : 'ficheros'}`) : nothing}
+        ${this.hasCtx(p) ? this.tchip(tkey, 'ctx', 'contexto del agente') : nothing}
+        ${p.hasRaw ? this.tchip(tkey, 'raw', 'salida del modelo') : nothing}
+        ${(p.phase === 'apply' || p.phase === 'fix') ? html`<button class="rollbtn" ?disabled=${this.busy === 'rollback'} @click=${() => void this.rollback(p.phase)} title="restaura tu árbol al checkpoint previo a esta fase">${this.busy === 'rollback' ? 'Deshaciendo…' : html`${icon('undo')} Deshacer`}</button>` : nothing}
+      </div>
+      ${sel ? html`<div class="tpanel">${sel === 'files' ? this.filesPanel(p.files) : sel === 'ctx' ? this.ctxPanel(p) : html`<raw-output active .apiBase=${this.apiBase} .phase=${p.phase}></raw-output>`}</div>` : nothing}
       ${p.lastError ? html`<div class="errline">${p.lastError}</div>` : nothing}
     </div>`;
   }
@@ -476,7 +495,7 @@ export class RunScreen extends CElement {
     const pct = c.timeoutMs ? Math.min(95, Math.round(((now - c.startedAt) / c.timeoutMs) * 100)) : 40;
     return html`<div class="ph now">
       <div class="row">
-        <span class="name">▶ ${phaseIcon(c.phase)} ${c.phase}</span>
+        <span class="name">▶ ${c.phase}</span>
         <span class="role">${c.role} · intento ${c.attempt}/${c.maxAttempts} · ${c.model ?? 'sesión'}</span>
       </div>
       <div class="bar"><i style="width:${pct}%"></i></div>

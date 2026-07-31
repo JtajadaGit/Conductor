@@ -189,6 +189,25 @@ export function usageFromShutdown(data) {
   return (inNet || tout || tread || model) ? { in: inNet, out: tout, cached: tread, model } : null;
 }
 
+// PERMISOS POR ROL — paridad con `--allow-tool write` / `--allow-all-tools` del runner spawn.
+// `approveAll` aprobaba TODO en TODAS las fases: con --runner sdk, explore/propose/spec/verify corrían con
+// shell, red y MCP auto-aprobados. Como los prompts inyectan contenido del repo (specs, AGENTS.md), eso
+// convertía una inyección en ejecución de comandos durante una fase que solo debía escribir un .md.
+// Kinds que emite el SDK: shell | write | read | mcp | url | memory | custom-tool | hook | extension-*.
+// Decisión: { kind:'approve-once' } (lo mismo que devuelve su `approveAll`) o { kind:'reject', feedback }.
+// Puro y exportado para test.
+const ALLOW_KINDS = { write: new Set(['write', 'read']) }; // 'all' = sin restricción (el coder necesita shell)
+export function permissionHandlerFor(allow) {
+  if (allow === 'all') return () => ({ kind: 'approve-once' });
+  const ok = ALLOW_KINDS[allow] || ALLOW_KINDS.write; // allowlist desconocida → la MÁS restrictiva, nunca abrir
+  return (req) => {
+    const k = req && req.kind;
+    return ok.has(k)
+      ? { kind: 'approve-once' }
+      : { kind: 'reject', feedback: `permiso "${k}" denegado: esta fase solo puede escribir su artefacto (allowlist "${allow}")` };
+  };
+}
+
 export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env } = {}) {
   let mod = sdk;
   if (!mod && sdkBundle) {
@@ -236,13 +255,17 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
   }
   const provider = base && apiKey ? { type: 'openai', baseUrl: base.endsWith('/v1') ? base : base + '/v1', apiKey } : undefined;
 
-  const runAgent = async ({ prompt, timeoutMs = 600000, model }) => {
-    let session = null, unsub = null, shutdownData = null, shutdownSeen = null;
+  const runAgent = async ({ prompt, timeoutMs = 600000, model, allow = 'all', stopSignal, onActivity }) => {
+    let session = null, unsub = null, shutdownData = null, shutdownSeen = null, stopPoll = null;
+    // ABORTO del turno en vuelo. El spawn mata el proceso con taskkill; aquí es `session.abort()`, que la
+    // propia doc del SDK describe como "aborta el mensaje en curso; la sesión sigue válida".
+    const abortNow = async () => { try { if (session && typeof session.abort === 'function') await session.abort(); } catch {} };
     // Cierra la sesión y espera su recibo. OJO: `destroy()` NO EXISTE en el SDK (v1.0: el método es
     // `disconnect()`) — el `session.destroy?.()` anterior era un no-op silencioso por el `?.`, así que
     // ninguna sesión se cerraba hasta el client.stop() final y el recibo no llegaba nunca.
     // Best-effort y ACOTADO: ni el disconnect ni la espera del evento pueden colgar al driver.
     const closeAndUsage = async () => {
+      if (stopPoll) { clearInterval(stopPoll); stopPoll = null; }
       if (!session) return null;
       const s = session; session = null;
       try { if (typeof s.disconnect === 'function') await Promise.race([s.disconnect(), new Promise((r) => setTimeout(r, 3000))]); } catch {}
@@ -262,14 +285,26 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       if (/^(byok|litellm):/.test(model || '') && !sessProvider) {
         return { code: -1, err: `fase ${model} sin credenciales LiteLLM (CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY, COPILOT_PROVIDER_*, o ~/.conductor/litellm.json) — no se cae a Copilot Business para no gastar AI Credits` };
       }
-      // onPermissionRequest: approveAll = el equivalente del --allow-all-tools del runner spawn (sin él,
-      // las peticiones de permiso de tools quedan PENDIENTES y la sesión no escribe ficheros — verificado).
+      // onPermissionRequest es OBLIGATORIO: sin handler, las peticiones de permiso quedan PENDIENTES y la
+      // sesión no escribe nada (verificado). Antes iba `approveAll` fijo; ahora la allowlist del ROL, que
+      // resuelve el driver (resolveAllow) y es la MISMA que traduce el spawn a flags del CLI.
       session = await client.createSession({
         ...(m ? { model: m } : {}), ...(sessProvider ? { provider: sessProvider } : {}),
-        ...(approveAll ? { onPermissionRequest: approveAll } : {}),
+        onPermissionRequest: permissionHandlerFor(allow),
       });
       // la suscripción se arma ANTES de enviar: el recibo es asíncrono y si se registra después se pierde.
-      if (typeof session.on === 'function') shutdownSeen = new Promise((res) => { unsub = session.on((e) => { if (e && e.type === 'session.shutdown') { shutdownData = e.data; res(); } }); });
+      // De paso alimenta la ACTIVIDAD EN VIVO: con spawn sale de events.jsonl, que en sdk no existe — sin
+      // esto la barra del run era solo un reloj y no se distinguía "trabajando" de "colgado".
+      if (typeof session.on === 'function') shutdownSeen = new Promise((res) => {
+        unsub = session.on((e) => {
+          if (!e) return;
+          if (e.type === 'session.shutdown') { shutdownData = e.data; res(); }
+          else if (onActivity && e.type === 'tool.execution_start') { try { onActivity(String(e.data?.toolName || e.data?.name || 'tool')); } catch {} }
+        });
+      });
+      // STOP del usuario: sin esto el botón Detener no hacía NADA con --runner sdk (el driver solo mira
+      // stopSignal DESPUÉS de que la promesa resuelva) y el run seguía quemando tokens hasta el timeout.
+      if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearInterval(stopPoll); stopPoll = null; void abortNow(); } }, 1000);
       // 2º arg = timeout de sendAndWait (su default interno es 60s — corto para fases de código);
       // el Promise.race queda como cinturón por si el del SDK no dispara.
       const result = await Promise.race([
@@ -279,6 +314,11 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       const usage = await closeAndUsage();
       return { code: 0, out: String(result?.data?.content ?? ''), ...(usage ? { usage } : {}) };
     } catch (e) {
+      // ABORTAR ANTES DE NADA. El timeout de `sendAndWait` NO detiene el trabajo en vuelo — su propia doc
+      // lo dice: "does not abort in-flight agent work". Sin este abort, tras un timeout de apply el driver
+      // lanzaba el reintento mientras la sesión anterior SEGUÍA escribiendo los mismos ficheros: dos
+      // agentes en el mismo árbol, con checkpoint y rollback calculados sobre suelo que se movía.
+      await abortNow();
       // una fase caída (timeout, error del proveedor) TAMBIÉN gastó tokens: se cobran igual o el
       // presupuesto duro y el coste del run se quedarían cortos justo en los runs que peor van.
       const usage = await closeAndUsage();

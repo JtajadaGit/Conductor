@@ -529,11 +529,16 @@ const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><r
 // sintético {offline:true} — antes servía /api/changes de caché y el panel FINGÍA estar vivo con datos viejos
 // (queja real 2026-07-28: «stop y la web sigue funcionando»). /assets/* hasheados = cache-first (inmutables);
 // navegación = network-first con fallback al shell cacheado (la SPA pinta su estado «apagado» encima).
-const swJs = (version) => `const V='conductor-v${version || '0'}';const SHELL=['/','/manifest.json','/icon.svg'];
+// La clave incluye la HUELLA DE BUILD de la UI, no solo la versión del paquete: los assets son cache-first
+// e inmutables, así que con una clave fija por versión (era `conductor-v<version>`) recompilar la UI sin
+// subir versión NO purgaba nada (el activate solo borra claves distintas) y las pestañas abiertas y la PWA
+// instalada se quedaban pidiendo chunks que Vite ya había renombrado → pantalla en blanco. Pasó de verdad
+// el 2026-07-31 tras un `npm i -g`. Con el hash del index.html en la clave, cada build purga el anterior.
+const swJs = (version, build) => `const V='conductor-v${version || '0'}-${build || 'dev'}';const SHELL=['/','/manifest.json','/icon.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL).catch(()=>{})))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;const u=new URL(r.url);
-if(u.pathname.startsWith('/assets/')){e.respondWith(caches.match(r).then(h=>h||fetch(r).then(res=>{const cp=res.clone();caches.open(V).then(c=>c.put(r,cp));return res})));return}
+if(u.pathname.startsWith('/assets/')){e.respondWith(caches.match(r).then(h=>h||fetch(r).then(res=>{if(res.ok){const cp=res.clone();caches.open(V).then(c=>c.put(r,cp)).catch(()=>{})}return res})));return}
 if(u.pathname.startsWith('/api/')){e.respondWith(fetch(r).catch(()=>new Response('{"ok":false,"offline":true}',{status:503,headers:{'content-type':'application/json'}})));return}
 if(r.mode==='navigate'){e.respondWith(fetch(r).catch(()=>caches.match('/')))}});`;
 
@@ -1035,7 +1040,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
       if (useStaticUi && serveStatic({ uiDir: UI_DIR, pathname: u.pathname, method: req.method, res })) return;
       if (u.pathname === '/manifest.json') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); return res.end(MANIFEST); }
       if (u.pathname === '/icon.svg') { res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end(ICON_SVG); }
-      if (u.pathname === '/sw.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' }); return res.end(swJs(version)); }
+      if (u.pathname === '/sw.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' }); return res.end(swJs(version, uiBuild())); }
       if (u.pathname === '/api/ping') return json(200, { ok: true, app: 'conductor', version, uiBuild: uiBuild(), root: DEFAULT.root, projects: [...registry.values()] });
       if (req.method === 'POST' && u.pathname === '/api/shutdown') {
         // auto-reemplazo tras actualizar — JAMAS con runs vivos (un relevo mio mato un run a mitad de fix)
@@ -1427,9 +1432,13 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const bodyRb = await readBody(req);
           if (!bodyRb) return json(400, { ok: false, error: 'body JSON inválido' });
           const { phase } = bodyRb;
+          // sin `phase` salía un 500 con «sin checkpoint para la fase » (en blanco): un campo que falta es
+          // culpa de la PETICIÓN, no del servidor. El 500 además ensucia la monitorización y en el panel se
+          // pinta como caída en vez de como "dime qué fase quieres deshacer".
+          if (!phase || typeof phase !== 'string' || !phase.trim()) return json(400, { ok: false, error: 'falta "phase": indica de qué fase quieres deshacer el checkpoint' });
           if (reg && !reg.exited && !reg.pending) return json(409, { ok: false, error: 'el run está en marcha — pausa o detén antes de deshacer' });
-          try { const r2 = rollbackTo(proj.root, changeDir, String(phase || '')); return json(200, { ok: true, restored: r2.restored.length, removed: r2.removed.length }); }
-          catch (e) { return json(500, { ok: false, error: e.message }); }
+          try { const r2 = rollbackTo(proj.root, changeDir, phase.trim()); return json(200, { ok: true, restored: r2.restored.length, removed: r2.removed.length }); }
+          catch (e) { return json(400, { ok: false, error: e.message }); } // no hay checkpoint para esa fase = petición inválida, no fallo del servidor
         }
         if (action === 'events') {
           // VISOR DE SESIÓN: stream de eventos del CLI de Copilot, CONFINADO a <run>/.conductor/events.jsonl
@@ -1466,6 +1475,10 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         }
         return json(404, { ok: false });
       }
+      // una ruta /api/* desconocida NO puede caer al app-shell: el cliente pide JSON y recibía el HTML del
+      // panel con un 200, así que el fallo se manifestaba mucho más tarde como «JSON inesperado» en la
+      // consola del navegador en vez de como un 404 en la petición culpable.
+      if (u.pathname === '/api' || u.pathname.startsWith('/api/')) return json(404, { ok: false, error: `endpoint no encontrado: ${req.method} ${u.pathname}` });
       return html(PANEL_PAGE);
     } catch (e) { try { json(500, { ok: false, error: e.message }); } catch {} }
   });

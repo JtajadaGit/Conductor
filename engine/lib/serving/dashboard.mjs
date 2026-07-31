@@ -21,7 +21,11 @@ export function renderReceipt({ name = '', timeline = null, spec = '', proposal 
   const outT = tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.out) || 0), 0);
   const byok = tl.filter((p) => p.provider === 'byok').length;
   const mins = Math.round(((Number(timeline.total_ms) || tl.reduce((s, p) => s + (Number(p.ms) || 0), 0)) / 60000) * 10) / 10;
-  L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ↓${fmt(inT)} ↑${fmt(outT)} tokens${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
+  // NUNCA un cero fabricado: sin fases medidas, los reduce de arriba dan 0 y el recibo —que el dev PEGA EN
+  // SU PR— afirmaba "↓0 ↑0 tokens", que es una mentira con la máxima exposición pública del producto.
+  const measured = tl.some((p) => p.tokens && (p.tokens.in || p.tokens.out));
+  const tokTxt = measured ? `↓${fmt(inT)} ↑${fmt(outT)} tokens` : 'tokens: no medidos';
+  L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ${tokTxt}${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
   const what = (md(proposal).split(/^##\s*What Changes\s*$/mi)[1] || '').split(/^##\s/m)[0].trim();
   if (what) L.push('', '### Qué cambia', ...what.split('\n').slice(0, 10));
   const reqs = [...md(spec).matchAll(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->\s*\n###\s*Requirement:\s*([^\n]+)/gi)].slice(0, 12);

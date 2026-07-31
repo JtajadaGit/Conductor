@@ -34,7 +34,10 @@ function resolveRef(root, ref) {
 function validateNode(schema, data, path, root, errors) {
   if (schema === true || schema === undefined) return;
   if (schema === false) { errors.push({ instancePath: path, keyword: 'false', message: 'ningún valor permitido' }); return; }
-  if (typeof schema !== 'object') return;
+  // `typeof null === 'object'`, así que un sub-schema null (p.ej. `"properties": {"x": null}` en un fichero
+  // de schema mal escrito, o un `items: null`) se colaba por este guard y reventaba en `schema.$ref`.
+  // Un validador que LANZA deja al usuario sin diagnóstico: aquí un schema nulo simplemente no restringe.
+  if (schema === null || typeof schema !== 'object') return;
 
   if (schema.$ref) {
     const target = resolveRef(root, schema.$ref);

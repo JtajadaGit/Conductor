@@ -5,8 +5,8 @@
 // EN SILENCIO el presupuesto duro, stats, los AI credits y el MAPE del estimador — la app iba más rápida
 // pero ciega al gasto. Este test fija las dos mitades del arreglo: la CONVERSIÓN del recibo y su CABLEADO
 // hasta el timeline (incluida la rama de lentes, que agrega por su cuenta).
-import { usageFromShutdown } from '../lib/pipeline/sdk-runner.mjs';
-import { drive } from '../lib/pipeline/drive.mjs';
+import { usageFromShutdown, permissionHandlerFor } from '../lib/pipeline/sdk-runner.mjs';
+import { drive, parseSessionUsage, resolveAllow } from '../lib/pipeline/drive.mjs';
 import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,6 +76,54 @@ await test('drive: sin recibo se sigue leyendo el OTel — el runner spawn no ca
   await drive({ changeDir: CH('sinrecibo'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: fakeAgent(() => null) });
   const apply = tlOf('sinrecibo').phases.find((p) => p.phase === 'apply');
   eq(apply.tokens, null, 'sin recibo y sin OTel → null, como siempre (no se inventan tokens)');
+});
+
+// ── el MISMO recibo leído por el runner spawn (traza de sesión en disco) ────────────────────────────────
+const shutdownLine = (data) => JSON.stringify({ type: 'session.shutdown', data }) + '\n';
+
+await test('parseSessionUsage: sesión BYOK (solo modelMetrics, SIN tokenDetails) — el caso que devolvía null teniendo el dato', () => {
+  // medido 2026-07-31: las sesiones contra LiteLLM no emiten tokenDetails; exigirlo dejaba el runner por
+  // defecto con tokens null aunque el consumo estuviera en disco
+  const tr = shutdownLine({ currentModel: 'deepseek-v4-flash', modelMetrics: { 'deepseek-v4-flash': { usage: { inputTokens: 269857, outputTokens: 9278, cacheReadTokens: 170496 } } } });
+  eq(parseSessionUsage(tr), { in: 99361, out: 9278, cached: 170496, model: 'deepseek-v4-flash' });
+});
+
+await test('parseSessionUsage: tokenDetails con el MISMO convenio que el SDK (in y cached disjuntos)', () => {
+  const tr = shutdownLine({ currentModel: 'claude-sonnet-5', totalPremiumRequests: 2, tokenDetails: { input: { tokenCount: 1000 }, output: { tokenCount: 300 }, cache_read: { tokenCount: 8000 }, cache_write: { tokenCount: 500 } } });
+  // cache_write se paga (no es caché servida) → suma a `in`; cache_read va aparte y NO se cobra dos veces
+  eq(parseSessionUsage(tr), { in: 1500, out: 300, cached: 8000, model: 'claude-sonnet-5', aic: 2 });
+});
+
+await test('parseSessionUsage: varias sesiones (una por intento/lente) se SUMAN; sin cierres → null', () => {
+  const tr = shutdownLine({ currentModel: 'm1', modelMetrics: { m1: { usage: { inputTokens: 100, outputTokens: 10 } } } })
+    + shutdownLine({ currentModel: 'm2', modelMetrics: { m2: { usage: { inputTokens: 50, outputTokens: 5 } } } });
+  eq(parseSessionUsage(tr), { in: 150, out: 15, cached: 0, model: 'm1' }, 'el modelo es el del primer cierre');
+  eq(parseSessionUsage(''), null);
+  eq(parseSessionUsage('{"type":"assistant.message"}\nbasura no-json'), null, 'traza sin cierres → null, no ceros');
+});
+
+// ── permisos por rol en el runner sdk ───────────────────────────────────────────────────────────────────
+await test('permissionHandlerFor: el coder ("all") aprueba shell; el planner ("write") lo RECHAZA', () => {
+  eq(permissionHandlerFor('all')({ kind: 'shell' }), { kind: 'approve-once' });
+  eq(permissionHandlerFor('write')({ kind: 'write' }).kind, 'approve-once', 'escribir su artefacto: sí');
+  eq(permissionHandlerFor('write')({ kind: 'read' }).kind, 'approve-once', 'leer contexto: sí');
+  for (const k of ['shell', 'mcp', 'url', 'memory', 'custom-tool', 'hook', 'extension-management']) {
+    eq(permissionHandlerFor('write')({ kind: k }).kind, 'reject', `una fase de planificación NO puede "${k}"`);
+  }
+});
+
+await test('permissionHandlerFor: allowlist desconocida o kind ausente → la opción MÁS restrictiva (nunca abrir)', () => {
+  eq(permissionHandlerFor('loquesea')({ kind: 'shell' }).kind, 'reject');
+  eq(permissionHandlerFor('write')({}).kind, 'reject');
+  eq(permissionHandlerFor('write')(null).kind, 'reject');
+});
+
+await test('resolveAllow: misma política que traduce el spawn a flags (planner/reviewer escriben, coder todo)', () => {
+  eq(resolveAllow('planner'), 'write');
+  eq(resolveAllow('reviewer'), 'write');
+  eq(resolveAllow('coder'), 'all');
+  eq(resolveAllow('coder', { coder: 'write' }), 'write', 'conductor.json puede APRETAR la tuerca');
+  eq(resolveAllow('planner', { planner: 'rm -rf /' }), 'write', 'metacaracteres → degrada al default seguro');
 });
 
 await test('drive: con lentes, verify SUMA el recibo de cada lente', async () => {

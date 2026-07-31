@@ -8,6 +8,8 @@ import './artifact-viewer';
 import './theme-toggle';
 
 const SB_KEY = 'conductorSbHide';
+// marca de "ya he recargado una vez por un chunk que faltaba" — evita el bucle de recargas si el fallo persiste
+const RELOAD_KEY = 'conductorChunkReload';
 
 /**
  * <conductor-app> — raíz de la SPA: sidebar + área de contenido. Carga las pantallas por code-splitting
@@ -27,6 +29,7 @@ export class ConductorApp extends CElement {
     try { return window.matchMedia('(max-width: 820px)').matches; } catch { return false; }
   })();
   @state() private ready = false;
+  @state() private loadFailed = false; // el chunk de la pantalla no se pudo cargar ni recargando
   @state() private online = true; // conexión con el servidor local (el ping es el latido)
   @state() private veil: string | null = null; // velo de transición (apagar/reintentar): etiqueta visible
   private pingFails = 0; // histéresis: solo declaramos «apagado» tras 3 fallos consecutivos (un blip no es una caída)
@@ -90,14 +93,28 @@ export class ConductorApp extends CElement {
   };
 
   private async preload(): Promise<void> {
-    this.ready = false;
+    this.ready = false; this.loadFailed = false;
     const n = this.route.name;
-    if (n === 'panel') await import('../screens/panel-screen');
-    else if (n === 'run' || n === 'demo') await import('../screens/run-screen');
-    else if (n === 'help') await import('../screens/help-screen');
-    else if (n === 'flow') await import('../screens/flow-screen');
-    else if (n === 'ahorro') await import('../screens/ahorro-screen');
-    else if (n === 'session') await import('../screens/session-screen');
+    try {
+      if (n === 'panel') await import('../screens/panel-screen');
+      else if (n === 'run' || n === 'demo') await import('../screens/run-screen');
+      else if (n === 'help') await import('../screens/help-screen');
+      else if (n === 'flow') await import('../screens/flow-screen');
+      else if (n === 'ahorro') await import('../screens/ahorro-screen');
+      else if (n === 'session') await import('../screens/session-screen');
+    } catch {
+      // El chunk pedido ya no existe: la UI se recompiló bajo los pies de esta pestaña (los ficheros van
+      // hasheados y Vite renombra los viejos). Sin este catch, el import rechazado dejaba `ready` en false
+      // PARA SIEMPRE — spinner eterno, «la app está rota», y el error solo como unhandled rejection en la
+      // consola. Recargar trae el index.html nuevo con los nombres correctos, que es lo que un humano hace
+      // a mano. UNA sola vez: si tras recargar vuelve a fallar, el problema no era la caché → se muestra.
+      let first = true;
+      try { first = !sessionStorage.getItem(RELOAD_KEY); sessionStorage.setItem(RELOAD_KEY, '1'); } catch { /* sin storage: se intenta una vez y ya */ }
+      if (first) { try { location.reload(); return; } catch { /* sin location: cae al aviso */ } }
+      this.loadFailed = true; this.ready = true;
+      return;
+    }
+    try { sessionStorage.removeItem(RELOAD_KEY); } catch { /* nada que limpiar */ }
     this.ready = true;
   }
 
@@ -119,6 +136,14 @@ export class ConductorApp extends CElement {
         <h1>conductor está apagado</h1>
         <p>El servidor local no responde. Arráncalo con <code>conductor</code> en tu terminal — esta pantalla se recupera sola en cuanto vuelva.</p>
         <button class="btn" @click=${() => void this.retryNow()}>Reintentar ahora</button>
+      </div>`;
+    }
+    if (this.loadFailed) {
+      return html`<div class="srv-down" role="alert">
+        <div class="srv-down-ic" aria-hidden="true">⟳</div>
+        <h1>Esta pantalla no se pudo cargar</h1>
+        <p>conductor se actualizó mientras tenías la pestaña abierta, así que el navegador pide una versión del panel que ya no existe. Recarga para traer la nueva.</p>
+        <button class="btn" @click=${() => { try { sessionStorage.removeItem(RELOAD_KEY); } catch { /* sin storage */ } location.reload(); }}>Recargar</button>
       </div>`;
     }
     if (!this.ready) return loader('Cargando conductor', true);

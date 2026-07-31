@@ -5,6 +5,7 @@ import { ConductorApi } from '../api/client';
 import { router } from '../router';
 import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate, PlanCheck } from '../api/types';
 import { fmt, kebab, verdictClass, sanitizeProjects } from '../lib/format';
+import { icon } from '../lib/svg-icons';
 import '../components/status-pill';
 import '../components/mention-input';
 
@@ -284,7 +285,7 @@ export class PanelScreen extends CElement {
     try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* sin window */ }
   }
 
-  private metrics(projects: ProjectSummary[]): { total: number; green: number; curso: number; tin: number; tout: number } {
+  private metrics(projects: ProjectSummary[]): { total: number; green: number; curso: number; tin: number; tout: number; measured: boolean } {
     const all = projects.flatMap((p) => p.changes ?? []);
     return {
       total: all.length,
@@ -292,6 +293,9 @@ export class PanelScreen extends CElement {
       curso: all.filter((c) => verdictClass(c.verdict) === 'CURSO').length,
       tin: all.reduce((a, c) => a + (c.tokens?.in ?? 0), 0),
       tout: all.reduce((a, c) => a + (c.tokens?.out ?? 0), 0),
+      // ¿hay ALGUNA lectura real? Sin esto los `?? 0` sumaban 0 y las tarjetas declaraban «↓0 ↑0», que no es
+      // «no gastó»: es «no lo sabemos». Un instrumento sin señal marca raya, no cero.
+      measured: all.some((c) => !!c.tokens),
     };
   }
   // FOCO en el proyecto ACTIVO por defecto; "ver todos" agrega el global (coherencia #8: lo global es opt-in).
@@ -528,7 +532,7 @@ export class PanelScreen extends CElement {
               <label style="display:flex;align-items:center;gap:.45rem;cursor:${locked ? 'default' : 'pointer'};${checked ? '' : 'opacity:.5'}">
                 <input type="checkbox" .checked=${checked} ?disabled=${locked} @change=${() => this.togglePhase(ph)} aria-label="${ph}${locked ? ' (obligatoria, no se puede quitar)' : ' (opcional)'}">
                 <strong style="font-weight:600">${ph}</strong>
-                ${locked ? html`<span title="obligatoria — gobierno innegociable" aria-hidden="true">🔒</span>` : nothing}
+                ${locked ? html`<span title="obligatoria — gobierno innegociable" aria-hidden="true">${icon('lock')}</span>` : nothing}
                 ${info?.artifact ? html`<span class="muted" style="font-weight:400">→ ${info.artifact}</span>` : nothing}
                 ${info?.gate ? html`<span class="muted" style="font-weight:400">· ${info.gate}</span>` : nothing}
               </label>
@@ -621,7 +625,7 @@ export class PanelScreen extends CElement {
             ${this.mixNote()}
             <!-- B5: defaults en el REPO, la web los cambia — persiste la mezcla en openspec/conductor.json -->
             <div class="frow" style="margin-top:.55rem;align-items:center">
-              <button type="button" class="btn sm sec" ?disabled=${this.savingDefaults || !(this.mPlanner || this.mCoder || this.mReviewer || Object.values(this.mPhases).some(Boolean))} @click=${() => void this.saveModelsDefault()} title="Escribe esta mezcla en openspec/conductor.json — será el default del EQUIPO para este proyecto (committeable)">${this.savingDefaults ? '…' : '💾 Guardar como default del proyecto'}</button>
+              <button type="button" class="btn sm sec" ?disabled=${this.savingDefaults || !(this.mPlanner || this.mCoder || this.mReviewer || Object.values(this.mPhases).some(Boolean))} @click=${() => void this.saveModelsDefault()} title="Escribe esta mezcla en openspec/conductor.json — será el default del EQUIPO para este proyecto (committeable)">${this.savingDefaults ? '…' : html`${icon('save')} Guardar como default del proyecto`}</button>
               ${this.saveDefaultsMsg ? html`<span class="inst-msg ${this.saveDefaultsMsg.startsWith('✓') ? 'ok' : 'bad'}" role="status" aria-live="polite" style="margin-top:0">${this.saveDefaultsMsg}</span>` : nothing}
             </div>
           </div>
@@ -640,18 +644,13 @@ export class PanelScreen extends CElement {
            vive en el tooltip del selector y la versión del motor en el pliegue de Métricas) -->
       <div class="apphdr"><h1>${active ? active.name : 'conductor'}</h1></div>
       ${att.length ? html`<div class="attn" role="alert" aria-label="runs que esperan tu decisión">
-        ${att.map(({ p, c }) => html`<a class="attn-item" href="/run/${p.id}/${c.name}">⏸ <b>${c.name}</b> espera tu decisión${this.projects.length > 1 ? html` <span class="muted">· 📁 ${p.name}</span>` : nothing}<span class="attn-go">Abrir →</span></a>`)}
+        ${att.map(({ p, c }) => html`<a class="attn-item" href="/run/${p.id}/${c.name}">${icon('pause')} <b>${c.name}</b> espera tu decisión${this.projects.length > 1 ? html` <span class="muted">· ${icon('folder')} ${p.name}</span>` : nothing}<span class="attn-go">Abrir →</span></a>`)}
       </div>` : nothing}
       <!-- coste "1 cifra en su momento" (decisión de producto): el desglose vive plegado; la cifra oportuna
            va en el estimate del form (al decidir) y en el run (al terminar). AI Credits queda como única señal ambiente. -->
-      ${activeItems.length > 0 ? html`
-        <h2 class="sect">En curso</h2>
-        ${activeItems.map(({ p, c }) => this.runRow(p, c))}
-        <details class="launch-fold" style="margin: 1.1rem 0 .3rem">
-          <summary>Nueva funcionalidad</summary>
-          ${launchSurface}
-        </details>
-      ` : launchSurface}
+      <!-- el PROMPT es el HÉROE: siempre primero y desplegado (decisión UX 2026-07-31); los runs en curso
+           viven ABAJO con el historial — el panel se abre para LANZAR, el seguimiento va después -->
+      ${launchSurface}
 
       <!-- MÉTRICAS SIEMPRE VISIBLES bajo el formulario (decisión UX 2026-07-31: sin pliegue — el pliegue
            las escondía y nadie las abría). Flechas PEGADAS al número (voz de dato), versión discreta al pie. -->
@@ -660,13 +659,18 @@ export class PanelScreen extends CElement {
           <div class="card"><small>Runs</small><span>${m.total}</span></div>
           <div class="card ok"><small>Green</small><span>${m.green}</span></div>
           ${m.curso > 0 ? html`<div class="card warn"><small>En curso</small><span>${m.curso}</span></div>` : nothing}
-          <div class="card"><small>Tokens entrada</small><span><i class="dir">↓</i>${fmt(m.tin)}</span></div>
-          <div class="card"><small>Tokens salida</small><span><i class="dir">↑</i>${fmt(m.tout)}</span></div>
+          <div class="card"><small>Tokens entrada</small><span>${m.measured ? html`<i class="dir">↓</i>${fmt(m.tin)}` : '—'}</span></div>
+          <div class="card"><small>Tokens salida</small><span>${m.measured ? html`<i class="dir">↑</i>${fmt(m.tout)}` : '—'}</span></div>
           ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
           ${this.usage ? html`<div class="card"><small>Uso total LiteLLM</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
         </div>
-        ${this.version ? html`<p class="metrics-foot" title="versión del motor en uso">motor v${this.version}</p>` : nothing}
+        ${this.version || (!m.measured && m.total) ? html`<p class="metrics-foot" title="versión del motor en uso">${this.version ? html`motor v${this.version}` : nothing}${!m.measured && m.total ? html`${this.version ? ' · ' : ''}tokens sin medir en estos runs` : nothing}</p>` : nothing}
       </section>
+
+      ${activeItems.length > 0 ? html`
+        <h2 class="sect">En curso</h2>
+        ${activeItems.map(({ p, c }) => this.runRow(p, c))}
+      ` : nothing}
 
       <!-- UN SOLO input de búsqueda en posición estable: al teclear, this.q cambia y el re-render antes
            DESMONTABA el input de "Historial" y MONTABA el de "Búsqueda" (nodos DOM distintos) → se perdía el
@@ -685,12 +689,12 @@ export class PanelScreen extends CElement {
 
       ${this.archived.length ? html`
         <details class="arch">
-          <summary>📦 Archivados <span class="muted">· ${this.archived.length}</span></summary>
+          <summary>${icon('archive')} Archivados <span class="muted">· ${this.archived.length}</span></summary>
           ${this.archived.map((a) => html`
             <div class="arch-row">
               <status-pill .verdict=${a.verdict}></status-pill>
               <span class="nm">${a.name}</span>
-              ${a.project ? html`<span class="proj">📁 ${a.project}</span>` : nothing}
+              ${a.project ? html`<span class="proj">${icon('folder')} ${a.project}</span>` : nothing}
               <span class="muted">${a.date ?? ''} · ${a.phases} fases · ${a.request}</span>
             </div>`)}
         </details>` : nothing}
@@ -698,7 +702,7 @@ export class PanelScreen extends CElement {
   }
 
   private hitRow(h: SearchHit): TemplateResult {
-    const label = html`<status-pill .verdict=${h.verdict}></status-pill><span class="nm">${h.name}</span>${h.archived ? html`<span class="tag">📦</span>` : nothing}${h.project ? html`<span class="proj">📁 ${h.project}</span>` : nothing}<span class="muted snip">…${h.snippet}…</span>`;
+    const label = html`<status-pill .verdict=${h.verdict}></status-pill><span class="nm">${h.name}</span>${h.archived ? html`<span class="tag" title="archivado">${icon('archive')}</span>` : nothing}${h.project ? html`<span class="proj">${icon('folder')} ${h.project}</span>` : nothing}<span class="muted snip">…${h.snippet}…</span>`;
     return html`<div class="hit-row">${h.archived
       ? label
       : html`<a class="hit-main" href="/run/${h.projectId ?? this.defProjId}/${h.name}">${label}</a>`}</div>`;
@@ -762,16 +766,18 @@ export class PanelScreen extends CElement {
       <div class="run-row ${verdictClass(c.verdict) === 'CURSO' ? 'run-active' : ''}">
         <div class="run-l">
           <a class="main" href="/run/${p.id}/${c.name}">
-            <span class="nm">${c.name} <status-pill .verdict=${c.pending ? 'EN PAUSA' : c.verdict}></status-pill>${c.pending ? html`<span class="pill CURSO" title="el run espera tu revisión">⏸ tu decisión</span>` : nothing}</span>
+            <span class="nm">${c.name} <status-pill .verdict=${c.pending ? 'EN PAUSA' : c.verdict}></status-pill>${c.pending ? html`<span class="pill CURSO" title="el run espera tu revisión">${icon('pause')} tu decisión</span>` : nothing}</span>
             <span class="rq">${c.request}</span>
-            <span class="proj">📁 ${p.name}</span>
+            <span class="proj">${icon('folder')} ${p.name}</span>
           </a>
           <div class="run-foot">
             <span class="meta">${c.phases} fases${(c.tokens?.in ?? 0) + (c.tokens?.out ?? 0) > 0 ? html` · ↓ ${fmt(c.tokens?.in)} entrada · ↑ ${fmt(c.tokens?.out)} salida` : nothing}</span>
-            ${c.resumable ? html`<button class="btn sm resume" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">⏯ Reanudar</button>` : nothing}
-            ${!c.resumable && verdictClass(c.verdict) !== 'CURSO' && c.request ? html`<button class="btn sm sec" @click=${() => this.reuse(c)} title="rellena el formulario con esta petición para lanzar una variante">↺ Reutilizar</button>` : nothing}
-            ${c.hasDashboard ? html`<a class="btn sm dash" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}">📊 Informe</a>` : nothing}
-            ${c.phases > 0 ? html`<a class="btn sm aiact" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}">🛡 AI Act</a>` : nothing}
+            <!-- pase de calma (loop it.3, 2026-07-31): la ÚNICA primaria del panel es «Lanzar run» — las
+                 acciones del historial hablan en voz secundaria, sin emojis ni colores propios -->
+            ${c.resumable ? html`<button class="btn sm sec" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">${icon('play')} Reanudar</button>` : nothing}
+            ${!c.resumable && verdictClass(c.verdict) !== 'CURSO' && c.request ? html`<button class="btn sm sec" @click=${() => this.reuse(c)} title="rellena el formulario con esta petición para lanzar una variante">${icon('redo')} Reutilizar</button>` : nothing}
+            ${c.hasDashboard ? html`<a class="btn sm sec" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}">${icon('report')} Informe</a>` : nothing}
+            ${c.phases > 0 ? html`<a class="btn sm sec" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}">${icon('shield')} AI Act</a>` : nothing}
           </div>
         </div>
         <a class="run-open" href="/run/${p.id}/${c.name}" tabindex="-1" aria-hidden="true"><span class="chev" aria-hidden="true"></span></a>

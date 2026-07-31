@@ -4,6 +4,7 @@ import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import type { ProjectSummary, ChangeSummary } from '../api/types';
 import { verdictClass, sanitizeProjects } from '../lib/format';
+import { icon } from '../lib/svg-icons';
 
 /** Sidebar EN FOCO: solo los cambios del proyecto activo + una sección «Tu atención» (pausas esperando
  *  decisión, de CUALQUIER proyecto — lo único que justifica cruzar el foco). El inventario multi-proyecto
@@ -76,7 +77,7 @@ export class AppSidebar extends CElement {
     return html`
       <div class="sb-logo" role="img" aria-label="conductor"><span class="logo" aria-hidden="true">C</span> conductor</div>
       <nav class="sb-nav" aria-label="Navegación principal">
-        <a class="sb-link primary ${this.activeRoute === 'panel' ? 'active' : ''}" href="/" aria-current=${this.activeRoute === 'panel' ? 'page' : nothing}>📋 Panel</a>
+        <a class="sb-link primary ${this.activeRoute === 'panel' ? 'active' : ''}" href="/" aria-current=${this.activeRoute === 'panel' ? 'page' : nothing}>${icon('panel')} Panel</a>
       </nav>
       ${att.length ? html`
       <nav class="sb-runs sb-attn" aria-label="Runs que esperan tu decisión">
@@ -84,7 +85,7 @@ export class AppSidebar extends CElement {
         ${att.map(({ p, c }) => html`
           <a class="sb-run" href="/run/${p.id}/${c.name}" title="${c.request} · ${p.name}" aria-current=${this.activeChange === c.name ? 'page' : nothing}>
             <span class="dot CURSO" role="img" aria-label="esperando tu decisión"></span>
-            <span class="nm">⏸ ${c.name}</span>
+            <span class="nm">${icon('pause')} ${c.name}</span>
           </a>`)}
       </nav>` : nothing}
       <nav class="sb-runs" aria-label="Runs del proyecto en foco">

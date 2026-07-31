@@ -2,6 +2,7 @@ import { html, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { loader } from '../lib/loader';
+import { icon } from '../lib/svg-icons';
 
 export interface ViewDetail { apiBase: string; kind: 'art' | 'diff' | 'specdiff'; path: string; }
 
@@ -45,7 +46,7 @@ export class ArtifactViewer extends CElement {
     const d = (e as CustomEvent<ViewDetail>).detail;
     this.apiBase = d.apiBase; this.path = d.path; this.vkind = d.kind;
     this.editable = d.kind === 'art' && /\.md$/.test(d.path);
-    this.vbTitle = d.kind === 'art' ? '📄 ' + d.path : d.kind === 'specdiff' ? `± spec vs viva (${d.path})` : '± ' + d.path;
+    this.vbTitle = d.kind === 'art' ? d.path : d.kind === 'specdiff' ? `± spec vs viva (${d.path})` : '± ' + d.path;
     this.opener = (document.activeElement as HTMLElement) ?? null;
     this.open = true; this.editing = false; this.loading = true; this.content = ''; this.saveErr = ''; this.dirty = false; this.pendingClose = false;
     const gen = ++this.loadGen; // sella ESTA apertura: una carga anterior aún en vuelo quedará obsoleta
@@ -122,17 +123,17 @@ export class ArtifactViewer extends CElement {
       <div class="vb-back" @click=${() => this.tryClose()}></div>
       <div class="vb" role="dialog" aria-modal="true" aria-label=${this.vbTitle} tabindex="-1">
         <header>
-          <span class="vb-t">${this.vbTitle}</span>
-          ${this.vkind === 'diff' && !this.loading && !this.editing ? (() => { const s = this.diffStats(); return html`<span class="vb-stat" title="líneas añadidas / quitadas"><span class="vb-add">+${s.add}</span><span class="vb-del">−${s.del}</span></span>`; })() : nothing}
+          <span class="vb-t">${this.vkind === 'art' ? icon('doc') : nothing}${this.vbTitle}</span>
+          ${this.vkind !== 'art' && !this.loading && !this.editing ? (() => { const s = this.diffStats(); return html`<span class="vb-stat" title="líneas añadidas / quitadas"><span class="vb-add">+${s.add}</span><span class="vb-del">−${s.del}</span></span>`; })() : nothing}
           ${this.editing && this.dirty ? html`<span class="vb-dirty" title="cambios sin guardar" style="color:var(--warn);font:700 .64rem/1 var(--mono);letter-spacing:.04em">● sin guardar</span>` : nothing}
-          ${this.editable ? html`<button class="btn sm sec" @click=${() => { if (this.editing) void this.save(); else { this.editing = true; this.saveErr = ''; this.dirty = false; } }} title=${this.editing ? 'Guardar (Ctrl/Cmd+S)' : 'Editar'}>${this.editing ? '💾 guardar' : '✏️ editar'}</button>` : nothing}
+          ${this.editable ? html`<button class="btn sm sec" @click=${() => { if (this.editing) void this.save(); else { this.editing = true; this.saveErr = ''; this.dirty = false; } }} title=${this.editing ? 'Guardar (Ctrl/Cmd+S)' : 'Editar'}>${this.editing ? html`${icon('save')} guardar` : html`${icon('edit')} editar`}</button>` : nothing}
           <button class="btn sm sec" aria-label="cerrar" @click=${() => this.tryClose()}>✕</button>
         </header>
         ${this.loading
           ? loader('Cargando documento')
           : this.editing
-          ? html`<textarea class="vb-edit" aria-label="contenido editable" @input=${(e: Event) => { this.dirty = (e.target as HTMLTextAreaElement).value !== this.content; }}>${this.content}</textarea>${this.saveErr ? html`<div class="errline" role="alert" style="margin-top:.4rem">${this.saveErr}</div>` : nothing}${this.pendingClose ? html`<div class="errline" role="alert" style="margin-top:.4rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap"><span>Tienes cambios sin guardar.</span><button class="btn sm" @click=${() => void this.save()}>Guardar</button><button class="btn sm sec" @click=${() => this.discardClose()}>Descartar</button></div>` : nothing}`
-          : this.vkind === 'diff'
+          ? html`<textarea class="vb-edit" aria-label="contenido editable" @input=${(e: Event) => { this.dirty = (e.target as HTMLTextAreaElement).value !== this.content; }}>${this.content}</textarea>${this.saveErr ? html`<div class="errline" role="alert" style="margin-top:.4rem">${this.saveErr}</div>` : nothing}${this.pendingClose ? html`<div class="alert warn" role="alert" style="margin:.4rem 0 0;align-items:center;flex-wrap:wrap;gap:.6rem"><span>Tienes <b>cambios sin guardar</b>.</span><button class="btn sm" @click=${() => void this.save()}>Guardar</button><button class="btn sm sec" @click=${() => this.discardClose()}>Descartar</button></div>` : nothing}`
+          : this.vkind !== 'art'
           ? this.diffBody()
           : html`<pre class="vb-c">${this.content}</pre>`}
       </div>`;

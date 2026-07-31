@@ -47,7 +47,7 @@ export class FlowScreen extends CElement {
       <h2 class="sect">Lo que el driver garantiza</h2>
       <ul class="muted">
         <li><b>Secuencia</b>: el orden de fases lo impone el código (no el prompt). Probado en tests.</li>
-        <li><b>Modelo por fase verificable</b>: cada fase registra modelo+proveedor y sus tokens reales (recibo de cierre de la sesión del CLI); badge ✓/⚠ si el proveedor reporta otro modelo.</li>
+        <li><b>Modelo por fase verificable</b>: cada fase registra modelo+proveedor y sus tokens reales (recibo de cierre de la sesión del CLI); badge de aviso si el proveedor reporta otro modelo.</li>
         <li><b>Mezcla LiteLLM/Copilot</b>: el Coder (lo más caro en tokens) puede ir a un modelo económico vía LiteLLM y el Reviewer a un Copilot capaz — un clic con «Optimizar coste».</li>
         <li><b>Pausas de revisión</b>: el tech-lead aprueba, edita la spec, deja nota o cambia el modelo en caliente antes de implementar/verificar (salvo Auto-aprobar).</li>
       </ul>

@@ -38,10 +38,16 @@ export function serveStatic({ uiDir, pathname, method, res }) {
     res.end(readFileSync(file));
     return true;
   }
-  // SPA catch-all: TODA navegación GET (sin extensión de fichero y fuera de /api|/artifact|/events) recibe
-  // index.html y el router del cliente resuelve (ruta desconocida → panel). Con lista blanca, una URL
-  // desconocida caía al fallback "Interfaz no compilada" — un mensaje FALSO con la UI ya compilada.
-  if (!extname(pathname) && !pathname.startsWith('/api/') && !pathname.startsWith('/artifact/') && !pathname.startsWith('/events')) {
+  // SPA catch-all: TODA navegación GET (fuera de /api|/artifact|/events) recibe index.html y el router del
+  // cliente resuelve (ruta desconocida → panel). Con lista blanca, una URL desconocida caía al fallback
+  // "Interfaz no compilada" — un mensaje FALSO con la UI ya compilada.
+  // El descarte se hace por EXTENSIÓN CONOCIDA, no por "tiene un punto": un id de proyecto es
+  // `<basename>~<hash6>` y un repo llamado `mi.app` producía `/run/mi.app~ab12cd`, cuyo extname es
+  // ".app~ab12cd" → se descartaba como si fuera un fichero y el usuario veía el fallback falso.
+  // Las rutas reales del motor con extensión (/manifest.json, /sw.js, /icon.svg) siguen pasando de largo
+  // porque sus extensiones SÍ están en TYPES.
+  const ext = extname(pathname).toLowerCase();
+  if ((!ext || !(ext in TYPES)) && !pathname.startsWith('/api/') && !pathname.startsWith('/artifact/') && !pathname.startsWith('/events')) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
     res.end(readFileSync(indexPath));
     return true;

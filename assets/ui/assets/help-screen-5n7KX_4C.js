@@ -1,4 +1,4 @@
-import{_ as e,d as t,m as n,t as r}from"./index-Du_WZ-IR.js";var i=class extends t{render(){return e`
+import{f as e,h as t,t as n,v as r}from"./index-CUXTTvZo.js";var i=class extends e{render(){return r`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
@@ -39,4 +39,4 @@ import{_ as e,d as t,m as n,t as r}from"./index-Du_WZ-IR.js";var i=class extends
 
       <h2 class="sect">Transparencia (AI Act)</h2>
       <p class="muted">Cada run produce evidencia: informe del run, sello de procedencia firmado (Ed25519) encadenado al ledger del proyecto, y el informe de transparencia AI Act (modelos usados, aprobaciones humanas, verificación, firma).</p>
-    `}};i=r([n(`help-screen`)],i);export{i as HelpScreen};
+    `}};i=n([t(`help-screen`)],i);export{i as HelpScreen};

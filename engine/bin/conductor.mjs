@@ -99,7 +99,17 @@ switch (cmd) {
   case 'migrate': { if (!pos[0] || !existsSync(pos[0])) bad('migrate <dir|file.sql>  (linter de seguridad de migraciones)'); out(lintMigrations(pos[0]), `conductor migrate · ${pos[0]}`); }
   case 'policy': {
     const sub = pos[0];
-    if (sub === 'init') { const o = flag('-o', 'conductor.policy.json'); writeFileSync(o, JSON.stringify(DEFAULT_POLICY, null, 2)); console.log(`política por defecto → ${o}`); process.exit(0); }
+    // ESCRIBIR DONDE EL MOTOR LEE. El default era `conductor.policy.json` en el cwd, un nombre que NADIE
+    // lee de forma automática: el driver carga `openspec/policy.json` (drive.mjs) y `loadPolicy(undefined)`
+    // devuelve la política por defecto SIN allowlist. Es decir, un equipo hacía `policy init`, rellenaba
+    // `allowedModels` y el gobierno no se aplicaba nunca. Se mantiene `-o` para elegir otra ruta.
+    if (sub === 'init') {
+      const o = flag('-o') || (existsSync(join(process.cwd(), 'openspec')) ? join('openspec', 'policy.json') : 'conductor.policy.json');
+      mkdirSync(dirname(resolve(o)), { recursive: true });
+      writeFileSync(o, JSON.stringify(DEFAULT_POLICY, null, 2));
+      console.log(`política por defecto → ${o}${/openspec/.test(o) ? '  (el driver la aplica sola en cada run)' : '  ⚠ fuera de openspec/: el driver NO la lee sola, pásala con --policy'}`);
+      process.exit(0);
+    }
     if (sub === 'validate') { if (!pos[1] || !existsSync(pos[1])) bad('policy validate <file>'); const v = validatePolicy(JSON.parse(readFileSync(pos[1], 'utf8'))); console.log(v.valid ? 'política VÁLIDA' : 'política INVÁLIDA:\n' + v.errors.map((e) => '  - ' + (e.instancePath || '/') + ' ' + e.message).join('\n')); process.exit(v.valid ? 0 : 1); }
     if (sub === 'enforce') {
       const dir = pos[1]; if (!dir || !existsSync(dir)) bad('policy enforce <changeDir> [--policy file] [--override "razón"] [--by user]');
@@ -131,8 +141,10 @@ switch (cmd) {
   }
   case 'resume': case 'status': { // legacy .runs — 'run' ya NO vive aqui: es el gesto app (como promete la ayuda)
     const runsDir = join(ROOT, '.runs');
-    if (cmd === 'status') { const id = pos[0]; const p = join(runsDir, (existsSync(join(runsDir, `${id}.json`)) ? id : R.runIdFor(id)) + '.json'); if (!existsSync(p)) bad('run no encontrado'); const s = JSON.parse(readFileSync(p, 'utf8')); has('--json') ? console.log(JSON.stringify(s, null, 2)) : printRun(s); process.exit(0); }
-    if (cmd === 'resume') { const p = join(runsDir, `${pos[0]}.json`); if (!existsSync(p)) bad('run no encontrado'); const s = R.resume(JSON.parse(readFileSync(p, 'utf8'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1); }
+    // sin argumento, `runIdFor(undefined)` reventaba con el error INTERNO de Node ('The "paths[0]" argument
+    // must be of type string. Received undefined') — el único comando del CLI que no daba su línea de uso.
+    if (cmd === 'status') { const id = pos[0]; if (!id) bad('status <runId|changeDir>'); const p = join(runsDir, (existsSync(join(runsDir, `${id}.json`)) ? id : R.runIdFor(id)) + '.json'); if (!existsSync(p)) bad(`run "${id}" no encontrado en ${runsDir} (layout .runs legado; los runs de hoy viven en .conductor/runs y se ven con \`conductor\`)`); const s = JSON.parse(readFileSync(p, 'utf8')); has('--json') ? console.log(JSON.stringify(s, null, 2)) : printRun(s); process.exit(0); }
+    if (cmd === 'resume') { if (!pos[0]) bad('resume <runId>'); const p = join(runsDir, `${pos[0]}.json`); if (!existsSync(p)) bad(`run "${pos[0]}" no encontrado en ${runsDir} (layout .runs legado; para reanudar un run actual usa la miniweb o \`conductor drive <changeDir> --resume\`)`); const s = R.resume(JSON.parse(readFileSync(p, 'utf8'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1); }
     bad('resume <runId> | status <runId|changeDir>');
   }
   case 'drive': {
@@ -1223,13 +1235,13 @@ function printStats(r, single) {
   console.log(`  RUNS     ${r.runs} total · ${r.green} GREEN · ${r.failed} fallido(s)${r.stopped ? ` · ${r.stopped} detenido(s)` : ''}${r.running ? ` · ${r.running} en curso` : ''}`);
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
-  if (st.estimator) console.log(`\n  ESTIMADOR   ${st.estimator.phases} fase(s) medidas en ${st.estimator.runs} run(s) · desviación total ${st.estimator.dev_pct > 0 ? '+' : ''}${st.estimator.dev_pct}% · error medio por fase (MAPE) ${st.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
-  if (st.byDay?.length) {
+  if (r.estimator) console.log(`\n  ESTIMADOR   ${r.estimator.phases} fase(s) medidas en ${r.estimator.runs} run(s) · desviación total ${r.estimator.dev_pct > 0 ? '+' : ''}${r.estimator.dev_pct}% · error medio por fase (MAPE) ${r.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
+  if (r.byDay?.length) {
     // el corte día × modelo — la MISMA granularidad que el informe de consumo de tu org: allí ves el €,
     // aquí el "en qué se fue" (peticiones y tokens de ese día, por modelo y proveedor)
     console.log('\n  POR DÍA (cruzable con el informe de consumo de tu organización)');
-    for (const d of st.byDay.slice(0, 14)) console.log(`    ${d.date}  ${d.provider === 'byok' ? 'LiteLLM' : 'Copilot'}  ${d.model}  ·  ${d.calls} petición(es) · ↓ ${d.in.toLocaleString('es')} ↑ ${d.out.toLocaleString('es')} tokens`);
-    if (st.byDay.length > 14) console.log(`    … y ${st.byDay.length - 14} fila(s) más (conductor stats --json para todas)`);
+    for (const d of r.byDay.slice(0, 14)) console.log(`    ${d.date}  ${d.provider === 'byok' ? 'LiteLLM' : 'Copilot'}  ${d.model}  ·  ${d.calls} petición(es) · ↓ ${d.in.toLocaleString('es')} ↑ ${d.out.toLocaleString('es')} tokens`);
+    if (r.byDay.length > 14) console.log(`    … y ${r.byDay.length - 14} fila(s) más (conductor stats --json para todas)`);
   }
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {

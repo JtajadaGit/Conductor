@@ -3,20 +3,22 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { loader } from '../lib/loader';
+import { icon } from '../lib/svg-icons';
 import type { SessionEvents, SessionEvent } from '../api/types';
 
 /** PANTALLA /session : VISOR de la sesión del CLI de Copilot (events.jsonl) — "qué hizo la IA" tool a tool,
- *  hook a hook, con modelos, permisos y subagentes. Cero tokens: el motor lee y pagina un fichero local. */
-const CATS: { key: string; icon: string; label: string }[] = [
-  { key: 'tool', icon: '🔧', label: 'Tools' },
-  { key: 'hook', icon: '🛡', label: 'Hooks' },
-  { key: 'message', icon: '💬', label: 'Mensajes' },
-  { key: 'permission', icon: '🔑', label: 'Permisos' },
-  { key: 'subagent', icon: '🤖', label: 'Subagentes' },
+ *  hook a hook, con modelos, permisos y subagentes. Cero tokens: el motor lee y pagina un fichero local.
+ *  Iconos: set SVG del sistema (svg-icons.ts); ◆/✦ son marcas tipográficas deliberadas (sesión/skills). */
+const CATS: { key: string; icon: TemplateResult | string; label: string }[] = [
+  { key: 'tool', icon: icon('wrench'), label: 'Tools' },
+  { key: 'hook', icon: icon('shield'), label: 'Hooks' },
+  { key: 'message', icon: icon('chat'), label: 'Mensajes' },
+  { key: 'permission', icon: icon('key'), label: 'Permisos' },
+  { key: 'subagent', icon: icon('bot'), label: 'Subagentes' },
   { key: 'session', icon: '◆', label: 'Sesión' },
   { key: 'skill', icon: '✦', label: 'Skills' },
 ];
-const ICON: Record<string, string> = { ...Object.fromEntries(CATS.map((c) => [c.key, c.icon])), other: '•' };
+const ICON: Record<string, TemplateResult | string> = { ...Object.fromEntries(CATS.map((c) => [c.key, c.icon])), other: '•' };
 
 @customElement('session-screen')
 export class SessionScreen extends CElement {
@@ -100,7 +102,7 @@ export class SessionScreen extends CElement {
           <span class="zero-tok">Visor local · 0 tokens</span>
           ${s.reconstructed ? html`<span class="zero-tok" title="Reconstruida desde la telemetría OTel del run (los modelos LiteLLM no emiten la traza nativa del CLI)">Reconstruida desde telemetría</span>` : nothing}
         </div>
-        ${s.models.length ? html`<p class="se-models" style="margin:0"><span class="se-mlbl">Modelos usados</span>${s.models.map((m) => html`<code class="ctx-chip">${m}</code>`)}</p>` : nothing}
+        ${s.models.length ? html`<p class="se-models" style="margin:0"><span class="se-mlbl">Modelos usados</span>${[...s.models.reduce((acc, m) => acc.set(m, (acc.get(m) ?? 0) + 1), new Map<string, number>())].map(([m, n]) => html`<code class="ctx-chip">${m}${n > 1 ? ` ×${n}` : ''}</code>`)}</p>` : nothing}
       </header>
       <div class="se-filters">
         <button class="chip ${this.cats.size === 0 ? 'on' : ''}" @click=${() => { this.cats = new Set(); void this.load(); }}>Todo · ${s.total}</button>

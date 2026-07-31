@@ -78,7 +78,7 @@ const THEME = `
   --tx:#0f1822;--tx2:#46556a;--tx3:#566073;--bd:#e1e8f0;--bd2:#eef2f7;
   --bg:#f6f8fb;--bg2:#eaf0f6;--card:#ffffff;
   --ok:#0b6b57;--okbg:#daf0e9;--bad:#af2a24;--badbg:#fbe3e1;--warn:#795009;--warnbg:#f6ecd4;
-  --accent:#2563eb;--accent2:#5b93ff;--accentbg:#e7efff;
+  --accent:#1d5ae0;--accent2:#5b93ff;--accentbg:#e7efff; /* sync ui/theme.css 2026-07-31: acento-texto ≥4.5 sobre tintes */
   --sh:0 1px 2px rgba(15,30,55,.06),0 2px 8px rgba(15,30,55,.05);
   --shlg:0 6px 22px rgba(15,30,55,.10),0 20px 48px rgba(15,30,55,.10);--r:11px;
   --font:"Inter var",Inter,-apple-system,"Segoe UI Variable","Segoe UI",ui-sans-serif,system-ui,sans-serif;
@@ -371,17 +371,25 @@ const BLOCKING = new Set(['breaking', 'error']);
 // colarse como no-bloqueante (fail-open). Comparación canónica en minúsculas/trim.
 const normSev = (s) => String(s == null ? '' : s).toLowerCase().trim();
 const isBlocking = (findings) => (findings || []).some((f) => BLOCKING.has(normSev(f && f.severity)));
+// TODOS los reporteros deben mirar la severidad por AQUÍ. Antes solo la normalizaba isBlocking, así que un
+// 'Error'/' error ' salía bloqueante en el EXIT CODE y a la vez como info/note/no-failure en junit, sarif y
+// rdjson: el job de CI se veía verde mientras el comando fallaba. El fail-open no estaba cerrado, estaba
+// movido de sitio. Severidad ausente o desconocida → 'info' (no bloqueante), igual que decide isBlocking.
+const sevOf = (f) => { const s = normSev(f && f.severity); return s in sevRank ? s : 'info'; };
 
 const xmlEsc = (s) => String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
 const sevRank = { breaking: 0, error: 1, warning: 2, info: 3 };
 
 function human(findings, title = 'conductor') {
   const lines = [`\n${title}`];
-  const sorted = [...findings].sort((a, b) => sevRank[a.severity] - sevRank[b.severity]);
+  // un hallazgo SIN severity reventaba aquí (`f.severity.toUpperCase()` de undefined) y se llevaba por
+  // delante el informe entero: un solo finding malformado dejaba al usuario sin ninguna salida.
+  const sorted = [...(findings || [])].sort((a, b) => sevRank[sevOf(a)] - sevRank[sevOf(b)]);
   for (const f of sorted) {
-    const tag = f.severity === 'breaking' ? 'BREAKING' : f.severity.toUpperCase().padEnd(8);
+    const s = sevOf(f);
+    const tag = s === 'breaking' ? 'BREAKING' : s.toUpperCase().padEnd(8);
     const loc = f.file ? ` ${f.file}${f.line ? ':' + f.line : ''}` : f.pointer ? ` ${f.pointer}` : '';
-    lines.push(`  ${tag.padEnd(9)} [${f.rule}]${loc}  ${f.message}`);
+    lines.push(`  ${tag.padEnd(9)} [${f.rule || '—'}]${loc}  ${f.message || ''}`);
   }
   const c = count(findings);
   lines.push(`\n  → ${isBlocking(findings) ? 'FAIL' : 'PASS'}  (${c.breaking} breaking, ${c.error} error, ${c.warning} warn, ${c.info} info)\n`);
@@ -390,7 +398,9 @@ function human(findings, title = 'conductor') {
 
 function count(findings) {
   const c = { breaking: 0, error: 0, warning: 0, info: 0 };
-  for (const f of findings) c[f.severity] = (c[f.severity] || 0) + 1;
+  // con la severidad cruda, un 'Error' creaba la clave espuria c['Error'] y NO sumaba a c.error: el json
+  // salía con verdict FAIL y count {error:0}, que es justo lo que lee un consumidor de CI para decidir.
+  for (const f of findings || []) c[sevOf(f)]++;
   return c;
 }
 
@@ -405,7 +415,7 @@ function rdjson(findings, toolName = 'conductor-gate') {
     source: { name: toolName, url: 'https://conductor.local' },
     diagnostics: findings.map((f) => ({
       message: `[${f.rule}] ${f.message}`,
-      severity: sevMap[f.severity] || 'INFO',
+      severity: sevMap[sevOf(f)] || 'INFO',
       location: { path: f.file || 'openspec', range: { start: { line: f.line || 1, column: f.col || 1 } } },
       code: { value: f.rule },
     })),
@@ -423,7 +433,7 @@ function sarif(findings, toolName = 'conductor') {
       tool: { driver: { name: toolName, informationUri: 'https://conductor.local', rules } },
       results: findings.map((f) => ({
         ruleId: f.rule,
-        level: sevMap[f.severity] || 'note',
+        level: sevMap[sevOf(f)] || 'note',
         message: { text: f.message },
         locations: [{ physicalLocation: {
           artifactLocation: { uri: f.file || 'openspec' },
@@ -437,10 +447,12 @@ function sarif(findings, toolName = 'conductor') {
 
 // JUnit XML — cualquier CI que lea test reports
 function junit(findings, suite = 'conductor.gate') {
-  const failures = findings.filter((f) => BLOCKING.has(f.severity));
-  const cases = findings.map((f) => {
-    const name = xmlEsc(`${f.rule}: ${f.message}`);
-    if (BLOCKING.has(f.severity))
+  // el más peligroso de los tres: con la severidad cruda, un 'Error' NO entraba en failures y el job de CI
+  // salía VERDE mientras `conductor gate` devolvía exit != 0 por ese mismo hallazgo.
+  const failures = (findings || []).filter((f) => BLOCKING.has(sevOf(f)));
+  const cases = (findings || []).map((f) => {
+    const name = xmlEsc(`${f.rule || '—'}: ${f.message || ''}`);
+    if (BLOCKING.has(sevOf(f)))
       return `    <testcase classname="${xmlEsc(suite)}" name="${name}"><failure message="${xmlEsc(f.message)}" type="${xmlEsc(f.rule)}">${xmlEsc(f.pointer || f.file || '')}</failure></testcase>`;
     return `    <testcase classname="${xmlEsc(suite)}" name="${name}"/>`;
   });
@@ -503,7 +515,10 @@ function resolveRef(root, ref) {
 function validateNode(schema, data, path, root, errors) {
   if (schema === true || schema === undefined) return;
   if (schema === false) { errors.push({ instancePath: path, keyword: 'false', message: 'ningún valor permitido' }); return; }
-  if (typeof schema !== 'object') return;
+  // `typeof null === 'object'`, así que un sub-schema null (p.ej. `"properties": {"x": null}` en un fichero
+  // de schema mal escrito, o un `items: null`) se colaba por este guard y reventaba en `schema.$ref`.
+  // Un validador que LANZA deja al usuario sin diagnóstico: aquí un schema nulo simplemente no restringe.
+  if (schema === null || typeof schema !== 'object') return;
 
   if (schema.$ref) {
     const target = resolveRef(root, schema.$ref);
@@ -4607,10 +4622,16 @@ function serveStatic({ uiDir, pathname, method, res }) {
     res.end(readFileSync(file));
     return true;
   }
-  // SPA catch-all: TODA navegación GET (sin extensión de fichero y fuera de /api|/artifact|/events) recibe
-  // index.html y el router del cliente resuelve (ruta desconocida → panel). Con lista blanca, una URL
-  // desconocida caía al fallback "Interfaz no compilada" — un mensaje FALSO con la UI ya compilada.
-  if (!extname(pathname) && !pathname.startsWith('/api/') && !pathname.startsWith('/artifact/') && !pathname.startsWith('/events')) {
+  // SPA catch-all: TODA navegación GET (fuera de /api|/artifact|/events) recibe index.html y el router del
+  // cliente resuelve (ruta desconocida → panel). Con lista blanca, una URL desconocida caía al fallback
+  // "Interfaz no compilada" — un mensaje FALSO con la UI ya compilada.
+  // El descarte se hace por EXTENSIÓN CONOCIDA, no por "tiene un punto": un id de proyecto es
+  // `<basename>~<hash6>` y un repo llamado `mi.app` producía `/run/mi.app~ab12cd`, cuyo extname es
+  // ".app~ab12cd" → se descartaba como si fuera un fichero y el usuario veía el fallback falso.
+  // Las rutas reales del motor con extensión (/manifest.json, /sw.js, /icon.svg) siguen pasando de largo
+  // porque sus extensiones SÍ están en TYPES.
+  const ext = extname(pathname).toLowerCase();
+  if ((!ext || !(ext in TYPES)) && !pathname.startsWith('/api/') && !pathname.startsWith('/artifact/') && !pathname.startsWith('/events')) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
     res.end(readFileSync(indexPath));
     return true;
@@ -4645,7 +4666,11 @@ function renderReceipt({ name = '', timeline = null, spec = '', proposal = '', v
   const outT = tl.reduce((s, p) => s + (Number(p.tokens && p.tokens.out) || 0), 0);
   const byok = tl.filter((p) => p.provider === 'byok').length;
   const mins = Math.round(((Number(timeline.total_ms) || tl.reduce((s, p) => s + (Number(p.ms) || 0), 0)) / 60000) * 10) / 10;
-  L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ↓${fmt(inT)} ↑${fmt(outT)} tokens${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
+  // NUNCA un cero fabricado: sin fases medidas, los reduce de arriba dan 0 y el recibo —que el dev PEGA EN
+  // SU PR— afirmaba "↓0 ↑0 tokens", que es una mentira con la máxima exposición pública del producto.
+  const measured = tl.some((p) => p.tokens && (p.tokens.in || p.tokens.out));
+  const tokTxt = measured ? `↓${fmt(inT)} ↑${fmt(outT)} tokens` : 'tokens: no medidos';
+  L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ${tokTxt}${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
   const what = (md(proposal).split(/^##\s*What Changes\s*$/mi)[1] || '').split(/^##\s/m)[0].trim();
   if (what) L.push('', '### Qué cambia', ...what.split('\n').slice(0, 10));
   const reqs = [...md(spec).matchAll(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->\s*\n###\s*Requirement:\s*([^\n]+)/gi)].slice(0, 12);
@@ -4787,6 +4812,8 @@ const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
 const { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } = __M['secret'];
 const { plumbPath } = __M['plumb'];
+const { validate } = __M['jsonschema'];
+const { CONFIG_SCHEMA } = __M['scaffold'];
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
 
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
@@ -5034,11 +5061,21 @@ function byokCreds(env = process.env) {
 //     "maxRetries": 1, "serve": true|false, "runner": "spawn"|"sdk", "gitCommit": true|false }
 // "models" se fusiona POR CLAVE (tu default de planner sobrevive aunque el equipo solo fije el coder).
 function readDriveConfig(projectRoot) {
+  // OJO con el catch: "no hay config" (legítimo, todo es opcional) y "la config EXISTE pero está rota" son
+  // dos cosas MUY distintas. Antes ambas caían en el mismo `catch {}` vacío: una coma de más en el JSON
+  // borraba en silencio TODO el gobierno del equipo (preset, gates, budget, models, rules) y el run seguía
+  // con los defaults hasta cerrar en GREEN — un verificado que no verificó lo que el equipo creía. Se
+  // distingue por e.code === 'ENOENT'.
   let user = {};
-  try { user = JSON.parse(readFileSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'config.json'), 'utf8')) || {}; } catch {}
-  let proj = {};
-  try { proj = JSON.parse(readFileSync(join(projectRoot, 'openspec', 'conductor.json'), 'utf8')) || {}; } catch {}
+  try { user = JSON.parse(readFileSync(join(process.env.CONDUCTOR_HOME || join(homedir(), '.conductor'), 'config.json'), 'utf8')) || {}; }
+  catch (e) { if (e && e.code !== 'ENOENT') { try { process.stderr.write(`⚠ ~/.conductor/config.json ilegible (${e.message}) — se ignoran tus preferencias personales\n`); } catch {} } }
+  let proj = {}, cfgError = null;
+  const projCfgPath = join(projectRoot, 'openspec', 'conductor.json');
+  try { proj = JSON.parse(readFileSync(projCfgPath, 'utf8')) || {}; }
+  catch (e) { if (e && e.code !== 'ENOENT') cfgError = `${projCfgPath} ilegible: ${e.message}`; }
   const merged = { ...user, ...proj };
+  // el gobierno del EQUIPO no se degrada en silencio: se marca y el driver lo convierte en BLOCKED
+  if (cfgError) merged.__configError = cfgError;
   if (user.models || proj.models) merged.models = { ...(user.models || {}), ...(proj.models || {}) };
   return merged;
 }
@@ -5072,29 +5109,47 @@ function persistSessionTrace(ssd, before, otelFile) {
     mkdirSync(dirname(dst), { recursive: true });
     const raw = readFileSync(f);
     appendFileSync(dst, raw);
-    // TOKENS REALES del CLI moderno (1.0.70 ya no honra COPILOT_OTEL_FILE_EXPORTER_PATH → readTokens veía
-    // null y tokens/AIC/estimador quedaban CIEGOS): el evento session.shutdown de la propia traza trae
-    // tokenDetails (input/output/cache) y totalPremiumRequests (AI credits REALES). in = todo lo presentado
-    // al modelo (input + cache_read + cache_write — comparable con el estimador); cached se declara aparte.
+    // TOKENS REALES del CLI moderno (1.0.70+ ya no honra COPILOT_OTEL_FILE_EXPORTER_PATH → readTokens veía
+    // null y tokens/AIC/estimador quedaban CIEGOS): el evento session.shutdown de la propia traza trae el
+    // consumo (tokenDetails o modelMetrics según el proveedor), el modelo real y totalPremiumRequests.
     return parseSessionUsage(raw.toString('utf8'));
   } catch { return null; /* best-effort: sin traza no se rompe la fase */ }
 }
 
 // suma el usage de TODOS los session.shutdown de una traza (una sesión por intento; robusto si hay varias).
-// Puro y exportado para test. Devuelve null si la traza no trae cierres con tokenDetails.
+// Puro y exportado para test. Devuelve null si la traza no trae ningún cierre con datos de consumo.
+//
+// DOS FORMAS en el mismo evento, y hay que aceptar las dos: `tokenDetails` (categorías DISJUNTAS a nivel de
+// sesión) y `modelMetrics[<modelo>].usage` (totales por modelo). Las sesiones contra BYOK/LiteLLM traen SOLO
+// la segunda — exigir la primera dejaba el runner spawn con `tokens: null` teniendo el dato delante (medido
+// 2026-07-31: una sesión de deepseek daba null aquí y {in:99361,out:9278,cached:170496} leyendo modelMetrics).
+// CONVENIO (idéntico al de usageFromShutdown en sdk-runner.mjs): `in` y `cached` son DISJUNTOS y suman el
+// prompt total. Antes `in` incluía cache_read y encima se declaraba aparte en `cached` → el mismo run costaba
+// distinto según el runner. `cache_write` NO es caché servida: se paga, así que va en `in`.
 function parseSessionUsage(text) {
-  let tin = 0, tout = 0, cached = 0, aic = 0, seen = false;
+  let tin = 0, tout = 0, cached = 0, aic = 0, model = null, seen = false;
   for (const ln of String(text || '').split('\n')) {
     if (!ln.includes('"session.shutdown"')) continue;
     try {
       const d = JSON.parse(ln).data || {};
       const td = d.tokenDetails || {};
       const n = (k) => Number(td[k]?.tokenCount) || 0;
-      if (d.tokenDetails) { seen = true; tin += n('input') + n('cache_read') + n('cache_write'); tout += n('output'); cached += n('cache_read'); }
+      if (d.tokenDetails) { seen = true; tin += n('input') + n('cache_write'); tout += n('output'); cached += n('cache_read'); }
+      else if (d.modelMetrics && typeof d.modelMetrics === 'object') {
+        for (const m of Object.values(d.modelMetrics)) {
+          const u = (m && m.usage) || {};
+          const i = Number(u.inputTokens) || 0, o = Number(u.outputTokens) || 0, cr = Number(u.cacheReadTokens) || 0;
+          if (!i && !o && !cr) continue;
+          seen = true; tin += Math.max(0, i - cr); tout += o; cached += cr; // inputTokens INCLUYE lo servido de caché
+        }
+      }
+      // el modelo REAL que ejecutó — sin esto `modelReported` salía null en spawn y el informe AI Act afirmaba
+      // que "el runtime no lo expone por fase", cosa que era falsa: lo expone aquí.
+      if (!model && typeof d.currentModel === 'string' && d.currentModel) model = d.currentModel;
       if (Number.isFinite(Number(d.totalPremiumRequests))) aic += Number(d.totalPremiumRequests);
     } catch { /* línea corrupta: se ignora */ }
   }
-  return seen ? { in: tin, out: tout, cached, ...(aic ? { aic: +aic.toFixed(2) } : {}) } : null;
+  return seen || model ? { in: tin, out: tout, cached, model, ...(aic ? { aic: +aic.toFixed(2) } : {}) } : null;
 }
 
 // cuenta las DENEGACIONES de permiso del CLI appendeadas a la traza (events.jsonl del change) desde
@@ -5128,10 +5183,15 @@ const DEFAULT_ALLOW = { planner: 'write', reviewer: 'write', coder: 'all', orche
 // modelo/tool/servidor MCP → set acotado. Cualquier otra cosa degrada al default seguro.
 const _SAFE_CFG = /^[A-Za-z0-9_.,:/@+-]+$/;
 const _safeCfg = (s) => { const v = String(s == null ? '' : s); return _SAFE_CFG.test(v) ? v : null; };
+// La allowlist EFECTIVA de un rol, en un solo sitio: la usan el spawn (→ flags del CLI) y el runner sdk
+// (→ handler de permisos por sesión). El driver es quien manda la política; el runner solo la ejecuta.
+function resolveAllow(role, allowCfg = {}) {
+  const raw = allowCfg[role] || DEFAULT_ALLOW[role] || 'all';
+  return raw === 'all' ? 'all' : (_safeCfg(raw) || 'write'); // metachars → degrada a 'write' seguro
+}
 function agentArgs(role, mcp = {}, envArgs = process.env.CONDUCTOR_AGENT_ARGS, allowCfg = {}) {
   if (envArgs) return envArgs.split(/\s+/).filter(Boolean); // override total del usuario (su propio env, confiable)
-  const allowRaw = allowCfg[role] || DEFAULT_ALLOW[role] || 'all';
-  const allow = allowRaw === 'all' ? 'all' : (_safeCfg(allowRaw) || 'write'); // metachars → degrada a 'write' seguro
+  const allow = resolveAllow(role, allowCfg);
   const args = [];
   if (allow === 'all') args.push('--allow-all-tools');
   else args.push('--allow-tool', allow);
@@ -5541,6 +5601,23 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     throw new Error(`projectRoot sin openspec/ (${projectRoot})${hint}. El driver se ejecuta desde la raíz del proyecto inicializado (conductor init).`);
   }
   const cfg = readDriveConfig(projectRoot); // config del usuario (openspec/conductor.json)
+  // FAIL-CLOSED sobre el gobierno del equipo: si openspec/conductor.json existe pero no se puede leer, sus
+  // gates/preset/budget/models NO se están aplicando. Seguir con los defaults produciría un GREEN que el
+  // equipo leería como "verificado con nuestras reglas", que es la mentira más cara del producto. Se corta
+  // ANTES de gastar un token, con el error de parseo literal para que se arregle de un vistazo.
+  if (cfg.__configError) {
+    const why = `configuración del equipo ilegible — ${cfg.__configError}. Arregla el JSON (o bórralo para usar los defaults): con él roto, tus gates, preset y presupuesto NO se aplican.`;
+    logOut(`⛔ ${why}`);
+    return { done: false, verdict: 'BLOCKED', phase: null, reason: why, trail: [], timeline: [] };
+  }
+  // CONFIG VÁLIDA COMO JSON PERO CON ERRATAS: un `presset: "feature"` o un `strictTests: "false"` (string)
+  // se ignoraban sin decir nada, y el equipo creía tener un gobierno que no estaba puesto. Aquí solo se
+  // AVISA (no se bloquea) a propósito: una clave desconocida también puede ser una config más nueva que el
+  // motor, y romper por eso impediría actualizar por fases. El validador ya existía; nadie lo consultaba.
+  try {
+    const v = validate(CONFIG_SCHEMA, Object.fromEntries(Object.entries(cfg).filter(([k]) => !k.startsWith('__'))));
+    if (!v.valid) for (const e of (v.errors || []).slice(0, 6)) logOut(`   ⚠ conductor.json: ${e.instancePath || '/'} ${e.message} — ese ajuste NO se está aplicando`);
+  } catch { /* el aviso jamás puede tumbar un run */ }
   // key BYOK (vive SOLO en ~/.conductor/byok.json, NO en el env del server → el patrón sk-/Bearer no la cubre si
   // es una virtual key con otro formato) para redactarla en TODOS los scrubs de captura del run. Sin esto, si el
   // proveedor la ecoa en un error, se persistía en timeline.json (lastError/raw) y se servía por /api/state.
@@ -6064,7 +6141,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
           const lensPrompt = prompt.split(step.write_to_abs).join(lp) + `
 
 LENS - review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.`;
-          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: plumbPath(changeDir, 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then((rr) => ({ ln, lp, rr }));
+          return runAgent({ phase: `verify:${ln}`, role, prompt: lensPrompt, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model, otelFile: plumbPath(changeDir, 'otel', `verify-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow(role, cfg.allowTools || {}) }).then((rr) => ({ ln, lp, rr }));
         }));
         if (stopSignal?.requested) return stopped();
         // merge determinista → verify-report.md por secciones (el gate lee el merged)
@@ -6096,7 +6173,7 @@ ${readSafe(x.lp).trim()}`);
           // informe, NO abortamos la fase — caemos a UNA verify simple (1 llamada, más fiable que 3 en
           // paralelo). El gate determinista corre igual después; solo cambia cómo se obtuvo el informe.
           log('   ⚠ ninguna lente escribió → fallback a verify simple (1 llamada, más fiable con qwen)');
-          const fb = await runAgent({ phase, role, prompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} });
+          const fb = await runAgent({ phase, role, prompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow(role, cfg.allowTools || {}) });
           if (existsSync(step.write_to_abs) && readSafe(step.write_to_abs).trim()) { r = { code: 0 }; rawOut = fb && typeof fb.out === 'string' ? fb.out : ''; }
           else { r = { code: 1, err: 'ni lentes ni verify simple produjeron informe' }; rawOut = results.map((x) => (x.rr && typeof x.rr.out === 'string' ? x.rr.out : '')).join('\n\n'); }
         }
@@ -6131,7 +6208,7 @@ ${readSafe(x.lp).trim()}`);
         } else {
           usePrompt = prompt;
         }
-        r = await runAgent({ phase, role, prompt: usePrompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, onActivity: (a) => {
+        r = await runAgent({ phase, role, prompt: usePrompt, cwd: projectRoot, writeTo: step.write_to_abs, timeoutMs: tmo, model, otelFile, stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow(role, cfg.allowTools || {}), onActivity: (a) => {
           if (!currentInfo) return;
           currentInfo.lastActivity = scrubSecrets(String(a), process.env, runSecretExtra).slice(0, 140);
           const tNow = Date.now();
@@ -6244,10 +6321,27 @@ ${readSafe(x.lp).trim()}`);
       const totIn = timeline.reduce((s, p) => s + (Number(p.tokens?.in) || 0), 0);
       const totOut = timeline.reduce((s, p) => s + (Number(p.tokens?.out) || 0), 0);
       const totCost = timeline.reduce((s, p) => { const pr = priceOf(p.model || p.modelReported || ''); return s + ((Number(p.tokens?.in) || 0) * pr.in + (Number(p.tokens?.out) || 0) * pr.out) / 1e6; }, 0);
+      // UN PRESUPUESTO QUE NO PUEDE MEDIR NO ES UN FRENO. Antes, con `tokens: null` los totales valían 0, el
+      // techo no saltaba JAMÁS y no se avisaba — fail-open silencioso, mientras el schema promete "freno REAL"
+      // y la pantalla /ahorro promete "sin sustos a fin de mes". Ahora: si falta medición en algunas fases se
+      // AVISA; si no se pudo medir NINGUNA, el freno es ciego y se trata como superado, con la misma política
+      // onExceed que el resto del gobierno (block por defecto, pause si hay revisor). Fail-closed, como el
+      // byok-hardfail: preferimos parar y decirlo a seguir fingiendo que hay un tope.
+      const paid = timeline.filter((p) => p.ok !== false);
+      const unmeasured = paid.filter((p) => !p.tokens).length;
+      const blind = paid.length > 0 && unmeasured === paid.length;
+      if (unmeasured && !blind) log(`   ⚠ presupuesto: ${unmeasured}/${paid.length} fase(s) sin medición de tokens — el freno está contando de menos`);
+      // maxCostUsd con modelos sin precio conocido: priceOf devuelve 0 con known:false y el techo en $ nunca
+      // saltaría por esas fases. Se dice en voz alta en vez de dejar que el 0 se propague como si fuera gratis.
+      if (Number(budget.maxCostUsd) > 0 && paid.some((p) => p.tokens && !priceOf(p.model || p.modelReported || '').known)) {
+        log(`   ⚠ presupuesto en $: hay fase(s) con modelo SIN precio conocido — su coste NO cuenta para el techo (\`conductor litellm login\` trae el precio real de tu proxy)`);
+      }
       const overTok = Number(budget.maxTokens) > 0 && (totIn + totOut) > Number(budget.maxTokens);
       const overCost = Number(budget.maxCostUsd) > 0 && totCost > Number(budget.maxCostUsd);
-      if (overTok || overCost) {
-        const why = `presupuesto superado tras "${phase}": ${totIn + totOut} tokens · $${totCost.toFixed(4)} (límite ${budget.maxTokens || '∞'} tok · $${budget.maxCostUsd || '∞'})`;
+      if (overTok || overCost || blind) {
+        const why = blind
+          ? `presupuesto NO verificable tras "${phase}": el proveedor no reportó consumo en ninguna fase, así que el tope (${budget.maxTokens || '∞'} tok · $${budget.maxCostUsd || '∞'}) no se puede garantizar — usa "onExceed":"pause" para decidir tú, o quita "budget" si asumes el gasto`
+          : `presupuesto superado tras "${phase}": ${totIn + totOut} tokens · $${totCost.toFixed(4)} (límite ${budget.maxTokens || '∞'} tok · $${budget.maxCostUsd || '∞'})`;
         const mode = budget.onExceed === 'pause' && onPause ? 'pause' : 'block';
         if (mode === 'pause') {
           log(`⏸ ${why} — pido decisión humana (onExceed:pause)`);
@@ -6290,7 +6384,7 @@ ${readSafe(x.lp).trim()}`);
         const rev = await Promise.all(applyLenses.map((ln) => {
           const lp = plumbPath(changeDir, `post-apply-${ln}.md`);
           const pp = `REVIEWER. The APPLY phase is DONE. Re-read the spec (specs/${domain}/spec.md) WITHOUT memory of the proposal/design, and assess whether the written code SATISFIES every requirement and scenario. Do NOT run tests. Review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.\nArtifacts under ${changeDir}: specs/${domain}/spec.md (the requirements), apply-report.md (what was implemented).`;
-          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: plumbPath(changeDir, 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {} }).then(() => ({ ln, lp })).catch(() => null);
+          return runAgent({ phase: `post-apply:${ln}`, role: 'reviewer', prompt: pp, cwd: projectRoot, writeTo: lp, timeoutMs: tmo, model: modelForRole('reviewer', process.env, cfg.models || {}), otelFile: plumbPath(changeDir, 'otel', `post-apply-${ln}.jsonl`), stopSignal, mcp: cfg.mcp || {}, allowTools: cfg.allowTools || {}, allow: resolveAllow('reviewer', cfg.allowTools || {}) }).then(() => ({ ln, lp })).catch(() => null);
         }));
         if (stopSignal?.requested) return stopped();
         const sections = rev.filter((x) => x && existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}\n\n${readSafe(x.lp).trim()}`);
@@ -6431,7 +6525,7 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, checkUnrunnable, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, parseSessionUsage, countDeniedPerms, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, checkUnrunnable, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, parseSessionUsage, countDeniedPerms, resolveAllow, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
 })();
 
 // ===== lib/pipeline/evals.mjs =====
@@ -6840,6 +6934,25 @@ function usageFromShutdown(data) {
   return (inNet || tout || tread || model) ? { in: inNet, out: tout, cached: tread, model } : null;
 }
 
+// PERMISOS POR ROL — paridad con `--allow-tool write` / `--allow-all-tools` del runner spawn.
+// `approveAll` aprobaba TODO en TODAS las fases: con --runner sdk, explore/propose/spec/verify corrían con
+// shell, red y MCP auto-aprobados. Como los prompts inyectan contenido del repo (specs, AGENTS.md), eso
+// convertía una inyección en ejecución de comandos durante una fase que solo debía escribir un .md.
+// Kinds que emite el SDK: shell | write | read | mcp | url | memory | custom-tool | hook | extension-*.
+// Decisión: { kind:'approve-once' } (lo mismo que devuelve su `approveAll`) o { kind:'reject', feedback }.
+// Puro y exportado para test.
+const ALLOW_KINDS = { write: new Set(['write', 'read']) }; // 'all' = sin restricción (el coder necesita shell)
+function permissionHandlerFor(allow) {
+  if (allow === 'all') return () => ({ kind: 'approve-once' });
+  const ok = ALLOW_KINDS[allow] || ALLOW_KINDS.write; // allowlist desconocida → la MÁS restrictiva, nunca abrir
+  return (req) => {
+    const k = req && req.kind;
+    return ok.has(k)
+      ? { kind: 'approve-once' }
+      : { kind: 'reject', feedback: `permiso "${k}" denegado: esta fase solo puede escribir su artefacto (allowlist "${allow}")` };
+  };
+}
+
 async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env } = {}) {
   let mod = sdk;
   if (!mod && sdkBundle) {
@@ -6887,13 +7000,17 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
   }
   const provider = base && apiKey ? { type: 'openai', baseUrl: base.endsWith('/v1') ? base : base + '/v1', apiKey } : undefined;
 
-  const runAgent = async ({ prompt, timeoutMs = 600000, model }) => {
-    let session = null, unsub = null, shutdownData = null, shutdownSeen = null;
+  const runAgent = async ({ prompt, timeoutMs = 600000, model, allow = 'all', stopSignal, onActivity }) => {
+    let session = null, unsub = null, shutdownData = null, shutdownSeen = null, stopPoll = null;
+    // ABORTO del turno en vuelo. El spawn mata el proceso con taskkill; aquí es `session.abort()`, que la
+    // propia doc del SDK describe como "aborta el mensaje en curso; la sesión sigue válida".
+    const abortNow = async () => { try { if (session && typeof session.abort === 'function') await session.abort(); } catch {} };
     // Cierra la sesión y espera su recibo. OJO: `destroy()` NO EXISTE en el SDK (v1.0: el método es
     // `disconnect()`) — el `session.destroy?.()` anterior era un no-op silencioso por el `?.`, así que
     // ninguna sesión se cerraba hasta el client.stop() final y el recibo no llegaba nunca.
     // Best-effort y ACOTADO: ni el disconnect ni la espera del evento pueden colgar al driver.
     const closeAndUsage = async () => {
+      if (stopPoll) { clearInterval(stopPoll); stopPoll = null; }
       if (!session) return null;
       const s = session; session = null;
       try { if (typeof s.disconnect === 'function') await Promise.race([s.disconnect(), new Promise((r) => setTimeout(r, 3000))]); } catch {}
@@ -6913,14 +7030,26 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
       if (/^(byok|litellm):/.test(model || '') && !sessProvider) {
         return { code: -1, err: `fase ${model} sin credenciales LiteLLM (CONDUCTOR_MODEL_URL/CONDUCTOR_API_KEY, COPILOT_PROVIDER_*, o ~/.conductor/litellm.json) — no se cae a Copilot Business para no gastar AI Credits` };
       }
-      // onPermissionRequest: approveAll = el equivalente del --allow-all-tools del runner spawn (sin él,
-      // las peticiones de permiso de tools quedan PENDIENTES y la sesión no escribe ficheros — verificado).
+      // onPermissionRequest es OBLIGATORIO: sin handler, las peticiones de permiso quedan PENDIENTES y la
+      // sesión no escribe nada (verificado). Antes iba `approveAll` fijo; ahora la allowlist del ROL, que
+      // resuelve el driver (resolveAllow) y es la MISMA que traduce el spawn a flags del CLI.
       session = await client.createSession({
         ...(m ? { model: m } : {}), ...(sessProvider ? { provider: sessProvider } : {}),
-        ...(approveAll ? { onPermissionRequest: approveAll } : {}),
+        onPermissionRequest: permissionHandlerFor(allow),
       });
       // la suscripción se arma ANTES de enviar: el recibo es asíncrono y si se registra después se pierde.
-      if (typeof session.on === 'function') shutdownSeen = new Promise((res) => { unsub = session.on((e) => { if (e && e.type === 'session.shutdown') { shutdownData = e.data; res(); } }); });
+      // De paso alimenta la ACTIVIDAD EN VIVO: con spawn sale de events.jsonl, que en sdk no existe — sin
+      // esto la barra del run era solo un reloj y no se distinguía "trabajando" de "colgado".
+      if (typeof session.on === 'function') shutdownSeen = new Promise((res) => {
+        unsub = session.on((e) => {
+          if (!e) return;
+          if (e.type === 'session.shutdown') { shutdownData = e.data; res(); }
+          else if (onActivity && e.type === 'tool.execution_start') { try { onActivity(String(e.data?.toolName || e.data?.name || 'tool')); } catch {} }
+        });
+      });
+      // STOP del usuario: sin esto el botón Detener no hacía NADA con --runner sdk (el driver solo mira
+      // stopSignal DESPUÉS de que la promesa resuelva) y el run seguía quemando tokens hasta el timeout.
+      if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearInterval(stopPoll); stopPoll = null; void abortNow(); } }, 1000);
       // 2º arg = timeout de sendAndWait (su default interno es 60s — corto para fases de código);
       // el Promise.race queda como cinturón por si el del SDK no dispara.
       const result = await Promise.race([
@@ -6930,6 +7059,11 @@ async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env 
       const usage = await closeAndUsage();
       return { code: 0, out: String(result?.data?.content ?? ''), ...(usage ? { usage } : {}) };
     } catch (e) {
+      // ABORTAR ANTES DE NADA. El timeout de `sendAndWait` NO detiene el trabajo en vuelo — su propia doc
+      // lo dice: "does not abort in-flight agent work". Sin este abort, tras un timeout de apply el driver
+      // lanzaba el reintento mientras la sesión anterior SEGUÍA escribiendo los mismos ficheros: dos
+      // agentes en el mismo árbol, con checkpoint y rollback calculados sobre suelo que se movía.
+      await abortNow();
       // una fase caída (timeout, error del proveedor) TAMBIÉN gastó tokens: se cobran igual o el
       // presupuesto duro y el coste del run se quedarían cortos justo en los runs que peor van.
       const usage = await closeAndUsage();
@@ -6975,7 +7109,7 @@ async function listCopilotModels(opts = {}) {
   return (await listCopilotCatalog(opts)).map((o) => o.id);
 }
 
-return { pickHighestVersionDir, autoUpdatedSdkEntry, resolveCliPath, copilotCatalogFromCli, usageFromShutdown, createSdkRunner, listCopilotCatalog, listCopilotModels };
+return { pickHighestVersionDir, autoUpdatedSdkEntry, resolveCliPath, copilotCatalogFromCli, usageFromShutdown, permissionHandlerFor, createSdkRunner, listCopilotCatalog, listCopilotModels };
 })();
 
 // ===== lib/serving/serve.mjs =====
@@ -7510,11 +7644,16 @@ const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><r
 // sintético {offline:true} — antes servía /api/changes de caché y el panel FINGÍA estar vivo con datos viejos
 // (queja real 2026-07-28: «stop y la web sigue funcionando»). /assets/* hasheados = cache-first (inmutables);
 // navegación = network-first con fallback al shell cacheado (la SPA pinta su estado «apagado» encima).
-const swJs = (version) => `const V='conductor-v${version || '0'}';const SHELL=['/','/manifest.json','/icon.svg'];
+// La clave incluye la HUELLA DE BUILD de la UI, no solo la versión del paquete: los assets son cache-first
+// e inmutables, así que con una clave fija por versión (era `conductor-v<version>`) recompilar la UI sin
+// subir versión NO purgaba nada (el activate solo borra claves distintas) y las pestañas abiertas y la PWA
+// instalada se quedaban pidiendo chunks que Vite ya había renombrado → pantalla en blanco. Pasó de verdad
+// el 2026-07-31 tras un `npm i -g`. Con el hash del index.html en la clave, cada build purga el anterior.
+const swJs = (version, build) => `const V='conductor-v${version || '0'}-${build || 'dev'}';const SHELL=['/','/manifest.json','/icon.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL).catch(()=>{})))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;const u=new URL(r.url);
-if(u.pathname.startsWith('/assets/')){e.respondWith(caches.match(r).then(h=>h||fetch(r).then(res=>{const cp=res.clone();caches.open(V).then(c=>c.put(r,cp));return res})));return}
+if(u.pathname.startsWith('/assets/')){e.respondWith(caches.match(r).then(h=>h||fetch(r).then(res=>{if(res.ok){const cp=res.clone();caches.open(V).then(c=>c.put(r,cp)).catch(()=>{})}return res})));return}
 if(u.pathname.startsWith('/api/')){e.respondWith(fetch(r).catch(()=>new Response('{"ok":false,"offline":true}',{status:503,headers:{'content-type':'application/json'}})));return}
 if(r.mode==='navigate'){e.respondWith(fetch(r).catch(()=>caches.match('/')))}});`;
 
@@ -8016,7 +8155,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
       if (useStaticUi && serveStatic({ uiDir: UI_DIR, pathname: u.pathname, method: req.method, res })) return;
       if (u.pathname === '/manifest.json') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); return res.end(MANIFEST); }
       if (u.pathname === '/icon.svg') { res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end(ICON_SVG); }
-      if (u.pathname === '/sw.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' }); return res.end(swJs(version)); }
+      if (u.pathname === '/sw.js') { res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' }); return res.end(swJs(version, uiBuild())); }
       if (u.pathname === '/api/ping') return json(200, { ok: true, app: 'conductor', version, uiBuild: uiBuild(), root: DEFAULT.root, projects: [...registry.values()] });
       if (req.method === 'POST' && u.pathname === '/api/shutdown') {
         // auto-reemplazo tras actualizar — JAMAS con runs vivos (un relevo mio mato un run a mitad de fix)
@@ -8408,9 +8547,13 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           const bodyRb = await readBody(req);
           if (!bodyRb) return json(400, { ok: false, error: 'body JSON inválido' });
           const { phase } = bodyRb;
+          // sin `phase` salía un 500 con «sin checkpoint para la fase » (en blanco): un campo que falta es
+          // culpa de la PETICIÓN, no del servidor. El 500 además ensucia la monitorización y en el panel se
+          // pinta como caída en vez de como "dime qué fase quieres deshacer".
+          if (!phase || typeof phase !== 'string' || !phase.trim()) return json(400, { ok: false, error: 'falta "phase": indica de qué fase quieres deshacer el checkpoint' });
           if (reg && !reg.exited && !reg.pending) return json(409, { ok: false, error: 'el run está en marcha — pausa o detén antes de deshacer' });
-          try { const r2 = rollbackTo(proj.root, changeDir, String(phase || '')); return json(200, { ok: true, restored: r2.restored.length, removed: r2.removed.length }); }
-          catch (e) { return json(500, { ok: false, error: e.message }); }
+          try { const r2 = rollbackTo(proj.root, changeDir, phase.trim()); return json(200, { ok: true, restored: r2.restored.length, removed: r2.removed.length }); }
+          catch (e) { return json(400, { ok: false, error: e.message }); } // no hay checkpoint para esa fase = petición inválida, no fallo del servidor
         }
         if (action === 'events') {
           // VISOR DE SESIÓN: stream de eventos del CLI de Copilot, CONFINADO a <run>/.conductor/events.jsonl
@@ -8447,6 +8590,10 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         }
         return json(404, { ok: false });
       }
+      // una ruta /api/* desconocida NO puede caer al app-shell: el cliente pide JSON y recibía el HTML del
+      // panel con un 200, así que el fallo se manifestaba mucho más tarde como «JSON inesperado» en la
+      // consola del navegador en vez de como un 404 en la petición culpable.
+      if (u.pathname === '/api' || u.pathname.startsWith('/api/')) return json(404, { ok: false, error: `endpoint no encontrado: ${req.method} ${u.pathname}` });
       return html(PANEL_PAGE);
     } catch (e) { try { json(500, { ok: false, error: e.message }); } catch {} }
   });
@@ -8687,7 +8834,9 @@ const TOOLS = {
   conductor_seal: { def: { name: 'conductor_seal', title: 'green-gate provenance seal', description: 'Produce a signed provenance seal (Ed25519 via privateKeyPem, or HMAC via key) proving a change passed all gates.', inputSchema: { type: 'object', properties: { changeDir: { type: 'string' }, srcDir: { type: 'string' }, key: { type: 'string' }, privateKeyPem: { type: 'string' } }, required: ['changeDir'] } },
     run: ({ changeDir, srcDir, key, privateKeyPem }) => { const gates = [{ name: 'coherence', findings: checkCoherence(changeDir) }, { name: 'artifacts', findings: checkArtifacts(changeDir) }]; const trace = srcDir && existsSync(srcDir) ? buildTrace(changeDir, srcDir) : null; return seal({ change: resolve(changeDir), gates, trace, at: '1970-01-01T00:00:00Z', key, privateKeyPem, specHash: hashSpecs(changeDir) }); } },
   conductor_verify: { def: { name: 'conductor_verify', title: 'verify provenance seal', description: 'Verify a provenance seal JSON (Ed25519 via publicKeyPem, or HMAC via key).', inputSchema: { type: 'object', properties: { sealJson: { type: 'string', description: 'raw JSON of the seal' }, key: { type: 'string' }, publicKeyPem: { type: 'string' } }, required: ['sealJson'] } },
-    run: ({ sealJson, key, publicKeyPem }) => verifySeal(JSON.parse(sealJson), { key, publicKeyPem }) },
+    // el schema pide string, pero el que rellena es un modelo y pasar el sello YA PARSEADO es igual de
+    // natural: antes eso daba «"[object Object]" is not valid JSON», que no orienta a nadie. Se aceptan ambos.
+    run: ({ sealJson, key, publicKeyPem }) => verifySeal(typeof sealJson === 'string' ? JSON.parse(sealJson) : sealJson, { key, publicKeyPem }) },
   conductor_explain: { def: { name: 'conductor_explain', title: 'reverse-engineer code → spec draft', description: 'Reverse-engineer a source tree into a draft OpenSpec spec: capabilities, HTTP endpoints, units, and an extracted OpenAPI skeleton. For brownfield/migrations.', inputSchema: { type: 'object', properties: { srcDir: { type: 'string' } }, required: ['srcDir'] } },
     run: ({ srcDir }) => { const r = explain(srcDir); return { capabilities: r.capabilities.map((c) => ({ id: c.id, name: c.name, endpoints: c.endpoints.length, units: c.units.length, files: c.files.length })), hasOpenapi: !!r.openapi }; } },
   conductor_drift: { def: { name: 'conductor_drift', title: 'living-spec drift detection', description: 'Detect spec↔code drift: requirements without code, untracked code surface, contract drift.', inputSchema: { type: 'object', properties: { changeDir: { type: 'string' }, srcDir: { type: 'string' } }, required: ['changeDir', 'srcDir'] } },
@@ -8699,7 +8848,10 @@ const TOOLS = {
   // NOTA: conductor_start/conductor_next se RETIRARON del MCP (2026-06-10): un modelo de sesión los
   // usaba para re-hacer el pipeline a mano en paralelo al driver (carrera + tokens). La máquina de
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.
-  conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', description: 'Create openspec/conductor.json (only if missing) and openspec/conductor.schema.json (editor autocomplete/validation) in the given openspec dir.', inputSchema: { type: 'object', properties: { openspecDir: { type: 'string', description: 'absolute path of the project openspec/ dir' } }, required: ['openspecDir'] } },
+  conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', // la descripción prometía escribir también openspec/conductor.schema.json, y el motor dejó de hacerlo a
+// propósito en init v2 (scaffold.mjs:132: apuntar a ese fichero desde el repo del usuario sería un enlace
+// roto). Un modelo que lee esta descripción le decía al usuario que tenía autocompletado en el editor.
+description: 'Create openspec/conductor.json in the given openspec dir (only if missing), with the OpenSpec tree (specs/, changes/archive/). No schema file is written: validation lives in the engine (conductor doctor).', inputSchema: { type: 'object', properties: { openspecDir: { type: 'string', description: 'absolute path of the project openspec/ dir' } }, required: ['openspecDir'] } },
     run: ({ openspecDir }) => initConfig(openspecDir) },
   conductor_drive: { def: { name: 'conductor_drive', title: 'run the FULL SDD pipeline headless (blocks until the very end — CI/scripts only)', description: 'Runs the ENTIRE SDD pipeline with no review pauses. TWO modes: async:true = background JOB via the local app, returns immediately with {changeName, web} (poll with conductor_continue action:wait; conductor_receipt at the end) — use this from chat hosts. async absent/false = ONE blocking call (minutes — many chat hosts will kill it): CI/scripts only. For interactive use ALWAYS prefer conductor_feature (short calls, review pauses in the chat). The SERVER drives every phase (propose→spec→…→apply→verify) in order and runs the deterministic gate at verify; phases CANNOT be skipped regardless of model quality. Reads model config from BYOK env (COPILOT_PROVIDER_BASE_URL/_API_KEY/COPILOT_MODEL or CONDUCTOR_*).', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words' }, projectRoot: { type: 'string', description: 'absolute path of the project root (where openspec/ lives)' }, changeName: { type: 'string', description: 'optional kebab name for the change; derived from request if absent' }, complexity: { type: 'string', enum: ['simple', 'medium', 'complex'] }, domain: { type: 'string', description: 'short domain noun for the spec folder' }, async: { type: 'boolean', description: 'true = launch as a background JOB via the local app and return IMMEDIATELY with {changeName, web}; then poll with conductor_continue {action:"wait"} and fetch conductor_receipt at the end. false/absent = legacy blocking mode (CI/scripts only).' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName, complexity, domain, async: asJob }) => {
@@ -8820,6 +8972,12 @@ function serve() {
       case 'tools/list': return reply(id, { tools: Object.values(TOOLS).map((t) => t.def) });
       case 'tools/call': {
         const tool = TOOLS[params?.name]; if (!tool) return failrpc(id, -32602, `Unknown tool: ${params?.name}`);
+        // ARGUMENTOS REQUERIDOS: los schemas los declaran, pero nadie los comprobaba y la llamada caía
+        // directa al fs. Quien rellena estos args es un MODELO, no un humano, así que omitir uno es el
+        // caso NORMAL — y devolvía el error interno de Node ("The \"path\" argument must be of type
+        // string. Received undefined"), que no le dice al agente qué arreglar. Ahora se nombra el que falta.
+        const miss = (tool.def?.inputSchema?.required || []).filter((k) => (params.arguments || {})[k] === undefined || (params.arguments || {})[k] === null || (params.arguments || {})[k] === '');
+        if (miss.length) return reply(id, { content: [{ type: 'text', text: `tool error: faltan argumentos obligatorios en ${params.name}: ${miss.join(', ')}` }], isError: true });
         try { assertConfined(process.env.CONDUCTOR_ROOT, params.arguments, PATH_ARGS); const r = await tool.run(params.arguments || {}); return reply(id, { content: [{ type: 'text', text: JSON.stringify(r, null, 2) }], isError: false }); }
         catch (e) { return reply(id, { content: [{ type: 'text', text: `tool error: ${e.message}` }], isError: true }); }
       }
@@ -8971,7 +9129,17 @@ switch (cmd) {
   case 'migrate': { if (!pos[0] || !existsSync(pos[0])) bad('migrate <dir|file.sql>  (linter de seguridad de migraciones)'); out(lintMigrations(pos[0]), `conductor migrate · ${pos[0]}`); }
   case 'policy': {
     const sub = pos[0];
-    if (sub === 'init') { const o = flag('-o', 'conductor.policy.json'); writeFileSync(o, JSON.stringify(DEFAULT_POLICY, null, 2)); console.log(`política por defecto → ${o}`); process.exit(0); }
+    // ESCRIBIR DONDE EL MOTOR LEE. El default era `conductor.policy.json` en el cwd, un nombre que NADIE
+    // lee de forma automática: el driver carga `openspec/policy.json` (drive.mjs) y `loadPolicy(undefined)`
+    // devuelve la política por defecto SIN allowlist. Es decir, un equipo hacía `policy init`, rellenaba
+    // `allowedModels` y el gobierno no se aplicaba nunca. Se mantiene `-o` para elegir otra ruta.
+    if (sub === 'init') {
+      const o = flag('-o') || (existsSync(join(process.cwd(), 'openspec')) ? join('openspec', 'policy.json') : 'conductor.policy.json');
+      mkdirSync(dirname(resolve(o)), { recursive: true });
+      writeFileSync(o, JSON.stringify(DEFAULT_POLICY, null, 2));
+      console.log(`política por defecto → ${o}${/openspec/.test(o) ? '  (el driver la aplica sola en cada run)' : '  ⚠ fuera de openspec/: el driver NO la lee sola, pásala con --policy'}`);
+      process.exit(0);
+    }
     if (sub === 'validate') { if (!pos[1] || !existsSync(pos[1])) bad('policy validate <file>'); const v = validatePolicy(JSON.parse(readFileSync(pos[1], 'utf8'))); console.log(v.valid ? 'política VÁLIDA' : 'política INVÁLIDA:\n' + v.errors.map((e) => '  - ' + (e.instancePath || '/') + ' ' + e.message).join('\n')); process.exit(v.valid ? 0 : 1); }
     if (sub === 'enforce') {
       const dir = pos[1]; if (!dir || !existsSync(dir)) bad('policy enforce <changeDir> [--policy file] [--override "razón"] [--by user]');
@@ -9003,8 +9171,10 @@ switch (cmd) {
   }
   case 'resume': case 'status': { // legacy .runs — 'run' ya NO vive aqui: es el gesto app (como promete la ayuda)
     const runsDir = join(ROOT, '.runs');
-    if (cmd === 'status') { const id = pos[0]; const p = join(runsDir, (existsSync(join(runsDir, `${id}.json`)) ? id : R.runIdFor(id)) + '.json'); if (!existsSync(p)) bad('run no encontrado'); const s = JSON.parse(readFileSync(p, 'utf8')); has('--json') ? console.log(JSON.stringify(s, null, 2)) : printRun(s); process.exit(0); }
-    if (cmd === 'resume') { const p = join(runsDir, `${pos[0]}.json`); if (!existsSync(p)) bad('run no encontrado'); const s = R.resume(JSON.parse(readFileSync(p, 'utf8'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1); }
+    // sin argumento, `runIdFor(undefined)` reventaba con el error INTERNO de Node ('The "paths[0]" argument
+    // must be of type string. Received undefined') — el único comando del CLI que no daba su línea de uso.
+    if (cmd === 'status') { const id = pos[0]; if (!id) bad('status <runId|changeDir>'); const p = join(runsDir, (existsSync(join(runsDir, `${id}.json`)) ? id : R.runIdFor(id)) + '.json'); if (!existsSync(p)) bad(`run "${id}" no encontrado en ${runsDir} (layout .runs legado; los runs de hoy viven en .conductor/runs y se ven con \`conductor\`)`); const s = JSON.parse(readFileSync(p, 'utf8')); has('--json') ? console.log(JSON.stringify(s, null, 2)) : printRun(s); process.exit(0); }
+    if (cmd === 'resume') { if (!pos[0]) bad('resume <runId>'); const p = join(runsDir, `${pos[0]}.json`); if (!existsSync(p)) bad(`run "${pos[0]}" no encontrado en ${runsDir} (layout .runs legado; para reanudar un run actual usa la miniweb o \`conductor drive <changeDir> --resume\`)`); const s = R.resume(JSON.parse(readFileSync(p, 'utf8'))); R.save(runsDir, s); printRun(s); process.exit(s.status === 'done' ? 0 : 1); }
     bad('resume <runId> | status <runId|changeDir>');
   }
   case 'drive': {
@@ -10095,13 +10265,13 @@ function printStats(r, single) {
   console.log(`  RUNS     ${r.runs} total · ${r.green} GREEN · ${r.failed} fallido(s)${r.stopped ? ` · ${r.stopped} detenido(s)` : ''}${r.running ? ` · ${r.running} en curso` : ''}`);
   console.log(`  FASES    ${r.phases} · duración media ${dur(r.mean_ms)}`);
   console.log(`  TOKENS   ↓ ${k(r.tokens.in)} entrada · ↑ ${k(r.tokens.out)} salida`);
-  if (st.estimator) console.log(`\n  ESTIMADOR   ${st.estimator.phases} fase(s) medidas en ${st.estimator.runs} run(s) · desviación total ${st.estimator.dev_pct > 0 ? '+' : ''}${st.estimator.dev_pct}% · error medio por fase (MAPE) ${st.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
-  if (st.byDay?.length) {
+  if (r.estimator) console.log(`\n  ESTIMADOR   ${r.estimator.phases} fase(s) medidas en ${r.estimator.runs} run(s) · desviación total ${r.estimator.dev_pct > 0 ? '+' : ''}${r.estimator.dev_pct}% · error medio por fase (MAPE) ${r.estimator.mape_pct}%  — preflight sin API vs tokens reales`);
+  if (r.byDay?.length) {
     // el corte día × modelo — la MISMA granularidad que el informe de consumo de tu org: allí ves el €,
     // aquí el "en qué se fue" (peticiones y tokens de ese día, por modelo y proveedor)
     console.log('\n  POR DÍA (cruzable con el informe de consumo de tu organización)');
-    for (const d of st.byDay.slice(0, 14)) console.log(`    ${d.date}  ${d.provider === 'byok' ? 'LiteLLM' : 'Copilot'}  ${d.model}  ·  ${d.calls} petición(es) · ↓ ${d.in.toLocaleString('es')} ↑ ${d.out.toLocaleString('es')} tokens`);
-    if (st.byDay.length > 14) console.log(`    … y ${st.byDay.length - 14} fila(s) más (conductor stats --json para todas)`);
+    for (const d of r.byDay.slice(0, 14)) console.log(`    ${d.date}  ${d.provider === 'byok' ? 'LiteLLM' : 'Copilot'}  ${d.model}  ·  ${d.calls} petición(es) · ↓ ${d.in.toLocaleString('es')} ↑ ${d.out.toLocaleString('es')} tokens`);
+    if (r.byDay.length > 14) console.log(`    … y ${r.byDay.length - 14} fila(s) más (conductor stats --json para todas)`);
   }
   console.log(`\n  POR PROVEEDOR`);
   for (const p of r.byProvider) {
@@ -10133,4 +10303,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 36c4e73c5ee1caaae18e99accb9a606c6bfd8779676fe5ebd847e4fda2608868
+// build-inputs-sha256: 4d8ba5bad341e4625033de8074e2363faa31369294e3c5190a47697d831440f7
