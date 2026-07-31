@@ -15,7 +15,7 @@ export class HelpScreen extends CElement {
       <ol class="muted steps">
         <li><b>Elige el proyecto</b> en el selector del panel. Si el tuyo no aparece, arranca la app desde su carpeta una vez (<code>conductor</code> en su terminal).</li>
         <li><b>Inicialízalo</b> si el panel lo pide (botón «Inicializar este proyecto»): crea <code>openspec/</code> con la config del pipeline y <code>.copilotignore</code> (ahorro de tokens). No toca tu código.</li>
-        <li><b>Describe el cambio</b> en «Qué quieres construir». Puedes señalar ficheros con <code>@ruta</code> y patrones de equipo con <code>/nombre</code>. El sistema propone el plan de fases y el coste estimado; tú mandas: ajusta fases, modelos por fase y el toggle <b>test</b>.</li>
+        <li><b>Describe el cambio</b> en «Prompt». Puedes señalar ficheros con <code>@ruta</code> y patrones de equipo con <code>/nombre</code>. El sistema propone el plan de fases y el coste estimado; tú mandas: ajusta fases, modelos por fase y el toggle <b>test</b>.</li>
         <li><b>Lanza el run</b> y atiende las <b>pausas de revisión</b>: leer/editar la spec, dejar una nota para la fase, cambiar el modelo en caliente, o detener. En el ciclo de corrección eliges qué hallazgos se arreglan.</li>
         <li>Con el run <b>Verificado</b> (GREEN): revisa el <b>Informe</b>, haz tu commit y pulsa <b>Archivar</b> — la spec se promueve a la fuente de verdad del repo.</li>
       </ol>

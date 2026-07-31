@@ -28,6 +28,7 @@ export class ConductorApp extends CElement {
   })();
   @state() private ready = false;
   @state() private online = true; // conexión con el servidor local (el ping es el latido)
+  @state() private veil: string | null = null; // velo de transición (apagar/reintentar): etiqueta visible
   private pingFails = 0; // histéresis: solo declaramos «apagado» tras 3 fallos consecutivos (un blip no es una caída)
 
   private buildTimer: ReturnType<typeof setTimeout> | null = null;
@@ -37,6 +38,7 @@ export class ConductorApp extends CElement {
     super.connectedCallback();
     router.addEventListener('change', this.onRoute as EventListener);
     router.start();
+    window.addEventListener('conductor:down', this.onShutdown);
     // AUTO-RELEVO + LATIDO DE CONEXIÓN: el ping vigila (a) el build del servidor para auto-recargar tras un
     // redeploy, y (b) que el servidor SIGA VIVO. Antes un fallo se tragaba en silencio → la UI se congelaba en
     // datos viejos sin avisar (el dev cierra la terminal y creía el panel vivo). Ahora reprograma adaptativo.
@@ -45,6 +47,7 @@ export class ConductorApp extends CElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     router.removeEventListener('change', this.onRoute as EventListener);
+    window.removeEventListener('conductor:down', this.onShutdown);
     if (this.buildTimer) clearTimeout(this.buildTimer);
   }
 
@@ -65,6 +68,18 @@ export class ConductorApp extends CElement {
     // reprograma adaptativo: sano cada 10s (detecta la caída pronto sin martillear); caído cada 3s (recuperación rápida)
     if (this.buildTimer) clearTimeout(this.buildTimer);
     this.buildTimer = setTimeout(() => void this.checkBuild(), ok ? 10000 : 3000);
+  }
+
+  // apagado desde el sidebar: velo breve (el servidor termina de morir) y directo a «apagado» — sin
+  // esperar los 3 fallos de ping. El latido sigue corriendo: si se rearranca, la pantalla se recupera sola.
+  private onShutdown = (): void => {
+    this.veil = 'Apagando conductor';
+    setTimeout(() => { this.veil = null; this.pingFails = 3; this.online = false; }, 900);
+  };
+
+  private async retryNow(): Promise<void> {
+    this.veil = 'Comprobando el servidor';
+    try { await this.checkBuild(); } finally { this.veil = null; }
   }
 
   private onRoute = (e: Event): void => {
@@ -103,7 +118,7 @@ export class ConductorApp extends CElement {
         <div class="srv-down-ic" aria-hidden="true">⏻</div>
         <h1>conductor está apagado</h1>
         <p>El servidor local no responde. Arráncalo con <code>conductor</code> en tu terminal — esta pantalla se recupera sola en cuanto vuelva.</p>
-        <button class="btn" @click=${() => void this.checkBuild()}>Reintentar ahora</button>
+        <button class="btn" @click=${() => void this.retryNow()}>Reintentar ahora</button>
       </div>`;
     }
     if (!this.ready) return loader('Cargando conductor', true);
@@ -123,13 +138,17 @@ export class ConductorApp extends CElement {
     const activeProj = this.route.projId ?? this.route.query.get('project') ?? '';
     return html`
       <a class="skiplink" href="#main-content">Saltar al contenido</a>
-      <button class="sbtog" aria-label="alternar panel lateral" @click=${() => this.toggleSb()}>☰</button>
+      ${this.online ? html`<button class="sbtog" aria-label="alternar panel lateral" @click=${() => this.toggleSb()}>☰</button>` : nothing}
       <theme-toggle></theme-toggle>
-      <div class="layout ${this.sbHide ? 'sbhide' : ''}" @click=${(e: MouseEvent) => this.onLayoutClick(e)}>
+      <div class="layout ${this.sbHide || !this.online ? 'sbhide' : ''}" @click=${(e: MouseEvent) => this.onLayoutClick(e)}>
         <aside class="sb" role="navigation" aria-label="Navegación de proyectos y runs"><app-sidebar .activeChange=${active} .activeRoute=${this.route.name} .activeProj=${activeProj}></app-sidebar></aside>
         <main class="content" id="main-content">${this.screen()}</main>
       </div>
       <artifact-viewer></artifact-viewer>
+      ${this.veil ? html`<div class="veil" role="status" aria-live="assertive">
+        <div class="veil-ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <span class="veil-lbl">${this.veil}…</span>
+      </div>` : nothing}
     `;
   }
 }

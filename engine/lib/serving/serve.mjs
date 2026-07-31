@@ -715,7 +715,7 @@ async function _computeAvailableModels(registry) {
     // el .enckey no coincide o está corrupto; (b) blob DPAPI antiguo en no-Windows → ilegible ahí. En ambos, re-guardar arregla.
     try {
       const j = JSON.parse(readFileSync(byokFile(CONDUCTOR_HOME()), 'utf8'));
-      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se queda como la escribas, formato OpenCode; "seal": true si prefieres cifrarla).';
+      if (isTemplateCreds(j)) byokReason = 'tu ~/.conductor/litellm.json es la PLANTILLA sin rellenar — ábrelo y sustituye baseUrl y apiKey por los de tu proxy (la key se queda como la escribas; "seal": true si prefieres cifrarla).';
       else if (j.apiKeyEnc && isPortableBlob(j.apiKeyEnc)) byokReason = 'tu litellm.json tiene una clave cifrada que no se pudo descifrar (el ~/.conductor/.enckey no coincide o está corrupto). Escribe la key de nuevo como "apiKey" en el fichero o usa `conductor litellm login`.';
       else if (j.apiKeyEnc && !isPortableBlob(j.apiKeyEnc) && process.platform !== 'win32') byokReason = 'tu fichero de credenciales usa el cifrado DPAPI antiguo (solo Windows). Re-guarda la key en este SO (`conductor litellm login`) para migrarla al cifrado común AES-256-GCM (portable).';
     } catch {}

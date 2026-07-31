@@ -49,8 +49,11 @@ export class AppSidebar extends CElement {
   private async shutdown(): Promise<void> {
     try {
       const r = await fetch('/api/shutdown', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-      this.appMsg = r.status === 409 ? 'Hay un run en curso. Detenlo antes de apagar.' : 'Aplicación detenida. Vuelve a abrirla con conductor en tu terminal.';
-    } catch { this.appMsg = 'Aplicación detenida. Vuelve a abrirla con conductor en tu terminal.'; }
+      if (r.status === 409) { this.appMsg = 'Hay un run en curso. Detenlo antes de apagar.'; return; }
+    } catch { /* el servidor murió a mitad de respuesta: apagado igualmente */ }
+    // apagado ACEPTADO → el shell toma el mando: velo de transición + pantalla «apagado» (sin quedarnos
+    // en un panel vivo de mentira esperando a que el ping caduque)
+    window.dispatchEvent(new CustomEvent('conductor:down'));
   }
   private dotClass(c: ChangeSummary): string {
     if (c.pending) return 'CURSO'; // pausa esperando decisión → punto "vivo" (ámbar pulsante)

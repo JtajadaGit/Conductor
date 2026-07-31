@@ -12,6 +12,22 @@ import '../components/mention-input';
 // le ENSEÑAMOS el PLAN como las FASES SDD REALES de OpenSpec (propose/spec/design/tasks/apply/verify) — cada una
 // con su artefacto y, si la tiene, su comprobación — más QUÉ checks extra se activan por contenido y por qué. El
 // motor lo deriva (resolvePlan, 0 LLM/0 tokens); aquí solo se pinta. Nombres reales = los de OpenSpec, no inventos.
+// nombre de change BUSINESS desde el prompt: fuera muletillas ("quiero un componente..." aportaba cero),
+// sin duplicados, 5 tokens con significado. "Quiero un componente formulario, con campo usuario y campo
+// email, sin validaciones" → formulario-campo-usuario-email-validaciones (antes: quiero-un-componente-…).
+const NAME_STOP = new Set(('quiero quieres queria necesito necesitamos crea crear creame hazme haz hacer anade anadir agrega agregar implementa implementar genera generar pon poner un una unos unas el la los las de del en con sin para por favor que y o u a al es sea me mi tu su se lo nuevo nueva componente pagina want need create make add build new please i an the of with without for and or to my this esta este').split(' '));
+const deaccent = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+export function smartName(req: string): string {
+  const words = deaccent(req.replace(/[@/]\S+/g, ' ')).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const seen = new Set<string>(); const picked: string[] = [];
+  for (const w of words) {
+    if (NAME_STOP.has(w) || w.length < 3 || seen.has(w)) continue;
+    seen.add(w); picked.push(w);
+    if (picked.length === 5) break;
+  }
+  return picked.length ? picked.join('-') : kebab(words.slice(0, 6).join(' ')); // sin tokens con chicha: fallback al recorte clásico
+}
+
 const PHASE_INFO: Record<string, { artifact: string; gate?: string }> = {
   explore: { artifact: 'exploration.md' },
   propose: { artifact: 'proposal.md' },
@@ -113,7 +129,7 @@ export class PanelScreen extends CElement {
     this.req = v;
     // auto-nombre: SIGUE a la descripción mientras el usuario no lo haya tocado. Ignora las menciones @fichero y /skill
     // (son contexto, no parte del nombre del cambio) para no ensuciar el kebab.
-    if (!this.nameTouched) this.name = kebab(this.req.replace(/[@/]\S+/g, ' ').split(/\s+/).slice(0, 6).join(' '));
+    if (!this.nameTouched) this.name = smartName(this.req);
     this.scheduleEstimate();
   }
   // coste visible en el punto de decisión: estima tokens (preflight, sin API) con debounce
@@ -310,7 +326,9 @@ export class PanelScreen extends CElement {
   private tierRank(t?: string): number { return t === 'premium' ? 3 : t === 'economy' ? 1 : 2; }
 
   // fases direccionables una a una (el orden del pipeline); la fase gana al rol (models.<fase> en conductor.json)
-  private static readonly PHASES = ['explore', 'clarify', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify', 'fix'] as const;
+  // sin clarify (es un STOPPER de preguntas al humano — su texto lo genera el planner, no merece selector)
+  // y sin fix (ciclo interno de apply: hereda el modelo del coder; en la pausa de fix se cambia en caliente)
+  private static readonly PHASES = ['explore', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify'] as const;
 
   // etiqueta de opción con la FICHA VIVA del catálogo: nombre oficial + ventana de contexto + AI credits.
   // LiteLLM = 0 créditos por definición (no pasa por Copilot); la categoría low/medium/high es la MISMA del
@@ -402,7 +420,7 @@ export class PanelScreen extends CElement {
   }
 }</pre>
       <p class="inst-note"><code>models</code> = tu catálogo declarado: sale SIEMPRE en el selector (sin depender del proxy) y sus límites
-      viajan a cada fase. La key se queda <strong>como tú la escribas</strong> (mismo hábito que tu opencode.json); si prefieres
+      viajan a cada fase. La key se queda <strong>como tú la escribas</strong>; si prefieres
       cifrarla: <code>"seal": true</code> o <code>conductor litellm login</code>. <strong>Nunca sale de tu máquina</strong>, no se registra ni se cachea.</p>`;
     // TU FICHERO, leído de verdad (bug real: con fichero rellenado el panel enseñaba el EJEMPLO genérico —
     // parecía una lectura rota). Si hay modelos declarados, se listan con sus nombres; el ejemplo queda
@@ -423,7 +441,7 @@ export class PanelScreen extends CElement {
           <div class="inst-body">
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
-              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json (tu fichero, formato OpenCode compatible)</dd></div>
+              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json</dd></div>
               <div class="ro-row"><dt>Privacidad</dt><dd>Nunca sale de tu máquina · no se registra</dd></div>
             </dl>
             <p class="inst-note">¿Key caducada o rotada? Escribe la nueva en <code>~/.conductor/litellm.json</code>
@@ -552,7 +570,7 @@ export class PanelScreen extends CElement {
     );
     const launchForm = html`
       <form class="launch-form" @submit=${(e: Event) => void this.launch(e)}>
-        <label class="fl" @paste=${(e: ClipboardEvent) => this.onReqPaste(e)} @drop=${(e: DragEvent) => this.onReqDrop(e)} @dragover=${(e: DragEvent) => e.preventDefault()}>Qué quieres construir
+        <label class="fl" @paste=${(e: ClipboardEvent) => this.onReqPaste(e)} @drop=${(e: DragEvent) => this.onReqDrop(e)} @dragover=${(e: DragEvent) => e.preventDefault()}>Prompt
           <mention-input .value=${this.req} .projId=${this.projId} placeholder="Describe el cambio en una frase o pega una spec. Escribe @ para dar contexto de un fichero · / para aplicar una skill del equipo · pega o arrastra capturas" @cdr-input=${(e: Event) => this.onReq((e as CustomEvent).detail.value)}></mention-input>
         </label>
         ${this.atts.length ? html`<div class="att-row">
@@ -562,7 +580,7 @@ export class PanelScreen extends CElement {
         ${this.req.trim() && this.est ? this.planPanel() : nothing}
         <div class="frow">
           <label class="fl" style="flex:1;min-width:10rem" title="Cómo se llamará esta tarea (auto-sugerido a partir de tu descripción; edítalo si quieres).">Nombre<input .value=${this.name} @input=${(e: Event) => { this.name = (e.target as HTMLInputElement).value; this.nameTouched = true; }} placeholder="p.ej. cupon-descuento" pattern="[a-z0-9-]+" required></label>
-          <button class="btn" ?disabled=${this.busy} style="align-self:end">${this.busy ? '…' : 'Lanzar run'}</button>
+          <button class="btn launch" ?disabled=${this.busy} style="align-self:end">${this.busy ? '…' : 'Lanzar run'}</button>
         </div>
         <div class="launch-meta">
           ${this.launchModelSummary()}

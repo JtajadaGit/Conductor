@@ -107,7 +107,7 @@ export function ensureByokTemplate(home) {
 }
 
 export const LITELLM_TEMPLATE = {
-  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se queda COMO LA ESCRIBAS (formato OpenCode; añade "seal": true si prefieres que conductor la cifre). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
+  _ayuda: 'Rellena baseUrl y apiKey y guarda — la key se queda COMO LA ESCRIBAS (añade "seal": true si prefieres que conductor la cifre). En "models" declara tu catálogo: cada entrada sale en el selector con su "name" y sus límites viajan a cada fase.',
   baseUrl: 'https://TU-PROXY/v1',
   apiKey: 'sk-PEGA-AQUI-TU-KEY',
   models: {
