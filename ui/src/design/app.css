@@ -247,3 +247,11 @@ h1 { font-size: 1.55rem; }
 .srv-down-ic { font-size: 2.6rem; color: var(--tx3); }
 .srv-down h1 { font-size: 1.25rem; margin: 0; }
 .srv-down p { color: var(--tx2); max-width: 34rem; margin: 0 0 .6rem; line-height: 1.55; }
+
+/* ── .sb-foot-nav notebook (decisión UX 2026-07-31): índice discreto — hairline arriba, mono en caja alta,
+   sin emojis; el activo lleva la barrita de acento como el resto de la navegación. ── */
+.sb-foot-nav { display: flex; flex-direction: column; gap: 0; padding: .55rem 0 .35rem; margin-top: .4rem; border-top: 1px solid var(--bd); }
+.sb-flink { position: relative; display: flex; align-items: center; padding: .34rem .55rem; border-radius: 6px; font: 600 .66rem/1.5 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--tx3); text-decoration: none; transition: color .12s, background .12s; }
+.sb-flink:hover { color: var(--tx); background: var(--bd2); }
+.sb-flink.active { color: var(--accent); background: var(--accentbg); }
+.sb-flink.active::before { content: ''; position: absolute; left: 0; top: 22%; bottom: 22%; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }

@@ -103,10 +103,12 @@ export class AppSidebar extends CElement {
           ${nGreen > 0 ? html`<span class="g" title="GREEN">${nGreen} ✓</span>` : nothing}
           ${nActive > 0 ? html`<span class="w" title="en curso">${nActive} ◉</span>` : nothing}
         </div>` : nothing}
+        <!-- notebook: índice discreto en mono, sin emojis (decisión UX 2026-07-31: los iconos de colores
+             desentonaban con la voz de instrumento del resto del cockpit) -->
         <nav class="sb-foot-nav" aria-label="Más">
-          <a class="sb-flink ${this.activeRoute === 'flow' ? 'active' : ''}" href="/flow" aria-current=${this.activeRoute === 'flow' ? 'page' : nothing}>🔻 Flujo</a>
-          <a class="sb-flink ${this.activeRoute === 'help' ? 'active' : ''}" href="/help" aria-current=${this.activeRoute === 'help' ? 'page' : nothing}>❓ Ayuda</a>
-          <a class="sb-flink wide ${this.activeRoute === 'ahorro' ? 'active' : ''}" href="/ahorro" aria-current=${this.activeRoute === 'ahorro' ? 'page' : nothing}>💶 Ahorro de tokens</a>
+          <a class="sb-flink ${this.activeRoute === 'flow' ? 'active' : ''}" href="/flow" aria-current=${this.activeRoute === 'flow' ? 'page' : nothing}>Flujo</a>
+          <a class="sb-flink ${this.activeRoute === 'help' ? 'active' : ''}" href="/help" aria-current=${this.activeRoute === 'help' ? 'page' : nothing}>Ayuda</a>
+          <a class="sb-flink ${this.activeRoute === 'ahorro' ? 'active' : ''}" href="/ahorro" aria-current=${this.activeRoute === 'ahorro' ? 'page' : nothing}>Ahorro de tokens</a>
         </nav>
         ${this.appMsg ? html`<div class="sb-appmsg" role="status" aria-live="polite">${this.appMsg}</div>` : nothing}
         <button class="sb-shutdown" @click=${() => void this.shutdown()} aria-label="Apagar la app de conductor (se reabre con conductor en terminal)">⏻ Apagar conductor</button>

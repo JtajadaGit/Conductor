@@ -644,19 +644,6 @@ export class PanelScreen extends CElement {
       </div>` : nothing}
       <!-- coste "1 cifra en su momento" (decisión de producto): el desglose vive plegado; la cifra oportuna
            va en el estimate del form (al decidir) y en el run (al terminar). AI Credits queda como única señal ambiente. -->
-      <details class="launch-fold metrics">
-        <summary>📊 Métricas${this.gh ? html` <span class="muted" style="font-weight:500">· AI Credits ${this.gh.used}/${this.gh.entitlement}</span>` : nothing}${this.version ? html` <span class="muted" style="font-weight:500;font-size:.74rem" title="versión del motor en uso">· v${this.version}</span>` : nothing}</summary>
-        <div class="cards" style="margin-top:.9rem">
-          <div class="card"><small>Runs</small><span>${m.total}</span></div>
-          <div class="card ok"><small>Green</small><span>${m.green}</span></div>
-          ${m.curso > 0 ? html`<div class="card warn"><small>En curso</small><span>${m.curso}</span></div>` : nothing}
-          <div class="card"><small>Tokens entrada ↓</small><span>${fmt(m.tin)}</span></div>
-          <div class="card"><small>Tokens salida ↑</small><span>${fmt(m.tout)}</span></div>
-          ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
-          ${this.usage ? html`<div class="card"><small>Uso total LiteLLM</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
-        </div>
-      </details>
-
       ${activeItems.length > 0 ? html`
         <h2 class="sect">En curso</h2>
         ${activeItems.map(({ p, c }) => this.runRow(p, c))}
@@ -665,6 +652,21 @@ export class PanelScreen extends CElement {
           ${launchSurface}
         </details>
       ` : launchSurface}
+
+      <!-- MÉTRICAS SIEMPRE VISIBLES bajo el formulario (decisión UX 2026-07-31: sin pliegue — el pliegue
+           las escondía y nadie las abría). Flechas PEGADAS al número (voz de dato), versión discreta al pie. -->
+      <section class="metrics-strip" aria-label="métricas del proyecto">
+        <div class="cards">
+          <div class="card"><small>Runs</small><span>${m.total}</span></div>
+          <div class="card ok"><small>Green</small><span>${m.green}</span></div>
+          ${m.curso > 0 ? html`<div class="card warn"><small>En curso</small><span>${m.curso}</span></div>` : nothing}
+          <div class="card"><small>Tokens entrada</small><span><i class="dir">↓</i>${fmt(m.tin)}</span></div>
+          <div class="card"><small>Tokens salida</small><span><i class="dir">↑</i>${fmt(m.tout)}</span></div>
+          ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
+          ${this.usage ? html`<div class="card"><small>Uso total LiteLLM</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
+        </div>
+        ${this.version ? html`<p class="metrics-foot" title="versión del motor en uso">motor v${this.version}</p>` : nothing}
+      </section>
 
       <!-- UN SOLO input de búsqueda en posición estable: al teclear, this.q cambia y el re-render antes
            DESMONTABA el input de "Historial" y MONTABA el de "Búsqueda" (nodos DOM distintos) → se perdía el

@@ -12,7 +12,7 @@ export class AhorroScreen extends CElement {
     {
       t: 'No re-escanear: índice verificado',
       d: 'Al planificar, el modelo recibe un índice compacto de lo YA verificado (las capacidades de la spec viva y los cambios archivados) en vez de re-leer el código fuente. Lo que el pipeline validó ayer no se vuelve a pagar hoy.',
-      stat: 'Ahorro medido: 30–45% del input en fases de planificación',
+      stat: 'Ahorro observado en runs de prueba: 30–45% del input en fases de planificación',
     },
     {
       t: 'Mapa del repo para orientarse',
@@ -76,9 +76,9 @@ export class AhorroScreen extends CElement {
       </div>
 
       <div class="ahorro-note">
-        <b>Tu clave, tu máquina.</b> Tu clave BYOK se guarda cifrada (AES-256-GCM) en tu máquina y nunca viaja al
-        modelo. El catálogo de modelos sale <b>EN VIVO</b> de tu LiteLLM y del CLI de Copilot — nunca de listas
-        inventadas.
+        <b>Tu clave, tu máquina.</b> Tu clave del proxy vive en <code>~/.conductor/litellm.json</code> tal cual tú la
+        escribas (cifrado AES-256-GCM opcional con <code>"seal": true</code>) y jamás viaja al modelo ni por HTTP.
+        El catálogo de modelos sale <b>EN VIVO</b> de tu LiteLLM y del CLI de Copilot — nunca de listas inventadas.
       </div>
 
       <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/flow">Cómo conduce conductor</a> · <a class="lnk" href="/">Dashboard</a></p>

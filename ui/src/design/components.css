@@ -533,3 +533,32 @@ details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; l
 .btn.receipt { background: var(--accentbg); color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--bd)); box-shadow: none; }
 .btn.receipt:not(:disabled):hover { background: var(--accent); color: #fff; border-color: var(--accent); filter: none; }
 @media (prefers-reduced-motion: reduce) { .redo-btn { transition: none; } }
+
+/* ── ALERTS del cockpit (decisión UX 2026-07-31): los mensajes de estado dejan de ser texto suelto.
+   info = contexto tranquilo (checkpoint) · warn = requiere tu atención (interrumpido, límites). ── */
+.alert { display: flex; gap: .55rem; align-items: flex-start; margin: .65rem 0; padding: .6rem .75rem; border-radius: var(--r-sm); font-size: .8rem; line-height: 1.5; border: 1px solid var(--bd); background: var(--bg2); color: var(--tx2); }
+.alert .al-ic { flex: none; font-size: .9rem; line-height: 1.4; }
+.alert.info { border-color: color-mix(in srgb, var(--accent) 30%, var(--bd)); background: color-mix(in srgb, var(--accent) 6%, var(--bg2)); }
+.alert.warn { border-color: color-mix(in srgb, var(--warn) 38%, var(--bd)); background: color-mix(in srgb, var(--warn) 8%, var(--bg2)); color: var(--tx); }
+.alert b { color: var(--tx); }
+
+/* chip de rama git (voz de dato: mono, como los ctx-chip) */
+.chip-branch { display: inline-block; font: 600 .68rem/1.4 var(--mono); color: var(--tx2); background: var(--bg2); border: 1px solid var(--bd2); border-radius: 5px; padding: .06rem .4rem; vertical-align: baseline; }
+
+/* esquina de fase: tiempo FUERTE · tokens reales · estimado atenuado — jerarquía sutil, misma línea */
+.ph .right { display: inline-flex; align-items: baseline; gap: .55rem; white-space: nowrap; }
+.ph-time { font: 700 .74rem/1 var(--mono); color: var(--tx); font-variant-numeric: tabular-nums; }
+.ph-real { font: 600 .7rem/1 var(--mono); color: var(--tx2); font-variant-numeric: tabular-nums; }
+.ph-est { font: .66rem/1 var(--mono); color: var(--tx3); font-variant-numeric: tabular-nums; padding-left: .55rem; border-left: 1px solid var(--bd2); }
+
+/* folds de fase ("N ficheros", "salida del modelo", contexto): de casi-invisibles a eyebrow legible */
+.files > summary, raw-output summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: .3rem; font: 600 .66rem/1.6 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--tx2); padding: .12rem 0; transition: color .12s; }
+.files > summary::-webkit-details-marker, raw-output summary::-webkit-details-marker { display: none; }
+.files > summary::before, raw-output summary::before { content: '▸'; font-size: .72rem; color: var(--tx3); transition: transform .15s; }
+.files[open] > summary::before, raw-output details[open] summary::before { transform: rotate(90deg); }
+.files > summary:hover, raw-output summary:hover { color: var(--accent); }
+
+/* métricas SIEMPRE visibles bajo el form: flecha pegada al número, en voz atenuada */
+.metrics-strip { margin: 1.15rem 0 .35rem; }
+.metrics-strip .card span .dir { font-style: normal; font-size: .68em; color: var(--tx3); margin-right: .1rem; }
+.metrics-foot { margin: .45rem 0 0; text-align: right; font: .66rem/1 var(--mono); color: var(--tx3); }

@@ -231,7 +231,7 @@ export class RunScreen extends CElement {
         <h1 class="trunc">${this.change || s.project || 'run'}</h1>
         <span role="status" aria-live="polite"><status-pill .verdict=${s.pending ? 'EN PAUSA' : (s.verdict ?? 'EN CURSO')}></status-pill></span>
       </div>
-      <p class="subhead">${s.project || '—'}${s.branch ? html` · ${s.branch}` : ''}</p>
+      <p class="subhead">${s.project || '—'}${s.branch ? html` <span class="chip-branch" title="rama de git del proyecto">⎇ ${s.branch}</span>` : ''}</p>
       <div class="actbar">
         <a class="btn sm sec" href=${this.sessionHref()}>📃 Ver sesión</a>
         ${(s.done || s.verdict === 'INTERRUMPIDO') && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()} title=${s.verdict === 'INTERRUMPIDO' ? 'El proceso del run murió sin cerrar (¿equipo suspendido / terminal cerrada?) — reanuda desde la última fase completada' : 'reanudar el run'}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
@@ -242,8 +242,8 @@ export class RunScreen extends CElement {
         ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : '■ Detener'}</button>` : nothing}
       </div>
       <!-- FUERA de .actbar: dentro era un item flex más y partía la barra de botones en dos filas -->
-      ${s.verdict === 'INTERRUMPIDO' ? html`<p class="safeline" role="status">El proceso del run murió sin cerrar (¿equipo suspendido?). Nada se ha perdido: <b>↻ Reanudar</b> continúa desde la última fase completada.</p>` : nothing}
-      <p class="safeline" role="note">📍 Checkpoint automático antes de cada fase de código — puedes <button type="button" class="lnk" @click=${() => this.scrollToPipeline()}>restaurar tu árbol desde el detalle de fase</button> («↩ Deshacer» en apply/fix).</p>
+      ${s.verdict === 'INTERRUMPIDO' ? html`<p class="alert warn" role="status"><span class="al-ic" aria-hidden="true">⏸</span><span>El proceso del run murió sin cerrar (¿equipo suspendido?). Nada se ha perdido: <b>↻ Reanudar</b> continúa desde la última fase completada.</span></p>` : nothing}
+      <p class="alert info" role="note"><span class="al-ic" aria-hidden="true">🛟</span><span>Red de seguridad: antes de cada fase que toca tu código (apply/fix) se guarda un <b>checkpoint</b> de tu árbol. Si el resultado no te convence, <button type="button" class="lnk" @click=${() => this.scrollToPipeline()}>«↩ Deshacer» en esa fase</button> lo restaura tal cual estaba.</span></p>
       ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
       ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><svg class="why-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.3v4.4M8 11.0v.05" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span><b>Por qué:</b> ${s.reason}</span></div>` : nothing}
@@ -462,7 +462,7 @@ export class RunScreen extends CElement {
         ${p.attempts > 1 ? html`<span class="badge">${p.attempts}×</span>` : nothing}
         ${Array.isArray(p.lenses) && p.lenses.length ? html`<span class="badge">${p.lenses.length} lentes</span>` : nothing}
         ${p.resumed ? html`<span class="badge">⏯ heredada</span>` : nothing}
-        <span class="right">${secs(p.ms)}${p.tokens ? html` · ↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}` : nothing}${this.estFor(p.phase) ? html` <span class="muted" title="estimación preflight (sin API)">· est ↓${fmt(this.estFor(p.phase)!.estIn)} ↑${fmt(this.estFor(p.phase)!.estOut)}</span>` : nothing}</span>
+        <span class="right"><b class="ph-time">${secs(p.ms)}</b>${p.tokens ? html`<span class="ph-real" title="tokens reales de la fase">↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}</span>` : nothing}${this.estFor(p.phase) ? html`<span class="ph-est" title="estimación preflight (sin gastar API)">est ↓${fmt(this.estFor(p.phase)!.estIn)} ↑${fmt(this.estFor(p.phase)!.estOut)}</span>` : nothing}</span>
       </div>
       ${this.fileList(p.files)}
       ${this.phaseContext(p)}

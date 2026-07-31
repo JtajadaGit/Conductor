@@ -5065,13 +5065,36 @@ function persistSessionTrace(ssd, before, otelFile) {
       let st; try { st = statSync(join(ssd, s)); } catch { continue; }
       if (st.mtimeMs >= mt) { mt = st.mtimeMs; sess = s; }
     }
-    if (!sess) return;
+    if (!sess) return null;
     const f = join(ssd, sess, 'events.jsonl');
-    if (!existsSync(f)) return;
+    if (!existsSync(f)) return null;
     const dst = join(dirname(dirname(otelFile)), 'events.jsonl');
     mkdirSync(dirname(dst), { recursive: true });
-    appendFileSync(dst, readFileSync(f));
-  } catch { /* best-effort: sin traza no se rompe la fase */ }
+    const raw = readFileSync(f);
+    appendFileSync(dst, raw);
+    // TOKENS REALES del CLI moderno (1.0.70 ya no honra COPILOT_OTEL_FILE_EXPORTER_PATH → readTokens veía
+    // null y tokens/AIC/estimador quedaban CIEGOS): el evento session.shutdown de la propia traza trae
+    // tokenDetails (input/output/cache) y totalPremiumRequests (AI credits REALES). in = todo lo presentado
+    // al modelo (input + cache_read + cache_write — comparable con el estimador); cached se declara aparte.
+    return parseSessionUsage(raw.toString('utf8'));
+  } catch { return null; /* best-effort: sin traza no se rompe la fase */ }
+}
+
+// suma el usage de TODOS los session.shutdown de una traza (una sesión por intento; robusto si hay varias).
+// Puro y exportado para test. Devuelve null si la traza no trae cierres con tokenDetails.
+function parseSessionUsage(text) {
+  let tin = 0, tout = 0, cached = 0, aic = 0, seen = false;
+  for (const ln of String(text || '').split('\n')) {
+    if (!ln.includes('"session.shutdown"')) continue;
+    try {
+      const d = JSON.parse(ln).data || {};
+      const td = d.tokenDetails || {};
+      const n = (k) => Number(td[k]?.tokenCount) || 0;
+      if (d.tokenDetails) { seen = true; tin += n('input') + n('cache_read') + n('cache_write'); tout += n('output'); cached += n('cache_read'); }
+      if (Number.isFinite(Number(d.totalPremiumRequests))) aic += Number(d.totalPremiumRequests);
+    } catch { /* línea corrupta: se ignora */ }
+  }
+  return seen ? { in: tin, out: tout, cached, ...(aic ? { aic: +aic.toFixed(2) } : {}) } : null;
 }
 
 // cuenta las DENEGACIONES de permiso del CLI appendeadas a la traza (events.jsonl del change) desde
@@ -5194,7 +5217,7 @@ function defaultRunAgent({ prompt, cwd, timeoutMs, model, otelFile, stopSignal, 
     catch (e) { return resolve2({ code: -1, err: `no se pudo lanzar '${cmd}': ${e.message}` }); }
     let out = '', err = '';
     let stopPoll = null, actPoll = null;
-    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); if (otelFile) persistSessionTrace(ssd, beforeSessions, otelFile); cleanNewSessions(ssd, beforeSessions); resolve2(r); };
+    const finish = (r) => { if (stopPoll) clearInterval(stopPoll); if (actPoll) clearInterval(actPoll); const usage = otelFile ? persistSessionTrace(ssd, beforeSessions, otelFile) : null; cleanNewSessions(ssd, beforeSessions); resolve2(usage && r && !r.usage ? { ...r, usage } : r); };
     const timer = setTimeout(() => { killTree(child); finish({ code: -1, err: `agente timeout tras ${Math.round(timeoutMs / 1000)}s` }); }, timeoutMs);
     // STOP del usuario: mata la fase en vuelo (la sesión efímera se limpia igualmente en finish)
     if (stopSignal) stopPoll = setInterval(() => { if (stopSignal.requested) { clearTimeout(timer); killTree(child); finish({ code: -1, err: 'detenido por el usuario' }); } }, 1000);
@@ -6408,7 +6431,7 @@ ${readSafe(x.lp).trim()}`);
   return { ...step, trail, timeline };
 }
 
-return { scrubSecrets, classifyFailure, checkUnrunnable, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, countDeniedPerms, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
+return { scrubSecrets, classifyFailure, checkUnrunnable, stripAnsi, modelForPhase, parseModelSpec, byokCreds, readDriveConfig, parseSessionUsage, countDeniedPerms, agentArgs, postApplyFindings, killTree, approvalSha, defaultRunAgent, referencedFiles, mentionedSkills, buildPrompt, evalPrecondition, capFindings, retryHint, rollbackTo, activeRun, drive, SECRET_FILE };
 })();
 
 // ===== lib/pipeline/evals.mjs =====
@@ -10110,4 +10133,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: bf83d064e3e4d15155a2e5d689b7c5154ac2e86ac21acc22c639efbd67de3083
+// build-inputs-sha256: 36c4e73c5ee1caaae18e99accb9a606c6bfd8779676fe5ebd847e4fda2608868
