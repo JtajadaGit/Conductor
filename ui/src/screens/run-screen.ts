@@ -234,7 +234,8 @@ export class RunScreen extends CElement {
       <p class="subhead">${s.project || '—'}${s.branch ? html` · ${s.branch}` : ''}</p>
       <div class="actbar">
         <a class="btn sm sec" href=${this.sessionHref()}>📃 Ver sesión</a>
-        ${s.done && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
+        ${(s.done || s.verdict === 'INTERRUMPIDO') && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()} title=${s.verdict === 'INTERRUMPIDO' ? 'El proceso del run murió sin cerrar (¿equipo suspendido / terminal cerrada?) — reanuda desde la última fase completada' : 'reanudar el run'}>${this.busy === 'resume' ? 'Reanudando…' : '↻ Reanudar'}</button>` : nothing}
+        ${s.verdict === 'INTERRUMPIDO' ? html`<p class="muted" role="status" style="margin:.4rem 0 0;font-size:.78rem">El proceso del run murió sin cerrar (¿equipo suspendido?). Nada se ha perdido: ↻ Reanudar continúa desde la última fase completada.</p>` : nothing}
         ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : '⬆ Archivar'}</button>` : nothing}
         ${s.done && verdictClass(s.verdict) === 'GREEN' ? html`<button class="btn sm receipt" ?disabled=${this.busy === 'receipt'} aria-live="polite" @click=${() => void this.copyReceipt()}>${this.copiedReceipt ? 'Copiado ✓' : this.busy === 'receipt' ? 'Copiando…' : '📋 Copiar descripción de PR'}</button>` : nothing}
         ${s.hasDashboard ? html`<a class="btn sm dash" href=${this.dashboardHref()} target="_blank">📊 Informe</a>` : nothing}

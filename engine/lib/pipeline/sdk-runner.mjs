@@ -166,6 +166,29 @@ export async function copilotCatalogFromCli(env = process.env) {
   } catch { return []; }
 }
 
+// RECIBO DE CIERRE → tokens de la fase. Al desconectar, la sesión emite "session.shutdown" con el usage
+// REAL por modelo. Es la fuente de tokens del runner sdk: el export OTel del CLI NO aplica aquí (ese
+// runtime lo lanza el SDK, no nosotros, así que nadie honra COPILOT_OTEL_FILE_EXPORTER_PATH). Una sesión
+// por fase ⇒ la atribución fase↔tokens es exacta, sin repartir por ventanas de tiempo.
+// Devuelve la MISMA forma que readTokens() de drive.mjs para que el driver no distinga la procedencia.
+// Puro y exportado para test (sin red, sin SDK).
+export function usageFromShutdown(data) {
+  if (!data || typeof data !== 'object') return null;
+  let tin = 0, tout = 0, tread = 0;
+  const models = [];
+  for (const [id, m] of Object.entries(data.modelMetrics || {})) {
+    const u = (m && m.usage) || {};
+    const i = Number(u.inputTokens) || 0, o = Number(u.outputTokens) || 0;
+    tin += i; tout += o; tread += Number(u.cacheReadTokens) || 0;
+    if (i || o) models.push(id);
+  }
+  // CONVENIO de conductor (igual que el lector OTel): `in` y `cached` son DISJUNTOS y suman el input total.
+  // El SDK reporta inputTokens INCLUYENDO lo servido desde caché → se resta, o la caché se cobraría 2 veces.
+  const inNet = Math.max(0, tin - tread);
+  const model = (typeof data.currentModel === 'string' && data.currentModel) || models[0] || null;
+  return (inNet || tout || tread || model) ? { in: inNet, out: tout, cached: tread, model } : null;
+}
+
 export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = process.env } = {}) {
   let mod = sdk;
   if (!mod && sdkBundle) {
@@ -214,6 +237,20 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
   const provider = base && apiKey ? { type: 'openai', baseUrl: base.endsWith('/v1') ? base : base + '/v1', apiKey } : undefined;
 
   const runAgent = async ({ prompt, timeoutMs = 600000, model }) => {
+    let session = null, unsub = null, shutdownData = null, shutdownSeen = null;
+    // Cierra la sesión y espera su recibo. OJO: `destroy()` NO EXISTE en el SDK (v1.0: el método es
+    // `disconnect()`) — el `session.destroy?.()` anterior era un no-op silencioso por el `?.`, así que
+    // ninguna sesión se cerraba hasta el client.stop() final y el recibo no llegaba nunca.
+    // Best-effort y ACOTADO: ni el disconnect ni la espera del evento pueden colgar al driver.
+    const closeAndUsage = async () => {
+      if (!session) return null;
+      const s = session; session = null;
+      try { if (typeof s.disconnect === 'function') await Promise.race([s.disconnect(), new Promise((r) => setTimeout(r, 3000))]); } catch {}
+      // gracia corta: el recibo se emite durante el teardown, así que si no llegó ya, no va a llegar
+      try { await Promise.race([shutdownSeen, new Promise((r) => setTimeout(r, 1500))]); } catch {}
+      try { unsub?.(); } catch {}
+      return usageFromShutdown(shutdownData);
+    };
     try {
       // mezcla por fase: "copilot:<m>" = catálogo Business (sesión SIN provider); "byok:<m>" = LiteLLM.
       let m = model || '', sessProvider = provider;
@@ -227,19 +264,26 @@ export async function createSdkRunner({ projectRoot, sdk, sdkBundle, env = proce
       }
       // onPermissionRequest: approveAll = el equivalente del --allow-all-tools del runner spawn (sin él,
       // las peticiones de permiso de tools quedan PENDIENTES y la sesión no escribe ficheros — verificado).
-      const session = await client.createSession({
+      session = await client.createSession({
         ...(m ? { model: m } : {}), ...(sessProvider ? { provider: sessProvider } : {}),
         ...(approveAll ? { onPermissionRequest: approveAll } : {}),
       });
+      // la suscripción se arma ANTES de enviar: el recibo es asíncrono y si se registra después se pierde.
+      if (typeof session.on === 'function') shutdownSeen = new Promise((res) => { unsub = session.on((e) => { if (e && e.type === 'session.shutdown') { shutdownData = e.data; res(); } }); });
       // 2º arg = timeout de sendAndWait (su default interno es 60s — corto para fases de código);
       // el Promise.race queda como cinturón por si el del SDK no dispara.
       const result = await Promise.race([
         session.sendAndWait({ prompt }, timeoutMs),
         new Promise((_, rej) => setTimeout(() => rej(new Error(`sdk timeout tras ${Math.round(timeoutMs / 1000)}s`)), timeoutMs + 5000)),
       ]);
-      try { await session.destroy?.(); } catch {}
-      return { code: 0, out: String(result?.data?.content ?? '') };
-    } catch (e) { return { code: -1, err: e.message }; }
+      const usage = await closeAndUsage();
+      return { code: 0, out: String(result?.data?.content ?? ''), ...(usage ? { usage } : {}) };
+    } catch (e) {
+      // una fase caída (timeout, error del proveedor) TAMBIÉN gastó tokens: se cobran igual o el
+      // presupuesto duro y el coste del run se quedarían cortos justo en los runs que peor van.
+      const usage = await closeAndUsage();
+      return { code: -1, err: e.message, ...(usage ? { usage } : {}) };
+    }
   };
   runAgent.close = async () => { try { await client.stop(); } catch {} };
   runAgent.kind = 'sdk';

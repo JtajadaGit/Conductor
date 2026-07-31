@@ -2,10 +2,14 @@
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 
 function mockSdk(record) {
+  // ESPEJO del SDK real (v1.0, verificado en runtime 2026-07-31): el método de cierre es disconnect() —
+  // destroy() NO EXISTE — y al cerrar se emite "session.shutdown" con el usage. El mock anterior exponía
+  // destroy(), así que la suite daba por bueno un `session.destroy?.()` que en producción era un no-op.
   class MockSession {
-    constructor(cfg) { this.cfg = cfg; }
+    constructor(cfg) { this.cfg = cfg; this.handlers = []; }
+    on(h) { this.handlers.push(h); return () => { this.handlers = this.handlers.filter((x) => x !== h); }; }
     async sendAndWait({ prompt }, timeout) { record.prompts.push(prompt); record.timeouts = [...(record.timeouts || []), timeout]; if (record.hang) return new Promise(() => {}); return { data: { content: 'OK:' + (this.cfg.model || 'default') } }; }
-    async destroy() { record.destroyed++; }
+    async disconnect() { record.disconnected++; const data = record.shutdown || { modelMetrics: {} }; for (const h of this.handlers) h({ type: 'session.shutdown', data }); }
   }
   class MockClient {
     constructor(opts) { record.clientOpts = opts; }
@@ -16,7 +20,7 @@ function mockSdk(record) {
 }
 
 await test('sdk-runner: crea sesión POR FASE con modelo y provider BYOK (/v1) correctos', async () => {
-  const rec = { sessions: [], prompts: [], destroyed: 0 };
+  const rec = { sessions: [], prompts: [], disconnected: 0 };
   const env = { COPILOT_PROVIDER_BASE_URL: 'https://litellm.example.com/', COPILOT_PROVIDER_API_KEY: 'sk-test' };
   const run = await createSdkRunner({ projectRoot: 'C:/proj', sdk: mockSdk(rec), env });
   const r1 = await run({ prompt: 'p1', model: 'fast-m', timeoutMs: 5000 });
@@ -29,13 +33,34 @@ await test('sdk-runner: crea sesión POR FASE con modelo y provider BYOK (/v1) c
   eq(rec.clientOpts.workingDirectory, 'C:/proj');
   eq(rec.prompts, ['p1', 'p2']);
   eq(rec.timeouts, [5000, 5000], 'el timeout de fase se pasa a sendAndWait (su default interno es 60s)');
-  eq(rec.destroyed, 2, 'sesiones destruidas tras cada fase');
+  eq(rec.disconnected, 2, 'sesiones CERRADAS tras cada fase — con disconnect(), el único método que existe');
   await run.close();
   eq(rec.stopped, true, 'close() para el cliente');
 });
 
+await test('sdk-runner: el recibo de cierre (session.shutdown) vuelve como usage — sin él la fase iba a tokens null', async () => {
+  const rec = { sessions: [], prompts: [], disconnected: 0 };
+  // forma REAL medida en el sandbox contra el CLI (2026-07-31)
+  rec.shutdown = { currentModel: 'claude-sonnet-5', modelMetrics: { 'claude-sonnet-5': { usage: { inputTokens: 19400, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 19398 }, requests: { count: 1, cost: 1 } } } };
+  const run = await createSdkRunner({ sdk: mockSdk(rec), env: {} });
+  const r = await run({ prompt: 'x', timeoutMs: 5000 });
+  eq(r.usage, { in: 19400, out: 4, cached: 0, model: 'claude-sonnet-5' }, 'tokens y modelo REAL de la fase');
+  await run.close();
+});
+
+await test('sdk-runner: una fase que TIMEOUT también devuelve su usage (los tokens gastados se cobran igual)', async () => {
+  const rec = { sessions: [], prompts: [], disconnected: 0, hang: true };
+  rec.shutdown = { currentModel: 'm', modelMetrics: { m: { usage: { inputTokens: 500, outputTokens: 0 } } } };
+  const run = await createSdkRunner({ sdk: mockSdk(rec), env: {} });
+  const r = await run({ prompt: 'x', timeoutMs: 50 });
+  eq(r.code, -1, 'la fase falla');
+  eq(r.usage, { in: 500, out: 0, cached: 0, model: 'm' }, 'pero su gasto NO se pierde (presupuesto duro y coste del run cuadran)');
+  eq(rec.disconnected, 1, 'la sesión se cierra aunque la fase se caiga (antes quedaba viva hasta el final del run)');
+  await run.close();
+});
+
 await test('sdk-runner: mezcla por fase — "copilot:<m>" va SIN provider (catálogo Business), "byok:<m>" con provider', async () => {
-  const rec = { sessions: [], prompts: [], destroyed: 0 };
+  const rec = { sessions: [], prompts: [], disconnected: 0 };
   const env = { COPILOT_PROVIDER_BASE_URL: 'https://litellm.example.com/', COPILOT_PROVIDER_API_KEY: 'sk-test' };
   const run = await createSdkRunner({ sdk: mockSdk(rec), env });
   await run({ prompt: 'a', model: 'copilot:claude-sonnet-4.6', timeoutMs: 5000 });
@@ -46,7 +71,7 @@ await test('sdk-runner: mezcla por fase — "copilot:<m>" va SIN provider (catá
 });
 
 await test('sdk-runner: COPILOT_CLI_PATH → opción cliPath (runtime del usuario, sin los 557MB)', async () => {
-  const rec = { sessions: [], prompts: [], destroyed: 0 };
+  const rec = { sessions: [], prompts: [], disconnected: 0 };
   const run = await createSdkRunner({ sdk: mockSdk(rec), env: { COPILOT_CLI_PATH: 'C:/npm-global/node_modules/@github/copilot/index.js' } });
   await run({ prompt: 'x', timeoutMs: 5000 });
   eq(rec.clientOpts.connection, { kind: 'stdio', path: 'C:/npm-global/node_modules/@github/copilot/index.js' }, 'connection forStdio al runtime del usuario');
@@ -61,7 +86,7 @@ await test('sdk-runner: carga el SDK EMPAQUETADO (assets/copilot-sdk.mjs) desde 
   rmSync(TMP, { recursive: true, force: true }); mkdirSync(TMP, { recursive: true });
   const bundle = join(TMP, 'copilot-sdk.mjs');
   writeFileSync(bundle, `
-    export class CopilotClient { constructor(o){ globalThis.__bundleOpts = o; } async createSession(c){ return { sendAndWait: async()=>({data:{content:'BUNDLED'}}), destroy: async()=>{} }; } async stop(){} }
+    export class CopilotClient { constructor(o){ globalThis.__bundleOpts = o; } async createSession(c){ return { sendAndWait: async()=>({data:{content:'BUNDLED'}}), disconnect: async()=>{} }; } async stop(){} }
     export const RuntimeConnection = { forStdio: (o) => ({ kind: 'stdio', ...o }) }; export const approveAll = () => ({kind:'approve'});
   `);
   const run = await createSdkRunner({ sdkBundle: bundle, env: { COPILOT_CLI_PATH: 'C:/cli.js' } });
@@ -73,7 +98,7 @@ await test('sdk-runner: carga el SDK EMPAQUETADO (assets/copilot-sdk.mjs) desde 
 });
 
 await test('sdk-runner: timeout duro → code -1 con mensaje claro (nunca cuelga)', async () => {
-  const rec = { sessions: [], prompts: [], destroyed: 0, hang: true };
+  const rec = { sessions: [], prompts: [], disconnected: 0, hang: true };
   const run = await createSdkRunner({ sdk: mockSdk(rec), env: {} });
   const r = await run({ prompt: 'x', timeoutMs: 50 });
   eq(r.code, -1); assert(/timeout/.test(r.err), 'mensaje de timeout');

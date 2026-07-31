@@ -71,3 +71,25 @@ await test('plumb(fase 2): la fontaneria de un run REAL vive en <raiz>/.conducto
   eq(plumbDir(join(T, 'openspec', 'changes', 'no-creado')), join(T, 'openspec', 'changes', 'no-creado', '.conductor'), 'change inexistente => legacy');
   rmSync(T, { recursive: true, force: true });
 });
+
+await test('plumb(caso real): drive SIN change pre-creado (flujo de produccion) => fontaneria MODERNA en la raiz, cero .conductor dentro del change', async () => {
+  const T = join(HERE, '.tmp-plumb-prod');
+  rmSync(T, { recursive: true, force: true });
+  mkdirSync(join(T, 'openspec'), { recursive: true }); // proyecto inicializado; el change NO existe aun (como en serve/mcp/bin)
+  const changeDir = join(T, 'openspec', 'changes', 'caso-prod');
+  const agent = async ({ writeTo }) => { const { writeFileSync: wf, mkdirSync: mk } = await import('node:fs'); const { dirname: dn } = await import('node:path'); if (writeTo) { mk(dn(writeTo), { recursive: true }); wf(writeTo, '# artefacto\ncontenido'); } return { code: 0, out: 'ok' }; };
+  try { await drive({ changeDir, request: 'caso produccion', complexity: 'simple', domain: 'core', srcDir: T, runAgent: agent, timeoutMs: 5000 }); } catch { /* verdict da igual: probamos el LAYOUT */ }
+  const { existsSync: ex } = await import('node:fs');
+  assert(!ex(join(changeDir, '.conductor')), 'JAMAS nace .conductor dentro del change (el bug reportado)');
+  assert(ex(join(T, '.conductor', 'runs', 'caso-prod')), 'la fontaneria vive en <raiz>/.conductor/runs/<change>');
+  rmSync(T, { recursive: true, force: true });
+});
+
+await test('lock(suspension): latido continuo de 15s + ventana de huerfano 75s — un run muerto jamas queda "EN CURSO" fantasma 15 min', async () => {
+  const { readFileSync: rf } = await import('node:fs');
+  const src = rf(new URL('../lib/pipeline/drive.mjs', import.meta.url), 'utf8');
+  assert(/setInterval\(takeLock, 15_000\)/.test(src), 'latido del lock cada 15s durante TODO el run (no solo pausas)');
+  assert(/lockHb\.unref\?\.\(\)/.test(src), 'unref: el latido jamas retiene el proceso vivo');
+  assert(/st\.mtimeMs < 75_000/.test(src), 'ventana de huerfano 75s (5 latidos de margen)');
+  assert(!/setInterval\(takeLock, 5 \* 60_000\)/.test(src), 'el latido viejo de 5 min en pausa se retiro');
+});

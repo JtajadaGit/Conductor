@@ -220,6 +220,15 @@ function readTokens(file) {
   return tin || tout || tcached || model ? { in: tin, out: tout, cached: tcached, model } : null;
 }
 
+// suma dos lecturas de tokens conservando el primer modelo visto. Se usa para ACUMULAR los reintentos de
+// una fase: el fichero OTel es el mismo para toda la fase y ya los suma solo, así que el recibo del runner
+// sdk debe hacer lo propio o un run con reintentos saldría más barato de lo que fue.
+function addTokens(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return { in: (a.in || 0) + (b.in || 0), out: (a.out || 0) + (b.out || 0), cached: (a.cached || 0) + (b.cached || 0), model: a.model || b.model || null };
+}
+
 // modelo por fase NATIVO: como cada fase lanza un copilot fresco, podemos fijarle su COPILOT_MODEL
 // (Copilot CLI usa un modelo global por proceso; un proceso por fase = modelo por fase, sin proxy).
 // Fuentes: CONDUCTOR_MODEL_{PLANNER|CODER|REVIEWER|ORCHESTRATOR} → CONDUCTOR_MODEL → COPILOT_MODEL.
@@ -693,7 +702,11 @@ export function activeRun(changeDir) {
   try {
     const l = JSON.parse(readFileSync(lockPath(changeDir), 'utf8'));
     const st = statSync(lockPath(changeDir));
-    if (Date.now() - st.mtimeMs < 15 * 60 * 1000 && l.pid && l.pid !== process.pid && pidAlive(l.pid)) {
+    // 75s de ventana (latido cada 15s → 5 latidos de margen). La ventana LARGA de antes (15 min) dejaba
+    // un run muerto como "EN CURSO" fantasma durante 15 min si Windows reutilizaba el PID tras suspender
+    // el equipo (caso real: sin botón de reanudar mirando un cadáver). pidAlive sigue cortando en el acto
+    // cuando el PID no se reutilizó.
+    if (Date.now() - st.mtimeMs < 75_000 && l.pid && l.pid !== process.pid && pidAlive(l.pid)) {
       // Un run con verdict TERMINAL ya NO toca src/ → no cuenta como "activo" aunque su proceso siga saliendo:
       // el verdict se escribe ANTES de liberar el lock y de que el hijo muera. Sin esto, un run recién GREEN
       // bloqueaba (busyProject) lanzar otro en el mismo repo durante la ventana de salida — carrera real.
@@ -716,6 +729,12 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     return { done: false, verdict: 'DUPLICATE', phase: null, trail: [], timeline: [] };
   }
   _inProcLocks.add(lockKey);
+  // el DRIVER garantiza la carpeta de su change ANTES de cualquier escritura de fontanería (caso real
+  // 2026-07-31: nadie la creaba en producción, el primer mkdir era el del lock vía plumbPath, y el guard
+  // "change sin crear ⇒ legacy" de plumbBase mandaba TODA la fontanería al layout viejo dentro del change
+  // — los tests no lo cazaron porque sus fixtures pre-creaban el dir). Con el change existente, plumbBase
+  // elige el layout moderno (<raíz>/.conductor/runs/) exactamente como se diseñó.
+  try { mkdirSync(resolve(changeDir), { recursive: true }); } catch {}
   // registro del run a disco (visibilidad developer): la mini-web enseña este log en vivo
   const log = (m) => {
     logOut(m);
@@ -723,17 +742,22 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
   };
   // toma el lock de instancia única (se refresca en cada writeTimeline; se libera en TODAS las salidas)
   const takeLock = () => { try { mkdirSync(plumbPath(changeDir), { recursive: true }); writeFileSync(lockPath(changeDir), JSON.stringify({ pid: process.pid, startedAt: Date.now(), request, url: serveUrl })); } catch {} };
+  // LATIDO CONTINUO del lock (cada 15s, todo el run — fases, pausas y esperas): el driver vivo JAMÁS parece
+  // huérfano y el muerto lo parece en ≤75s. Sustituye al latido de 5 min que solo cubría las pausas.
+  let lockHb = null;
   const releaseLock = () => {
     _inProcLocks.delete(lockKey); // el lock EN-PROCESO siempre se libera
     // el lock EN DISCO solo se borra si es NUESTRO (pid propio). Con el early-out por verdict terminal, un
     // relanzamiento del MISMO change pudo haber tomado el lock ya → no borrar el de un sucesor. En error de
     // lectura no se toca (un lock huérfano lo limpia la detección de arranque del siguiente run).
+    if (lockHb) { clearInterval(lockHb); lockHb = null; }
     try { const l = JSON.parse(readFileSync(lockPath(changeDir), 'utf8')); if (l.pid === process.pid) rmSync(lockPath(changeDir), { force: true }); } catch {}
   };
   // windows-orphan-lock (observabilidad): si quedó un lock previo y NO era un run activo (lo habría
   // capturado el dup-check de arriba), estaba huérfano/caduco → dejarlo en el registro al descartarlo.
   try { const lk = JSON.parse(readFileSync(lockPath(changeDir), 'utf8')); const age = Date.now() - statSync(lockPath(changeDir)).mtimeMs; if (lk?.pid) log(`🔓 descarto lock previo huérfano (pid ${lk.pid}, ${Math.round(age / 1000)}s sin latir)`); } catch {}
   takeLock();
+  lockHb = setInterval(takeLock, 15_000); lockHb.unref?.();
   const projectRoot = srcDir ? resolve(srcDir) : resolve(changeDir, '..', '..', '..');
   // GUARD DE RAÍZ (caso real: un agente pasó `--src src` → projectRoot=subdirectorio sin openspec/ → el
   // CLI denegó TODA escritura del artefacto fuera de su dir de confianza y la fase murió en "no-progress"
@@ -1000,12 +1024,8 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       log(`⏸ pausado antes de "${phase}" — revisa${phase === 'fix' ? ' los hallazgos del gate y elige cuáles arreglar' : ' los artefactos'} y aprueba para continuar`);
       // findings ESTRUCTURADOS a la decisión humana (message + severidad + fichero): el revisor ve qué es ERROR vs
       // aviso y a qué fichero apunta cada hallazgo (antes solo el texto). El `selected` sigue mapeando por índice.
-      // heartbeat del lock DURANTE la pausa: sin esto, a los 15 min de espera humana el lock caducaba y el
-      // guardrail 1-run/repo desaparecía (otro run podía arrancar encima del pausado).
-      const pauseHb = setInterval(takeLock, 5 * 60_000);
-      let pr;
-      try { pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined })); }
-      finally { clearInterval(pauseHb); }
+      // (el latido del lock lo lleva el intervalo continuo de 15s del run — también durante esta espera)
+      const pr = await awaitReview(onPause({ before: phase, role, findings: phase === 'fix' ? (step.findings || []).map((f) => ({ message: f.message, severity: f.severity, file: f.file })) : undefined }));
       if (pr === REVIEW_ABORT) { const why = `revisión humana no atendida en ${reviewTimeoutMs}ms (onReviewTimeout: abort)`; writeTimeline('STOPPED', why); writeDashboard('STOPPED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'STOPPED', phase, reason: why, trail, timeline }; }
       if (pr?.stop || stopSignal?.requested) return stopped();
       // CHAT-EN-PAUSA (#45 v1): {redo:'spec', note:'…'} → rehace esa fase de planificación (y las de planificación
@@ -1237,7 +1257,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     // el tool `write` de Copilot NO crea directorios padre → el driver pre-crea el del artefacto
     // (imprescindible para las fases con allowlist 'write', que no tienen shell para mkdir)
     if (!isCode && step.write_to_abs) { try { mkdirSync(dirname(step.write_to_abs), { recursive: true }); } catch {} }
-    let ok = false, attempt = 0, capturedFiles = [], lensTok = null, rawOut = '', lastFailureKind = null;
+    let ok = false, attempt = 0, capturedFiles = [], lensTok = null, rawOut = '', lastFailureKind = null, runTok = null;
     // FAILOVER opt-in (T2 2026-07-29): cfg.fallback[fase] || cfg.fallback[rol] = modelo de RESERVA. Solo
     // tras agotar los reintentos con fallo NO atribuible al contenido; UN intento extra, jamás un bucle.
     const fbStr = (cfg.fallback && typeof cfg.fallback === 'object') ? (cfg.fallback[phase] || cfg.fallback[role] || null) : null;
@@ -1277,9 +1297,10 @@ LENS - review ONLY through this lens: ${LENSES[ln] || ln}. MAX 120 words.`;
         }));
         if (stopSignal?.requested) return stopped();
         // merge determinista → verify-report.md por secciones (el gate lee el merged)
-        lensTok = { in: 0, out: 0, model: null };
-        for (const x of results) { const t = readTokens(plumbPath(changeDir, 'otel', `verify-${x.ln}.jsonl`)); if (t) { lensTok.in += t.in; lensTok.out += t.out; lensTok.model = lensTok.model || t.model; } }
-        if (!lensTok.in && !lensTok.out) lensTok = null;
+        lensTok = { in: 0, out: 0, cached: 0, model: null };
+        // por lente, misma precedencia que abajo: recibo del runner (sdk) y, si no hay, su fichero OTel (spawn)
+        for (const x of results) { const t = (x.rr && x.rr.usage) || readTokens(plumbPath(changeDir, 'otel', `verify-${x.ln}.jsonl`)); if (t) { lensTok.in += t.in || 0; lensTok.out += t.out || 0; lensTok.cached += t.cached || 0; lensTok.model = lensTok.model || t.model; } }
+        if (!lensTok.in && !lensTok.out && !lensTok.cached) lensTok = null;
         const sections = results.filter((x) => existsSync(x.lp) && readSafe(x.lp).trim()).map((x) => `## Lens: ${x.ln}
 
 ${readSafe(x.lp).trim()}`);
@@ -1347,6 +1368,9 @@ ${readSafe(x.lp).trim()}`);
         } });
         rawOut = r && typeof r.out === 'string' ? r.out : '';
       }
+      // RECIBO del runner (sdk): se acumula POR INTENTO, y antes del stop — un intento fallido o detenido
+      // también gastó tokens. `r` vive solo dentro de este bucle; el timeline lee runTok al cerrar la fase.
+      if (r && r.usage) runTok = addTokens(runTok, r.usage);
       if (stopSignal?.requested) return stopped();
       // SECRET-SCRUB en ORIGEN (audit): el stderr del subproceso podría contener un "Bearer <key>"/"sk-…" si el
       // proveedor lo escupe en un error. Redactar AQUÍ protege a la vez el REGISTRO, el timeline.json en disco y
@@ -1401,8 +1425,12 @@ ${readSafe(x.lp).trim()}`);
       }
     }
 
-    const tok = lensTok ?? readTokens(otelFile);
-    const modelReported = tok?.model || null; // lo que el proveedor declara en su telemetría OTel
+    // FUENTE de tokens: lentes > recibo de cierre del runner (sdk) > export OTel del CLI (spawn). El runner
+    // sdk NO escribe ese fichero — su runtime lo lanza el SDK, que no honra COPILOT_OTEL_FILE_EXPORTER_PATH —
+    // así que sin esto sus fases salían con tokens null, y con ellas se apagaban EN SILENCIO el presupuesto
+    // duro, stats, los AI credits y el MAPE del estimador: más rápido pero ciego al gasto.
+    const tok = lensTok ?? runTok ?? readTokens(otelFile);
+    const modelReported = tok?.model || null; // lo que el proveedor declara (recibo del SDK o telemetría OTel)
     // model-mismatch-warning: si pedimos un modelo y el proveedor declara OTRO de distinta FAMILIA,
     // puede ser un downgrade/fallback silencioso. Comparación tolerante (ignora sufijos de versión
     // -YYYY-MM-DD / -vN) para no inundar de falsos positivos por meras diferencias de formato.
@@ -1455,10 +1483,8 @@ ${readSafe(x.lp).trim()}`);
           // HEARTBEAT del lock durante la pausa (igual que la pausa de revisión en 839-842): sin esto, tras 15 min
           // el mtime del lock caduca, activeRun() lo da por muerto y un 2º driver/instancia arrancaría sobre el
           // MISMO árbol (src/) → timeline/checkpoints corruptos. Se libera el intervalo en TODAS las salidas.
-          const budgetHb = setInterval(takeLock, 5 * 60_000);
-          let pr;
-          try { pr = await awaitReview(onPause({ before: 'budget', role: 'reviewer', budget: { tokens: totIn + totOut, cost_usd: +totCost.toFixed(4), limit: budget } })); }
-          finally { clearInterval(budgetHb); }
+          // (el latido del lock lo lleva el intervalo continuo de 15s del run — también durante esta espera)
+          const pr = await awaitReview(onPause({ before: 'budget', role: 'reviewer', budget: { tokens: totIn + totOut, cost_usd: +totCost.toFixed(4), limit: budget } }));
           if (pr === REVIEW_ABORT || pr?.stop || stopSignal?.requested) { writeTimeline('BLOCKED', why); writeDashboard('BLOCKED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'BLOCKED', phase, reason: why, trail, timeline }; }
           log(`   ▶ presupuesto ampliado por el revisor — continúa`);
         } else {
