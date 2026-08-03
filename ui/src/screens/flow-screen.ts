@@ -52,7 +52,7 @@ export class FlowScreen extends CElement {
         <li><b>Secuencia</b>: el orden de fases lo impone el código (no el prompt). Probado en tests.</li>
         <li><b>Modelo por fase verificable</b>: cada fase registra modelo+proveedor y sus tokens reales (recibo de cierre de la sesión del CLI); badge de aviso si el proveedor reporta otro modelo.</li>
         <li><b>Mezcla LiteLLM/Copilot</b>: el Coder (lo más caro en tokens) puede ir a un modelo económico vía LiteLLM y el Reviewer a un Copilot capaz — un clic con «Optimizar coste».</li>
-        <li><b>Pausas de revisión</b>: el tech-lead aprueba, edita la spec, deja nota, cambia el modelo en caliente o rehace una fase — antes de implementar/verificar (salvo el toggle «ejecutar sin pausas»).</li>
+        <li><b>Pausas de revisión</b>: apruebas, editas la spec, dejas nota, cambias el modelo en caliente o rehaces una fase — antes de implementar/verificar (salvo el toggle «ejecutar sin pausas»).</li>
       </ul>
       <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/">Panel</a></p>
     `;

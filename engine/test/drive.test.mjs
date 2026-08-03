@@ -1,7 +1,7 @@
 // Tests del driver determinista (Path X). Inyectamos un runAgent stub que simula al agente anfitrión
 // ESCRIBIENDO ficheros nativamente (como hace Copilot con Write/Edit). Demuestra la propiedad central:
 // la SECUENCIA la impone el CÓDIGO; el agente solo rellena. Captura por snapshot fs (sin git).
-import { drive, parseModelSpec, agentArgs, rollbackTo, scrubSecrets } from '../lib/pipeline/drive.mjs';
+import { drive, parseModelSpec, agentArgs, rollbackTo, scrubSecrets, parseLensJson, verifyInputsHash } from '../lib/pipeline/drive.mjs';
 import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -208,6 +208,50 @@ await test('drive(Path X): MCP passthrough por fase — defaults frugales + disa
   assert(agentArgs('coder', {}, '').includes('--allow-all-tools'), 'coder: completo (necesita mkdir/convenciones)');
   assert(agentArgs('planner', {}, '', { planner: 'all' }).includes('--allow-all-tools'), 'configurable vía conductor.json allowTools');
   assert(agentArgs('coder', {}, '--mis-flags').join(' ') === '--mis-flags', 'CONDUCTOR_AGENT_ARGS = override total');
+  // FILTRADO DE VISIBILIDAD (deep-search 2026-08-03: --allow-tool NO oculta schemas; --excluded-tools sí):
+  // las fases no-coder excluyen los tools pesados que jamás usan — sus schemas se pagaban en cada fase/lente
+  const lean = base.join(' ');
+  assert(lean.includes('--excluded-tools') && lean.includes('web_search') && lean.includes('powershell') && lean.includes('apply_patch'), 'planner: tools pesados EXCLUIDOS de la visibilidad (ahorro real de schemas)');
+  assert(!agentArgs('coder', {}, '').join(' ').includes('--excluded-tools'), 'coder: sin exclusiones (necesita shell y patch)');
+  assert(!agentArgs('planner', {}, '', {}, false).join(' ').includes('--excluded-tools'), 'kill-switch toolFilter:false lo desconecta');
+  assert(!agentArgs('planner', {}, '', { planner: 'all' }).join(' ').includes('--excluded-tools'), 'un rol elevado a all tampoco filtra (coherente con coder)');
+});
+
+await test('drive(structured lens): parseLensJson — json válido parsea; basura → null (el merge cae al /❌/ de siempre)', () => {
+  const ok = parseLensJson('```json\n{"verdict":"RISK","findings":[{"rule":"missing-test","severity":"bug","file":"src/a.js","line":12,"message":"sin test del caso negativo"}]}\n```\nprosa de la lente');
+  eq(ok.verdict, 'RISK', 'verdict del bloque json');
+  eq(ok.findings.length, 1); eq(ok.findings[0].severity, 'bug'); eq(ok.findings[0].line, 12);
+  eq(parseLensJson('informe sin bloque json con un ❌ suelto'), null, 'sin fence → null (fallback emoji intacto)');
+  eq(parseLensJson('```json\n{esto no es json}\n```'), null, 'json roto → null');
+  const co = parseLensJson('```json\n{"verdict":"PASS","findings":[{"severity":"nuclear","message":"x"}]}\n```');
+  eq(co.findings[0].severity, 'risk', 'severidad desconocida → coerciona a risk (saneado)');
+  eq(parseLensJson('```json\n{"verdict":"QUIZAS"}\n```'), null, 'verdict inventado y sin findings → null');
+});
+
+await test('drive(verify-cache): verifyInputsHash — estable con inputs idénticos, cambia con CADA input (spec, fichero tocado, lentes, modelo)', () => {
+  const T = join(dirname(fileURLToPath(import.meta.url)), '.tmp-vhash');
+  rmSync(T, { recursive: true, force: true });
+  const CH = join(T, 'openspec', 'changes', 'mi-feature');
+  mkdirSync(join(CH, 'specs', 'core'), { recursive: true });
+  writeFileSync(join(CH, 'specs', 'core', 'spec.md'), '## ADDED Requirements\nREQ-A');
+  writeFileSync(join(CH, 'apply-report.md'), 'Status: done');
+  mkdirSync(join(T, 'src'), { recursive: true });
+  writeFileSync(join(T, 'src', 'a.js'), 'export const a = 1;');
+  const tl = [{ phase: 'apply', files: [{ p: 'src/a.js', k: 'create' }] }];
+  const base = { changeDir: CH, projectRoot: T, timeline: tl, lenses: ['correctness', 'security'], model: 'm1', prompt: 'REVIEWER…' };
+  const h1 = verifyInputsHash(base);
+  eq(verifyInputsHash(base), h1, 'mismos inputs → mismo hash (determinista)');
+  writeFileSync(join(T, 'src', 'a.js'), 'export const a = 2;');
+  assert(verifyInputsHash(base) !== h1, 'cambia el CONTENIDO de un fichero tocado → hash distinto');
+  writeFileSync(join(T, 'src', 'a.js'), 'export const a = 1;');
+  eq(verifyInputsHash(base), h1, 'restaurado el contenido → vuelve el hash (contenido, no mtime)');
+  writeFileSync(join(CH, 'specs', 'core', 'spec.md'), '## ADDED Requirements\nREQ-B');
+  assert(verifyInputsHash(base) !== h1, 'cambia la spec → hash distinto');
+  writeFileSync(join(CH, 'specs', 'core', 'spec.md'), '## ADDED Requirements\nREQ-A');
+  assert(verifyInputsHash({ ...base, lenses: ['correctness'] }) !== h1, 'cambian las lentes → hash distinto');
+  assert(verifyInputsHash({ ...base, model: 'm2' }) !== h1, 'cambia el modelo → hash distinto');
+  assert(verifyInputsHash({ ...base, prompt: 'REVIEWER… v2' }) !== h1, 'cambia el prompt construido (prompts/reglas/contexto) → hash distinto');
+  rmSync(T, { recursive: true, force: true });
   // RCE-safe (auditoría senior 2026-06-17): --additional-mcp-config inyecta JSON arbitrario como argv y,
   // con shell:true, es un vector de RCE-por-config (openspec/conductor.json = entrada NO confiable) →
   // requiere OPT-IN explícito (mcp.allowConfig / CONDUCTOR_ALLOW_MCP_CONFIG=1).

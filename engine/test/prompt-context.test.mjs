@@ -36,6 +36,22 @@ await test('prompt-context: sin @-referencias → bloque vacío (cero ruido)', (
   eq(referencedFiles('haz un contador simple sin ejemplos', join(HERE, '.tmp-none')), '', 'sin @ → vacío');
 });
 
+// presupuesto POR FICHERO + superficie de codemap (deep-search 2026-08-03): un @fichero gigante ya no se
+// come el presupuesto global de los demás, y al truncarse el modelo aún ve su superficie (exports/usedBy)
+await test('prompt-context: @fichero gigante → cap de 6k POR FICHERO, los demás conservan presupuesto, y la superficie del codemap completa el truncado', () => {
+  const ROOT = join(HERE, '.tmp-refbudget');
+  rmSync(ROOT, { recursive: true, force: true });
+  w2(join(ROOT, 'gordo.js'), 'export const gorda = 1;\n' + '// relleno\n'.repeat(2000)); // ~20k chars
+  w2(join(ROOT, 'flaco.js'), 'export const flaca = 2;');
+  const cmap = { files: { 'gordo.js': { exports: ['gorda'], imports: [], defines: [] } }, usedBy: { 'gordo.js': ['flaco.js'] } };
+  const blk = referencedFiles('mira @gordo.js y @flaco.js', ROOT, cmap);
+  assert(blk.includes('… (truncado)'), 'el gigante se trunca al cap por fichero');
+  assert(blk.includes('const flaca'), 'el segundo fichero CONSERVA presupuesto (antes el gigante se lo comía)');
+  assert(blk.includes('superficie completa (codemap)') && blk.includes('exports: gorda') && blk.includes('usedBy: flaco.js'), 'el truncado se completa con su superficie del codemap');
+  const blkSinMapa = referencedFiles('mira @gordo.js y @flaco.js', ROOT);
+  assert(!blkSinMapa.includes('superficie completa'), 'sin codemap → sin superficie (cero regresión)');
+});
+
 await test('prompt-context: referencedFiles NUNCA inyecta ficheros de secretos (@.env, @*.pem)', () => {
   const ROOT = join(HERE, '.tmp-refsecret');
   rmSync(ROOT, { recursive: true, force: true });

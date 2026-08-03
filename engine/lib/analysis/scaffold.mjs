@@ -106,6 +106,8 @@ export const CONFIG_SCHEMA = {
     serve: { type: 'boolean', default: true, description: 'Mini-web del run en vivo.' },
     serveOpen: { type: 'boolean', default: true, description: 'Abrir el navegador automáticamente.' },
     autoApprove: { type: 'boolean', default: false, description: 'true = sin pausas de revisión.' },
+    toolFilter: { type: 'boolean', default: true, description: 'Filtrado de VISIBILIDAD de tools en fases no-coder (--excluded-tools: web/search/shell/task/apply_patch fuera del system prompt → menos tokens por turno). false = el agente ve todos los tools en todas las fases (p.ej. si una skill de equipo necesita web en planificación).' },
+    verifyCache: { type: 'boolean', default: false, description: 'OPT-IN: reutilizar la opinión de las lentes de verify cuando TODOS los inputs son bit-idénticos al último verify OK (spec, informes, ficheros tocados, prompts, lentes, modelo). El gate determinista corre SIEMPRE; el hit queda visible en timeline (cacheHit) y registro. Se ignora si diriges la pasada con nota o modelo en caliente.' },
     runner: { type: 'string', enum: ['spawn', 'sdk'], default: 'spawn' },
     gitCommit: { type: 'boolean', default: false, description: 'Un commit git por fase (audit trail).' },
     allowTools: {
@@ -152,6 +154,13 @@ const COPILOTIGNORE = [
   'node_modules/', 'dist/', 'build/', 'out/', 'target/', 'coverage/', '.angular/',
   '*.log', '*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
   '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
+  // delta 2026-08-03 (deep-search token-first): más generados/cachés multi-stack. Solo proyectos NUEVOS
+  // (el fichero jamás se pisa si existe). vendor/* con asterisco A PROPÓSITO: así ignoreDirsFrom (solo
+  // nombres simples) NO deja de capturar un cambio legítimo dentro de vendor/, pero el host sí lo excluye.
+  '.next/', '.nuxt/', '.svelte-kit/', 'dist-esm/', 'storybook-static/', 'generated/',
+  '__pycache__/', '*.pyc', '.pytest_cache/', '.mypy_cache/', '.tox/', '.venv/', 'venv/',
+  '.gradle/', '.terraform/', 'vendor/*',
+  '*.min.css', '*.wasm',
   'openspec/changes/**/.conductor/',
   '.conductor/',
 ].join('\n') + '\n';

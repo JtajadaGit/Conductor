@@ -47,11 +47,14 @@ export class HelpScreen extends CElement {
       <p class="muted"><b>Garantiza</b>: la secuencia SDD se respetó (el código conduce, no el modelo); spec, tareas y artefactos son <b>coherentes y trazables</b> (cada requisito ↔ código ↔ test vía <code>@conductor</code>); el reviewer no marcó FAIL; y —con el toggle <b>test</b> activo— <b>tus pruebas reales pasan</b>.<br>
       <b>NO garantiza</b> por sí solo la corrección lógica: el gate estructural no ejecuta tu código. Para máxima confianza activa <b>test</b> al lanzar — el toggle autoriza a ejecutar; <code>"checks"</code> en <code>openspec/conductor.json</code> define QUÉ comandos correr. Así Verificado = coherente <i>y</i> pasa tus pruebas.</p>
 
-      <h2 class="sect">Dos personas</h2>
+      <!-- feedback 2026-08-03 «si es local, solo la usa una persona, ¿no?»: son dos MOMENTOS de la misma
+           persona, no dos usuarios — el framing Dev/Tech-lead confundía al que hereda la herramienta -->
+      <h2 class="sect">Dos momentos, la misma persona</h2>
       <ul class="muted">
-        <li><b>Dev</b>: describe el cambio; el sistema propone plan y coste. No hace falta clasificar nada.</li>
-        <li><b>Tech-lead (revisor)</b>: en cada pausa aprueba, edita la spec, deja una nota o cambia el modelo en caliente; en el fix elige qué hallazgos arreglar. <b>El experto manda</b> — el piloto automático no existe.</li>
+        <li><b>Pedir</b>: describes el cambio; el sistema propone plan y coste. No hace falta clasificar nada.</li>
+        <li><b>Revisar</b>: en cada pausa apruebas, editas la spec, dejas una nota, cambias el modelo en caliente o rehaces una fase; en el fix eliges qué hallazgos arreglar. <b>El experto manda</b> — el piloto automático no existe.</li>
       </ul>
+      <p class="muted">El segundo par de ojos llega después y por git: quien revise tu PR tendrá el Informe, el expediente AI Act y el ledger delante — evidencia en vez de fe. Y la config del pipeline (<code>openspec/conductor.json</code>) viaja committeada, así que todo el equipo hereda las mismas reglas.</p>
 
       <h2 class="sect">Ahorro de tokens, visible</h2>
       <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla LiteLLM (0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. El chip «LiteLLM · 0 AIC» del run enseña cuántas fases salieron gratis. <a class="lnk" href="/ahorro">Todas las técnicas de ahorro →</a></p>
