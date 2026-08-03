@@ -72,6 +72,25 @@ await test('plumb(fase 2): la fontaneria de un run REAL vive en <raiz>/.conducto
   rmSync(T, { recursive: true, force: true });
 });
 
+await test('plumb(fase 3): dashboard/provenance son GENERADOS del run — evidencePath los busca en la evidencia y cae al change legado', async () => {
+  const { evidencePath, plumbPath } = await import('../lib/core/plumb.mjs');
+  const { writeFileSync } = await import('node:fs');
+  const T = join(HERE, '.tmp-plumb-f3');
+  rmSync(T, { recursive: true, force: true });
+  const changeDir = join(T, 'openspec', 'changes', 'mi-feature');
+  mkdirSync(changeDir, { recursive: true });
+  // sin ninguno de los dos: devuelve el MODERNO (destino de escritura del driver)
+  eq(evidencePath(changeDir, 'dashboard.html'), plumbPath(changeDir, 'dashboard.html'), 'sin ficheros => destino moderno');
+  // change VIEJO con el informe en su raiz (pre-fase-3): el lector lo encuentra ahi
+  writeFileSync(join(changeDir, 'dashboard.html'), '<html>viejo</html>');
+  eq(evidencePath(changeDir, 'dashboard.html'), join(changeDir, 'dashboard.html'), 'legado en la raiz del change => se sigue leyendo');
+  // en cuanto existe el moderno, GANA (un run nuevo sobre un change viejo no lee el informe rancio)
+  mkdirSync(plumbPath(changeDir), { recursive: true });
+  writeFileSync(plumbPath(changeDir, 'dashboard.html'), '<html>nuevo</html>');
+  eq(evidencePath(changeDir, 'dashboard.html'), plumbPath(changeDir, 'dashboard.html'), 'moderno presente => gana al legado');
+  rmSync(T, { recursive: true, force: true });
+});
+
 await test('plumb(caso real): drive SIN change pre-creado (flujo de produccion) => fontaneria MODERNA en la raiz, cero .conductor dentro del change', async () => {
   const T = join(HERE, '.tmp-plumb-prod');
   rmSync(T, { recursive: true, force: true });

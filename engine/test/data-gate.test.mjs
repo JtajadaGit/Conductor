@@ -2,6 +2,7 @@
 // escrito; bloquea el GREEN ante operaciones destructivas. Y sello estricto (traceAffectsVerdict) con strict.
 import { scanData } from '../lib/gates/data.mjs';
 import { drive } from '../lib/pipeline/drive.mjs';
+import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
@@ -104,7 +105,7 @@ await test('data-gate(seal): strictGate.trace=true → el sello es estricto (tra
     const changeDir = join(TMP, 'openspec', 'changes', 'sl');
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent(null) });
     eq(r.verdict, 'GREEN');
-    const prov = JSON.parse(readFileSync(join(changeDir, 'provenance.json'), 'utf8'));
+    const prov = JSON.parse(readFileSync(plumbPath(changeDir, 'provenance.json'), 'utf8'));
     eq(prov.verdict, 'GREEN', 'el sello estricto coincide con GREEN (sin huecos de traza)');
   } finally { restoreEnv(saved); }
 });

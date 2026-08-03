@@ -96,7 +96,7 @@ await test('spec-freeze: el sello provenance embebe spec_sha256 == hash de la sp
     writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ specFreeze: true, maxRetries: 0, lenses: false }));
     const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: goodAgent });
     eq(r.verdict, 'GREEN');
-    const prov = JSON.parse(readFileSync(join(changeDir, 'provenance.json'), 'utf8'));
+    const prov = JSON.parse(readFileSync(plumbPath(changeDir, 'provenance.json'), 'utf8'));
     eq(prov.spec_sha256, hashSpecs(changeDir), 'el sello fija el hash de la spec (spec-freeze probatorio)');
   } finally { restoreEnv(saved); }
 });

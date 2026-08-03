@@ -35,6 +35,17 @@ function plumbBase(changeDir) {
 export const plumbPath = (changeDir, ...rest) => join(plumbBase(changeDir), ...rest);
 export const plumbDir = (changeDir) => plumbBase(changeDir);
 
+// FASE 3 (2026-08-03, feedback real: «¿qué mierda hacen provenance.json y dashboard.html en el change?»):
+// los GENERADOS del run (informe HTML, sello) también son fontanería — nacen en la evidencia. Los changes
+// ANTERIORES los tienen en la raíz del change → los lectores buscan en ambos sitios, moderno primero.
+// Sin ninguno de los dos → devuelve el moderno (es el destino de escritura).
+export const evidencePath = (changeDir, file) => {
+  const modern = plumbPath(changeDir, file);
+  if (existsSync(modern)) return modern;
+  const legacy = join(resolve(changeDir), file);
+  return existsSync(legacy) ? legacy : modern;
+};
+
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
 // un dominio sin sentido que ensucia la fuente de verdad para siempre). Sin token útil → core.

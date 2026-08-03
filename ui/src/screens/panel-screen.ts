@@ -467,7 +467,8 @@ export class PanelScreen extends CElement {
           <div class="inst-body">
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
-              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · cifrada (AES-256-GCM)</dd></div>
+              <!-- deep-search 2026-08-03: decia "cifrada" incondicional y el sellado es OPT-IN — mentia sobre seguridad -->
+              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · tal cual la escribiste (cifrado opcional: <code>"seal": true</code>)</dd></div>
               <div class="ro-row"><dt>Catálogo</dt><dd>sin verificar aún en esta sesión — se comprueba al abrir el selector de modelos o lanzar un run</dd></div>
             </dl>
             <p class="inst-note">Si el proxy rechaza la key, aquí saldrá el motivo y cómo arreglarlo.</p>
@@ -776,7 +777,7 @@ export class PanelScreen extends CElement {
                  acciones del historial hablan en voz secundaria, sin emojis ni colores propios -->
             ${c.resumable ? html`<button class="btn sm sec" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">${icon('play')} Reanudar</button>` : nothing}
             ${!c.resumable && verdictClass(c.verdict) !== 'CURSO' && c.request ? html`<button class="btn sm sec" @click=${() => this.reuse(c)} title="rellena el formulario con esta petición para lanzar una variante">${icon('redo')} Reutilizar</button>` : nothing}
-            ${c.hasDashboard ? html`<a class="btn sm sec" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}" title="Informe del run: fases, tokens reales vs estimados, ficheros y consumo por modelo.">${icon('report')} Informe</a>` : nothing}
+            ${c.hasDashboard ? html`<a class="btn sm sec" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}" title="Informe del run: fases con modelo y tokens reales vs estimados, gate y linaje requisito→código→test.">${icon('report')} Informe</a>` : nothing}
             ${c.phases > 0 ? html`<a class="btn sm sec" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}" title="Expediente de transparencia (Reglamento europeo de IA): modelos, aprobaciones humanas y verificación.">${icon('shield')} AI Act</a>` : nothing}
           </div>
         </div>

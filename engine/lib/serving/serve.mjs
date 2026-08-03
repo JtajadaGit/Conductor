@@ -34,7 +34,7 @@ import { listCopilotCatalog } from '../pipeline/sdk-runner.mjs';
 import { loadSkills } from '../analysis/skills.mjs';
 import { renderDashboard, renderReceipt } from './dashboard.mjs';
 import { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } from '../provenance/secret.mjs';
-import { plumbPath, domainFromName } from '../core/plumb.mjs';
+import { plumbPath, evidencePath, domainFromName } from '../core/plumb.mjs';
 
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
@@ -330,7 +330,7 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     estimate: tl?.estimate ?? null, // T3: preflight persistido — la UI compara est vs real por fase
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
-    hasDashboard: existsSync(join(changeDir, 'dashboard.html')),
+    hasDashboard: existsSync(evidencePath(changeDir, 'dashboard.html')), // fase 3: informe en la evidencia (fallback legado)
     tests: tl?.tests ?? null, // verify por ejecución (opcional): {ran, passed, failed[], cmds[]} o null si no se ejecutaron
   };
 }
@@ -454,7 +454,7 @@ export function listChanges(root) {
       complexity: tl?.complexity || '',
       tokens: { in: tin, out: tout },
       url: lock?.url || null,
-      hasDashboard: existsSync(join(ch, 'dashboard.html')),
+      hasDashboard: existsSync(evidencePath(ch, 'dashboard.html')),
       resumable: !lock && !!tl?.request && tl?.verdict !== 'GREEN',
       mtime,
     };
@@ -493,9 +493,9 @@ export function createProjectServer({ root, engine, spawnRun = defaultSpawnRun, 
       const r = spawnRun({ engine, root, name: b.name, request: tl.request, complexity: tl.complexity, domain: tl.domain, models: tl.models });
       json(200, { ok: true, ...r });
     } else if (req.url?.startsWith('/artifact/')) {
-      // sirve el dashboard.html de un change (solo ese fichero, confinado por nombre kebab)
+      // sirve el dashboard.html de un change (solo ese fichero, confinado por nombre kebab; fase 3: evidencia con fallback legado)
       const m = req.url.match(/^\/artifact\/([a-z0-9-]+)\/dashboard\.html$/);
-      const body = m ? safeRead(join(root, 'openspec', 'changes', m[1]), 'dashboard.html', 1e6) : null;
+      const body = m ? (() => { try { return readFileSync(evidencePath(join(root, 'openspec', 'changes', m[1]), 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })() : null;
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else {
@@ -1300,7 +1300,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
-        const body = safeRead(ch2, 'dashboard.html', 1e6);
+        const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
       if (mArt) {
@@ -1309,7 +1309,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
-        const body = safeRead(ch2, 'dashboard.html', 1e6);
+        const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
       if (u.pathname === '/demo') return html(RUN_PAGE.replace('__API__', '/api/demo/'));

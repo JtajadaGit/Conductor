@@ -12,7 +12,9 @@ export class AhorroScreen extends CElement {
     {
       t: 'No re-escanear: índice verificado',
       d: 'Al planificar, el modelo recibe un índice compacto de lo YA verificado (las capacidades de la spec viva y los cambios archivados) en vez de re-leer el código fuente. Lo que el pipeline validó ayer no se vuelve a pagar hoy.',
-      stat: 'Ahorro observado en runs de prueba: 30–45% del input en fases de planificación',
+      // deep-search 2026-08-03: el «30–45% observado» NO existía en el código (cifra inventada). Lo único
+      // que el motor calcula es su estimación conservadora (~8k tokens por fase derivada) y la DECLARA estimación.
+      stat: 'Estimación conservadora del propio motor: ~8.000 tokens de entrada evitados por fase de planificación (estimación declarada, no medición)',
     },
     {
       t: 'Mapa del repo para orientarse',
@@ -20,12 +22,12 @@ export class AhorroScreen extends CElement {
     },
     {
       t: 'Mapa de relaciones (blast-radius)',
-      d: 'Índice determinista de imports/exports y quién-usa-qué: el modelo sabe de qué depende un fichero y a quién rompe si lo toca, sin abrir N ficheros para descubrirlo.',
+      d: 'Índice determinista de imports/exports y quién-usa-qué (hoy para JS/TS): el modelo sabe de qué depende un fichero y a quién rompe si lo toca, sin abrir N ficheros para descubrirlo.',
       nuevo: true,
     },
     {
       t: 'Contexto a dieta (.copilotignore)',
-      d: 'node_modules, lockfiles, binarios y builds jamás viajan al modelo. Solo entra lo que un revisor humano querría leer.',
+      d: 'El motor genera un .copilotignore con node_modules, builds, lockfiles, .env y claves; el CLI anfitrión lo honra para el contexto del modelo y el driver lo respeta al capturar cambios. Solo entra lo que un revisor humano querría leer.',
     },
     {
       t: 'Estimar antes de gastar',
@@ -33,19 +35,20 @@ export class AhorroScreen extends CElement {
     },
     {
       t: 'Reanudar sin re-pagar',
-      d: 'Tras un corte o un timeout, el run reanuda donde iba: las fases con su artefacto ya escrito no se vuelven a pagar. Un fallo a mitad no significa empezar (ni pagar) de cero.',
+      d: 'Tras un corte o un timeout, el run reanuda donde iba: las fases completadas no se vuelven a pagar. La verificación (verify) sí se re-ejecuta siempre — el gate no se hereda. Un fallo a mitad no significa empezar de cero.',
     },
     {
       t: 'El modelo justo en cada fase',
-      d: 'Las fases baratas (explorar, tareas) van a modelos económicos vía tu LiteLLM (0 AI Credits); el premium se reserva para donde decide (verify). Mezcla de suscripciones en el MISMO run: Copilot Business + tu proveedor BYOK.',
+      // deep-search 2026-08-03: el routing economy/premium NO es automático (exige "tiers" en conductor.json) — decirlo
+      d: 'Mezcla de suscripciones en el MISMO run: Copilot Business + tu proveedor LiteLLM (0 AI Credits). El botón «Optimizar coste» del panel arma la mezcla con un clic; con "tiers" en conductor.json el reparto economy/premium por fase queda fijado para el equipo.',
     },
     {
       t: 'Freno de presupuesto',
-      d: 'Límite duro de tokens por run: al superarlo, el run pausa para tu revisión o corta. Sin sustos a fin de mes.',
+      d: 'Límite duro por run con "budget" en conductor.json ({ maxTokens, maxCostUsd, onExceed: "block"|"pause" }): al superarlo, el run pausa para tu revisión o corta. Se evalúa con los tokens REALES entre fases; sin datos de consumo, frena igual (fail-closed). Sin sustos a fin de mes.',
     },
     {
       t: 'Artefactos a disco, no al chat',
-      d: 'El driver escribe specs, planes e informes en ficheros; el contexto de cada fase lleva solo lo necesario, no una conversación que crece sin freno con cada turno.',
+      d: 'Cada fase deja su artefacto en fichero (el agente escribe specs y planes; el driver, los informes); el contexto de cada fase lleva solo lo necesario, no una conversación que crece sin freno con cada turno.',
     },
     {
       t: 'Ahorro visible',
@@ -57,8 +60,8 @@ export class AhorroScreen extends CElement {
     return html`
       <h1>Cómo ahorra tokens conductor</h1>
       <p class="muted">Cada fase del pipeline paga <b>solo el contexto que necesita</b> — nada de arrastrar el repo
-        entero ni una conversación que engorda turno a turno. Estas son las técnicas, todas automáticas: no hay que
-        configurar nada para beneficiarse. Esta página es 100% local — <b>0 tokens</b>.</p>
+        entero ni una conversación que engorda turno a turno. Estas son las técnicas — casi todas automáticas; las
+        que piden un ajuste (mezcla de modelos, freno de presupuesto) lo dicen. Esta página es 100% local — <b>0 tokens</b>.</p>
 
       <h2 class="sect">Las técnicas</h2>
       <div class="ahorro-grid">
@@ -79,7 +82,8 @@ export class AhorroScreen extends CElement {
       <div class="ahorro-note">
         <b>Tu clave, tu máquina.</b> Tu clave del proxy vive en <code>~/.conductor/litellm.json</code> tal cual tú la
         escribas (cifrado AES-256-GCM opcional con <code>"seal": true</code>) y jamás viaja al modelo ni por HTTP.
-        El catálogo de modelos sale <b>EN VIVO</b> de tu LiteLLM y del CLI de Copilot — nunca de listas inventadas.
+        El catálogo de modelos sale <b>en vivo</b> de tu LiteLLM y del CLI de Copilot cuando responden — con caché
+        y modelos observados en tus runs como respaldo. Nunca de listas inventadas.
       </div>
 
       <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/flow">Cómo conduce conductor</a> · <a class="lnk" href="/">Panel</a></p>

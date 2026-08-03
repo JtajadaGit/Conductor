@@ -1053,7 +1053,9 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     try {
       const gates = isMicro ? microGates() : [...checkCoherence(changeDir), ...checkArtifacts(changeDir)];
       const trace = !isMicro && existsSync(projectRoot) ? buildTrace(changeDir, projectRoot) : null;
-      const out = join(changeDir, 'dashboard.html');
+      // FASE 3 de fontanería: el informe es un GENERADO del run → vive en la evidencia, no en el change
+      const out = plumbPath(changeDir, 'dashboard.html');
+      mkdirSync(plumbPath(changeDir), { recursive: true });
       writeReportData(gates, trace);
       writeFileSync(out, renderDashboard({ change: changeDir, gates, trace, timeline: { verdict, phases: timeline, approvals, estimate: runEstimate || undefined } }));
       log(`📊 informe: ${out}`);
@@ -1734,7 +1736,8 @@ ${readSafe(x.lp).trim()}`);
       // evidencia firmada prueba que NO hubo huecos. En modo laxo (trace = warning) el sello sigue laxo para
       // coincidir con el verdict del pipeline (no degradar a NOT-GREEN un GREEN laxo legítimo).
       const doc = seal({ change: resolve(changeDir), gates, trace, traceAffectsVerdict: strictGate.trace === true, at: new Date().toISOString(), key: process.env.CONDUCTOR_PROV_KEY, privateKeyPem, engineVersion: 'drive', specHash: hashSpecs(changeDir) });
-      writeFileSync(join(changeDir, 'provenance.json'), JSON.stringify(doc, null, 2));
+      mkdirSync(plumbPath(changeDir), { recursive: true }); // fase 3: el sello es evidencia, no artefacto del dev
+      writeFileSync(plumbPath(changeDir, 'provenance.json'), JSON.stringify(doc, null, 2));
       log(`🔏 provenance: ${doc.verdict} (${doc.signature?.algo || 'sha256'})`);
       // y encadena el sello al LEDGER del proyecto (audit trail tamper-evident, hash-encadenado):
       try {

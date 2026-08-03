@@ -51,6 +51,17 @@ function plumbBase(changeDir) {
 const plumbPath = (changeDir, ...rest) => join(plumbBase(changeDir), ...rest);
 const plumbDir = (changeDir) => plumbBase(changeDir);
 
+// FASE 3 (2026-08-03, feedback real: «¿qué mierda hacen provenance.json y dashboard.html en el change?»):
+// los GENERADOS del run (informe HTML, sello) también son fontanería — nacen en la evidencia. Los changes
+// ANTERIORES los tienen en la raíz del change → los lectores buscan en ambos sitios, moderno primero.
+// Sin ninguno de los dos → devuelve el moderno (es el destino de escritura).
+const evidencePath = (changeDir, file) => {
+  const modern = plumbPath(changeDir, file);
+  if (existsSync(modern)) return modern;
+  const legacy = join(resolve(changeDir), file);
+  return existsSync(legacy) ? legacy : modern;
+};
+
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
 // un dominio sin sentido que ensucia la fuente de verdad para siempre). Sin token útil → core.
@@ -62,7 +73,7 @@ function domainFromName(name) {
   return 'core';
 }
 
-return { domainFromName, plumbPath, plumbDir };
+return { domainFromName, plumbPath, plumbDir, evidencePath };
 })();
 
 // ===== lib/core/theme.mjs =====
@@ -4483,7 +4494,7 @@ __M['aiact'] = (function(){
 
 
 const { THEME } = __M['theme'];
-const { plumbPath } = __M['plumb'];
+const { plumbPath, evidencePath } = __M['plumb'];
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const sha = (p) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch { return null; } };
 const E = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -4491,7 +4502,7 @@ const E = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': 
 function aiactData(changeDir) {
   const tl = readJson(plumbPath(changeDir, 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
   if (!tl) throw new Error('sin timeline — el change no tiene runs registrados');
-  const prov = readJson(join(changeDir, 'provenance.json'));
+  const prov = readJson(evidencePath(changeDir, 'provenance.json')); // fase 3: el sello vive en la evidencia (fallback: changes viejos)
   const specPath = (() => {
     // la spec delta del change: specs/<dominio>/spec.md
     try {
@@ -4566,7 +4577,7 @@ ${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens<
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>
 <div class=box>${E(d.verification.gate)}${Array.isArray(d.verification.lenses) && d.verification.lenses.length ? `<br><small style="color:var(--tx2)">Review multi-lente: ${d.verification.lenses.map((l) => `<code>${E(l)}</code>`).join(' ')}</small>` : ''}<br><small style="color:var(--tx3)">Los tests/build del proyecto se ejecutan en el CI del repositorio.</small></div>
 <h2 class=sect>5 · Procedencia firmada y registro <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— integridad criptográfica verificable</span></h2>
-<div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'Ed25519')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
+<div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'SHA-256 (integridad, sin firma)')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.${/ed25519/i.test(d.provenance.algo || '') ? '' : ' <small style="color:var(--tx3)">Para firma criptográfica real configura <code>CONDUCTOR_PRIV_KEY</code> (Ed25519).</small>'}` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
 <footer>Evidencia técnica generada por conductor como subproducto del pipeline. El mapeo a las obligaciones del EU AI Act se basa en el <b>draft</b> Code of Practice (en finalización) y <b>no constituye asesoramiento legal</b>.</footer>
 </html>`;
 }
@@ -5826,7 +5837,9 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     try {
       const gates = isMicro ? microGates() : [...checkCoherence(changeDir), ...checkArtifacts(changeDir)];
       const trace = !isMicro && existsSync(projectRoot) ? buildTrace(changeDir, projectRoot) : null;
-      const out = join(changeDir, 'dashboard.html');
+      // FASE 3 de fontanería: el informe es un GENERADO del run → vive en la evidencia, no en el change
+      const out = plumbPath(changeDir, 'dashboard.html');
+      mkdirSync(plumbPath(changeDir), { recursive: true });
       writeReportData(gates, trace);
       writeFileSync(out, renderDashboard({ change: changeDir, gates, trace, timeline: { verdict, phases: timeline, approvals, estimate: runEstimate || undefined } }));
       log(`📊 informe: ${out}`);
@@ -6507,7 +6520,8 @@ ${readSafe(x.lp).trim()}`);
       // evidencia firmada prueba que NO hubo huecos. En modo laxo (trace = warning) el sello sigue laxo para
       // coincidir con el verdict del pipeline (no degradar a NOT-GREEN un GREEN laxo legítimo).
       const doc = seal({ change: resolve(changeDir), gates, trace, traceAffectsVerdict: strictGate.trace === true, at: new Date().toISOString(), key: process.env.CONDUCTOR_PROV_KEY, privateKeyPem, engineVersion: 'drive', specHash: hashSpecs(changeDir) });
-      writeFileSync(join(changeDir, 'provenance.json'), JSON.stringify(doc, null, 2));
+      mkdirSync(plumbPath(changeDir), { recursive: true }); // fase 3: el sello es evidencia, no artefacto del dev
+      writeFileSync(plumbPath(changeDir, 'provenance.json'), JSON.stringify(doc, null, 2));
       log(`🔏 provenance: ${doc.verdict} (${doc.signature?.algo || 'sha256'})`);
       // y encadena el sello al LEDGER del proyecto (audit trail tamper-evident, hash-encadenado):
       try {
@@ -7150,7 +7164,7 @@ const { listCopilotCatalog } = __M['sdk-runner'];
 const { loadSkills } = __M['skills'];
 const { renderDashboard, renderReceipt } = __M['dashboard'];
 const { decryptSecret, isPortableBlob, sealByokFile, byokFile, isTemplateCreds, ensureByokTemplate, normalizeByokShape } = __M['secret'];
-const { plumbPath, domainFromName } = __M['plumb'];
+const { plumbPath, evidencePath, domainFromName } = __M['plumb'];
 // lectura SEGURA dentro de una raíz (sin .., sin absolutos, sin .conductor para artefactos)
 function safeRead(root, rel, maxLen = 20000) {
   if (!root || !rel) return null;
@@ -7445,7 +7459,7 @@ function runState(changeDir, srcDir, { alive = null } = {}) {
     estimate: tl?.estimate ?? null, // T3: preflight persistido — la UI compara est vs real por fase
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
-    hasDashboard: existsSync(join(changeDir, 'dashboard.html')),
+    hasDashboard: existsSync(evidencePath(changeDir, 'dashboard.html')), // fase 3: informe en la evidencia (fallback legado)
     tests: tl?.tests ?? null, // verify por ejecución (opcional): {ran, passed, failed[], cmds[]} o null si no se ejecutaron
   };
 }
@@ -7569,7 +7583,7 @@ function listChanges(root) {
       complexity: tl?.complexity || '',
       tokens: { in: tin, out: tout },
       url: lock?.url || null,
-      hasDashboard: existsSync(join(ch, 'dashboard.html')),
+      hasDashboard: existsSync(evidencePath(ch, 'dashboard.html')),
       resumable: !lock && !!tl?.request && tl?.verdict !== 'GREEN',
       mtime,
     };
@@ -7608,9 +7622,9 @@ function createProjectServer({ root, engine, spawnRun = defaultSpawnRun, port = 
       const r = spawnRun({ engine, root, name: b.name, request: tl.request, complexity: tl.complexity, domain: tl.domain, models: tl.models });
       json(200, { ok: true, ...r });
     } else if (req.url?.startsWith('/artifact/')) {
-      // sirve el dashboard.html de un change (solo ese fichero, confinado por nombre kebab)
+      // sirve el dashboard.html de un change (solo ese fichero, confinado por nombre kebab; fase 3: evidencia con fallback legado)
       const m = req.url.match(/^\/artifact\/([a-z0-9-]+)\/dashboard\.html$/);
-      const body = m ? safeRead(join(root, 'openspec', 'changes', m[1]), 'dashboard.html', 1e6) : null;
+      const body = m ? (() => { try { return readFileSync(evidencePath(join(root, 'openspec', 'changes', m[1]), 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })() : null;
       res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' });
       res.end(body ?? 'no encontrado');
     } else {
@@ -8415,7 +8429,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
-        const body = safeRead(ch2, 'dashboard.html', 1e6);
+        const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
       if (mArt) {
@@ -8424,7 +8438,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
         if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
-        const body = safeRead(ch2, 'dashboard.html', 1e6);
+        const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
       if (u.pathname === '/demo') return html(RUN_PAGE.replace('__API__', '/api/demo/'));
@@ -10348,4 +10362,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: eafef6396bbef6f77efc3a7f485af0338be14f62dd6853fa27f70dd274a23611
+// build-inputs-sha256: 5aeee73ac529bed827d1ad48c1cdb305d564e8f39a466270fafbaf74a1c17191

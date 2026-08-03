@@ -46,7 +46,7 @@ await test('cli-drive: un run SIMPLE desde el CLI llega a GREEN y deja artefacto
   eq(r.code, 0, 'exit 0 en GREEN (lo que mira un CI)');
   const ch = join(p, 'openspec', 'changes', 'saludo');
   for (const f of ['proposal.md', 'apply-report.md', 'verify-report.md']) assert(existsSync(join(ch, f)), `falta ${f}`);
-  assert(existsSync(join(ch, 'provenance.json')), 'sello de procedencia en GREEN');
+  assert(existsSync(plumbPath(ch, 'provenance.json')), 'sello de procedencia en GREEN (en la evidencia, no en el change — fase 3)');
   const tl = timeline(p, 'saludo');
   eq(tl.verdict, 'GREEN');
   eq(tl.phases.map((x) => x.phase), ['propose', 'spec', 'apply', 'verify'], 'la secuencia simple, en orden');

@@ -40,7 +40,7 @@ await test('drive(Path X): recorre TODAS las fases en orden, captura los fichero
   eq(r.trail, ['explore', 'propose', 'spec', 'design', 'tasks', 'apply', 'verify'], 'todas las fases en orden');
   assert(existsSync(join(TMP, 'src', 'counter.js')), 'código escrito nativamente y capturado');
   assert(existsSync(join(changeDir, 'apply-report.md')), 'apply-report sintetizado por el driver');
-  const dash = readFileSync(join(changeDir, 'dashboard.html'), 'utf8');
+  const dash = readFileSync(plumbPath(changeDir, 'dashboard.html'), 'utf8'); // fase 3: el informe vive en la evidencia
   assert(/Timeline del run/.test(dash) && /apply/.test(dash), 'dashboard.html generado automáticamente (artefacto humano)');
 });
 
@@ -111,7 +111,7 @@ await test('drive(Path X): un run GREEN auto-sella la provenance (cambio auditab
   const changeDir = join(TMP, 'openspec', 'changes', 'sealed');
   const r = await drive({ changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: goodAgent });
   eq(r.verdict, 'GREEN');
-  const provPath = join(changeDir, 'provenance.json');
+  const provPath = plumbPath(changeDir, 'provenance.json'); // fase 3: el sello vive en la evidencia
   assert(existsSync(provPath), 'provenance.json escrito');
   const doc = JSON.parse(readFileSync(provPath, 'utf8'));
   assert(doc.verdict && doc.signature, 'sello con verdict + firma');

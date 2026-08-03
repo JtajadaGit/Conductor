@@ -15,20 +15,20 @@ export class HelpScreen extends CElement {
       <ol class="muted steps">
         <li><b>Arranca desde tu proyecto</b>: <code>conductor</code> en la carpeta del repo. La app abre enfocada en ESE proyecto — el repo desde el que la lanzas es el que se trabaja.</li>
         <li><b>Inicialízalo</b> si el panel lo pide (botón «Inicializar este proyecto»): crea <code>openspec/</code> con la config del pipeline y <code>.copilotignore</code> (ahorro de tokens). No toca tu código.</li>
-        <li><b>Describe el cambio</b> en «Prompt». Puedes señalar ficheros con <code>@ruta</code> y patrones de equipo con <code>/nombre</code>. El sistema propone el plan de fases y el coste estimado; tú mandas: ajusta fases, modelos por fase y el toggle <b>test</b>.</li>
-        <li><b>Lanza el run</b> y atiende las <b>pausas de revisión</b>: leer/editar la spec, dejar una nota para la fase, cambiar el modelo en caliente, o detener. En el ciclo de corrección eliges qué hallazgos se arreglan.</li>
-        <li>Con el run <b>Verificado</b> (GREEN): revisa el <b>Informe</b>, haz tu commit y pulsa <b>Archivar</b> — la spec se promueve a la fuente de verdad del repo.</li>
+        <li><b>Describe el cambio</b> en «Prompt». Señala ficheros con <code>@ruta</code> (su contenido se pre-inyecta al agente; máx. 8, con secretos filtrados) y skills del equipo con <code>/nombre</code>. El sistema propone el plan de fases y el coste estimado; tú mandas: ajusta fases, modelos por fase y el toggle <b>test</b>.</li>
+        <li><b>Lanza el run</b> y atiende las <b>pausas de revisión</b>: leer/editar la spec, dejar una nota para la fase, cambiar el modelo en caliente, rehacer una fase de planificación con instrucciones, o detener. En el ciclo de corrección eliges qué hallazgos se arreglan.</li>
+        <li>Con el run <b>Verificado</b> (GREEN): revisa el <b>Informe</b>, haz tu commit y pulsa <b>Archivar</b> — los requisitos nuevos de la spec se promueven a la fuente de verdad del repo (los modificados/eliminados quedan señalados para merge manual) y el cambio pasa al archivo.</li>
       </ol>
       <p class="muted">Desde el chat de tu agente (Copilot CLI, VS Code, OpenCode, Claude Code) solo necesitas <code>/conductor</code>: enciende esta app y abre el panel — y con una petición, corre la feature con pausas y progreso EN el chat. Todo lo demás (init, lanzar, revisar, archivar, informes) vive aquí.</p>
 
       <h2 class="sect">Las tres ventanas de un run</h2>
       <p class="muted">Cada run deja evidencia consultable con tres botones. Ninguno gasta tokens: leen ficheros locales.</p>
       <ul class="muted">
-        <li><b>Ver sesión</b> — la <b>traza del agente</b>, paso a paso: qué tools ejecutó la IA, qué permisos pidió, qué hooks saltaron, qué modelos habló y cuándo. Es la respuesta a «¿qué hizo exactamente la IA en mi repo?» — filtrable y con búsqueda.</li>
-        <li><b>Informe</b> — el <b>informe del run</b> en una página para compartir: fases con sus tiempos, tokens reales frente a estimados, ficheros tocados y consumo por modelo. Es lo que adjuntas al PR o enseñas en la demo; se archiva junto al cambio.</li>
-        <li><b>AI Act</b> — el <b>expediente de transparencia</b> pensado para el Reglamento europeo de IA: qué modelos intervinieron en qué fases, qué decisiones aprobó un humano (las pausas), cómo se verificó el resultado y la firma de procedencia. Es lo que le enseñas a compliance o a un auditor sin preparar nada.</li>
+        <li><b>Ver sesión</b> — la <b>traza del agente</b>, paso a paso: tools ejecutadas, hooks, permisos pedidos, mensajes, subagentes y skills, con los modelos usados en el resumen. Es la respuesta a «¿qué hizo exactamente la IA en mi repo?» — filtrable y con búsqueda. Sale de la sesión del CLI (y si no hay, se reconstruye de la telemetría del run).</li>
+        <li><b>Informe</b> — el <b>informe del run</b> en una página para compartir: la tabla de fases (modelo, tiempo, intentos, ficheros y tokens reales frente a estimados), el resultado del gate determinista y el linaje requisito→código→test. Es lo que adjuntas al PR o enseñas en la demo; se archiva junto al cambio. (El desglose de coste por modelo vive en el panel y en <code>conductor stats</code>.)</li>
+        <li><b>AI Act</b> — el <b>«quién hizo qué»</b> del run, firmado: (1) qué modelos intervinieron en cada fase y con qué consumo; (2) qué decisiones aprobó una persona — cada pausa, con hash de lo aprobado; (3) el inventario exacto de ficheros escritos por la IA; (4) cómo se verificó; (5) el sello de procedencia. El nombre viene del Reglamento europeo de IA, que exige justo esa transparencia — es el papel que enseñas cuando pregunten «¿esto lo escribió una IA y quién lo supervisó?».</li>
       </ul>
-      <p class="muted">Toda la evidencia (recibos, timeline, sesión) vive en <code>.conductor/runs/&lt;cambio&gt;</code> en la raíz de tu proyecto — fuera de <code>openspec/</code>, sin ensuciar tu árbol de trabajo; la spec y los artefactos revisables quedan en <code>openspec/changes/&lt;cambio&gt;</code>.</p>
+      <p class="muted">Toda la evidencia (recibos, timeline, sesión, informe y sello) vive en <code>.conductor/runs/&lt;cambio&gt;</code> en la raíz de tu proyecto — fuera de <code>openspec/</code>, sin ensuciar tu árbol de trabajo; la spec y los artefactos revisables quedan en <code>openspec/changes/&lt;cambio&gt;</code>.</p>
 
       <h2 class="sect">El pipeline</h2>
       <p class="muted">Según el alcance: <code>propose → spec → apply → verify</code> (y en cambios mayores <code>explore</code>, <code>clarify</code>, <code>design</code>, <code>tasks</code>). Con el toggle <b>test</b>, tus pruebas reales corren <b>antes</b> de <code>verify</code>: si fallan → ciclo <code>fix</code> → re-test. Un driver determinista lanza al agente en cada fase y valida con el gate; si el fix no converge, el run <b>escala a ti</b> en vez de iterar a ciegas. Al cerrar: código + spec + informe + sello firmado.</p>
@@ -38,13 +38,14 @@ export class HelpScreen extends CElement {
         <li><b>Verificado</b> (GREEN) — el gate confirmó coherencia spec↔código↔tests. Listo para commit y Archivar.</li>
         <li><b>No verificado</b> (NOT-GREEN) — el gate encontró incumplimientos tras los ciclos de corrección. El informe dice cuáles.</li>
         <li><b>Necesita tu decisión</b> (BLOCKED) — el gobierno detuvo el run (preguntas sin responder, presupuesto, política de modelos, fix sin converger…). El motivo aparece bajo la cabecera.</li>
-        <li><b>Detenido / Interrumpido</b> — lo paraste tú o se cortó el proceso. <b>Reanudar</b> continúa donde quedó sin re-pagar las fases hechas.</li>
+        <li><b>Detenido / Interrumpido</b> — lo paraste tú o se cortó el proceso. <b>Reanudar</b> continúa donde quedó sin re-pagar las fases completadas (la verificación sí se re-ejecuta: el gate no se hereda).</li>
         <li><b>Abortado</b> — una fase no produjo su artefacto; la secuencia no se salta. El motivo y el registro dicen por qué.</li>
+        <li><b>Duplicado</b> (DUPLICATE) — se lanzó el mismo cambio con un run ya activo; el run vivo sigue y el duplicado no ejecuta nada.</li>
       </ul>
 
       <h2 class="sect">Qué garantiza «Verificado» (y qué no)</h2>
       <p class="muted"><b>Garantiza</b>: la secuencia SDD se respetó (el código conduce, no el modelo); spec, tareas y artefactos son <b>coherentes y trazables</b> (cada requisito ↔ código ↔ test vía <code>@conductor</code>); el reviewer no marcó FAIL; y —con el toggle <b>test</b> activo— <b>tus pruebas reales pasan</b>.<br>
-      <b>NO garantiza</b> por sí solo la corrección lógica: el gate estructural no ejecuta tu código. Para máxima confianza activa <b>test</b> al lanzar (o declara <code>"checks"</code> en <code>openspec/conductor.json</code>) — así Verificado = coherente <i>y</i> pasa tus pruebas.</p>
+      <b>NO garantiza</b> por sí solo la corrección lógica: el gate estructural no ejecuta tu código. Para máxima confianza activa <b>test</b> al lanzar — el toggle autoriza a ejecutar; <code>"checks"</code> en <code>openspec/conductor.json</code> define QUÉ comandos correr. Así Verificado = coherente <i>y</i> pasa tus pruebas.</p>
 
       <h2 class="sect">Dos personas</h2>
       <ul class="muted">
@@ -56,7 +57,7 @@ export class HelpScreen extends CElement {
       <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla LiteLLM (0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. El chip «LiteLLM · 0 AIC» del run enseña cuántas fases salieron gratis. <a class="lnk" href="/ahorro">Todas las técnicas de ahorro →</a></p>
 
       <h2 class="sect">La cadena de evidencia</h2>
-      <p class="muted">Detrás de esos botones hay una cadena verificable: cada run GREEN produce su informe, un <b>sello de procedencia firmado</b> (Ed25519) encadenado al <i>ledger</i> del proyecto, y el expediente AI Act. Cualquiera puede comprobar después que lo verificado no se tocó.</p>
+      <p class="muted">Detrás de esos botones hay una cadena verificable: cada run GREEN produce su informe, un <b>sello de procedencia</b> (SHA-256 de integridad; firma <b>Ed25519</b> si configuras <code>CONDUCTOR_PRIV_KEY</code>) encadenado al <i>ledger</i> del proyecto (<code>openspec/provenance.ledger.jsonl</code>, una línea por run verificado — committeable a propósito: es el historial de verificaciones del equipo), y el expediente AI Act. <code>conductor verify</code> y <code>conductor ledger verify</code> comprueban después que nada se tocó.</p>
     `;
   }
 }

@@ -11,7 +11,7 @@ import { readFileSync, existsSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { THEME } from '../core/theme.mjs';
-import { plumbPath } from '../core/plumb.mjs';
+import { plumbPath, evidencePath } from '../core/plumb.mjs';
 
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const sha = (p) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch { return null; } };
@@ -20,7 +20,7 @@ const E = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': 
 export function aiactData(changeDir) {
   const tl = readJson(plumbPath(changeDir, 'timeline.json')) ?? readJson(join(changeDir, 'run-timeline.json'));
   if (!tl) throw new Error('sin timeline — el change no tiene runs registrados');
-  const prov = readJson(join(changeDir, 'provenance.json'));
+  const prov = readJson(evidencePath(changeDir, 'provenance.json')); // fase 3: el sello vive en la evidencia (fallback: changes viejos)
   const specPath = (() => {
     // la spec delta del change: specs/<dominio>/spec.md
     try {
@@ -95,7 +95,7 @@ ${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens<
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>
 <div class=box>${E(d.verification.gate)}${Array.isArray(d.verification.lenses) && d.verification.lenses.length ? `<br><small style="color:var(--tx2)">Review multi-lente: ${d.verification.lenses.map((l) => `<code>${E(l)}</code>`).join(' ')}</small>` : ''}<br><small style="color:var(--tx3)">Los tests/build del proyecto se ejecutan en el CI del repositorio.</small></div>
 <h2 class=sect>5 · Procedencia firmada y registro <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— integridad criptográfica verificable</span></h2>
-<div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'Ed25519')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
+<div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'SHA-256 (integridad, sin firma)')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.${/ed25519/i.test(d.provenance.algo || '') ? '' : ' <small style="color:var(--tx3)">Para firma criptográfica real configura <code>CONDUCTOR_PRIV_KEY</code> (Ed25519).</small>'}` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
 <footer>Evidencia técnica generada por conductor como subproducto del pipeline. El mapeo a las obligaciones del EU AI Act se basa en el <b>draft</b> Code of Practice (en finalización) y <b>no constituye asesoramiento legal</b>.</footer>
 </html>`;
 }
