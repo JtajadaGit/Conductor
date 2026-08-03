@@ -328,7 +328,7 @@ await test('serve(arranque-per-repo): POST /api/focus mueve el FOCO server-side 
   for (const r of [A, B]) rmSync(r, { recursive: true, force: true });
 });
 
-// `conductor setup` se ELIMINÓ (2026-07-15, anti-Frankenstein): la vía plugin no necesita comando de
+// `conductor setup` se ELIMINÓ anti-Frankenstein): la vía plugin no necesita comando de
 // terminal y la vía npm crea los shims sola. Su test se retiró con él.
 
 await test('serve(byok-login): `byok login` lee la key por STDIN y la cifra AES-GCM — nunca en claro, ni en argv, ni en el output (el LLM no la ve)', () => {
@@ -616,7 +616,7 @@ await test('serve(#74): POST /api/init scaffold SDD nativo (conductor.json + .co
   const r = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   eq(r.ok, true); eq(r.created, true, 'crea conductor.json la 1ª vez');
   assert(existsSync(join(R, 'openspec', 'conductor.json')), 'conductor.json creado');
-  // init ATÓMICO (#6): un fresh-init deja el proyecto COMPLETO de una vez. Lo que cambia (2026-07-30) es
+  // init ATÓMICO (#6): un fresh-init deja el proyecto COMPLETO de una vez. Lo que cambia  es
   // que "completo" ya no incluye config.yaml (espejo detectado que nadie parseaba) sino project.md.
   assert(existsSync(join(R, 'openspec', 'project.md')), 'project.md creado — init ATÓMICO, no dos scaffolds');
   assert(!existsSync(join(R, 'openspec', 'config.yaml')), 'SIN config.yaml (dato derivado: no se versiona)');

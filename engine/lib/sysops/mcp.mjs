@@ -1,4 +1,4 @@
-// conductor/lib/mcp.mjs — MCP server (stdio, protocolo 2025-11-25) exponiendo TODO el motor.
+// conductor/lib/mcp.mjs — MCP server (stdio, protocolo exponiendo TODO el motor.
 // Sin deps. stdout = solo JSON-RPC; logs a stderr.
 import { createInterface } from 'node:readline';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -99,7 +99,7 @@ export function pauseBundle(changeDir, pending) {
   return arts;
 }
 // ANTI-TIMEOUT DE HOSTS (bug latente cazado en el plan de expertise): muchos hosts MATAN una tool-call
-// larga. 2026-08-03: OpenCode corta a ~60s — los 85s anteriores daban «Request timed out» con el run vivo
+// larga. OpenCode corta a ~60s — los 85s anteriores daban «Request timed out» con el run vivo
 // por debajo y el chat perdía el hilo. Cada llamada devuelve en ≤~50s SIEMPRE — si ni pausa ni veredicto,
 // retorna status:"working" CON PROGRESO REAL (fases ✓, fase actual, tokens, registro) para que el chat
 // narre en vez de ser una caja negra; el BUCLE lo lleva el agente (re-llama conductor_continue action:"wait").
@@ -150,7 +150,7 @@ export async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  // payload A DIETA (feedback 2026-08-03 "demasiada verborrea": OpenCode pinta el JSON entero expandido):
+  // payload A DIETA (OpenCode pinta el JSON entero expandido):
   // el contrato completo vive en la description de la tool — aquí solo el dato y un imperativo corto.
   return {
     status: 'working', progress: runProgress(last) || undefined,
@@ -182,7 +182,7 @@ const TOOLS = {
     run: ({ target }) => { const F = lintMigrations(target); return { verdict: F.some((f) => f.severity === 'breaking' || f.severity === 'error') ? 'UNSAFE' : 'OK', count: count(F), findings: F }; } },
   conductor_legacy: { def: { name: 'conductor_legacy', title: 'legacy migration readiness (evidence-gate, code-driven)', description: 'Code-driven legacy-migration evidence gate. Given a legacy source dir and the DECLARED features to migrate, deterministically traces each feature to evidence in the OLD code and BLOCKS spec/implementation until every feature is evidence-backed ("declared != ready"). Returns state READY_FOR_SPEC|NEEDS_DEEPENING|BLOCKED, allowed.generateSpec/implement, and per-feature evidence + explicit blockers (CODE_TRACE_REQUIRED, DATA_MODEL_REQUIRED, EXTERNAL_CONTRACT_REQUIRED). 0 LLM, 0 network.', inputSchema: { type: 'object', properties: { srcDir: { type: 'string', description: 'root of the legacy source tree' }, features: { type: 'array', description: 'declared features to migrate', items: { type: 'object', properties: { name: { type: 'string' }, keywords: { type: 'array', items: { type: 'string' } } }, required: ['name'] } } }, required: ['srcDir', 'features'] } },
     run: ({ srcDir, features }) => assessReadiness(features || [], walkText(resolve(srcDir))) },
-  // NOTA: conductor_start/conductor_next se RETIRARON del MCP (2026-06-10): un modelo de sesión los
+  // NOTA: conductor_start/conductor_next se RETIRARON del MCP : un modelo de sesión los
   // usaba para re-hacer el pipeline a mano en paralelo al driver (carrera + tokens). La máquina de
   // estados sigue en lib/orchestrate.mjs para uso interno del driver. Robustez por capacidad, no por prompt.
   conductor_init_config: { def: { name: 'conductor_init_config', title: 'scaffold user config + JSON Schema', // la descripción prometía escribir también openspec/conductor.schema.json, y el motor dejó de hacerlo a
@@ -269,7 +269,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       let lr = null, lj = null;
       try { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name, project: root, auto: false }) }); lj = await lr.json().catch(() => null); } catch (e) { return { ok: false, error: String(e.message) }; }
       if (!lj?.ok) {
-        // RUN ACTIVO (caso real 2026-08-03: un timeout del host dejó el run vivo y el reintento chocaba a
+        // RUN ACTIVO (caso real: un timeout del host dejó el run vivo y el reintento chocaba a
         // ciegas): dile al agente CÓMO engancharse al run en marcha en vez de dejarle relanzar en bucle.
         const activeChange = lj?.url ? String(lj.url).split('/').filter(Boolean).pop() : undefined;
         return {
@@ -278,7 +278,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
           ...(activeChange ? { next: `Hay un run activo («${activeChange}») en este repo — NO lances otro: síguelo con conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"} y ve contando su progreso al usuario.` } : {}),
         };
       }
-      // ARRANQUE RÁPIDO (feedback 2026-08-03 "tarda demasiado en arrancar"): la PRIMERA respuesta vuelve en
+      // ARRANQUE RÁPIDO: la PRIMERA respuesta vuelve en
       // ~3s (una lectura de estado) con el enlace y la fase inicial — el spinner del host no se come 50s.
       // El ritmo largo lo llevan los conductor_continue {action:"wait"} posteriores.
       const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000 });

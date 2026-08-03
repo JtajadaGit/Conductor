@@ -12,7 +12,7 @@ export class AhorroScreen extends CElement {
     {
       t: 'No re-escanear: índice verificado',
       d: 'Al planificar, el modelo recibe un índice compacto de lo YA verificado (las capacidades de la spec viva y los cambios archivados) en vez de re-leer el código fuente. Lo que el pipeline validó ayer no se vuelve a pagar hoy.',
-      // deep-search 2026-08-03: el «30–45% observado» NO existía en el código (cifra inventada). Lo único
+      // el «30–45% observado» NO existía en el código (cifra inventada). Lo único
       // que el motor calcula es su estimación conservadora (~8k tokens por fase derivada) y la DECLARA estimación.
       stat: 'Estimación conservadora del propio motor: ~8.000 tokens de entrada evitados por fase de planificación (estimación declarada, no medición)',
     },
@@ -39,8 +39,18 @@ export class AhorroScreen extends CElement {
     },
     {
       t: 'El modelo justo en cada fase',
-      // deep-search 2026-08-03: el routing economy/premium NO es automático (exige "tiers" en conductor.json) — decirlo
+      // el routing economy/premium NO es automático (exige "tiers" en conductor.json) — decirlo
       d: 'Mezcla de suscripciones en el MISMO run: Copilot Business + tu proveedor LiteLLM (0 AI Credits). El botón «Optimizar coste» del panel arma la mezcla con un clic; con "tiers" en conductor.json el reparto economy/premium por fase queda fijado para el equipo.',
+    },
+    {
+      t: 'Menos tools a la vista',
+      d: 'Las fases que solo escriben su artefacto (planificación y revisión) no ven los tools de web, shell o parcheo: sus schemas dejan de viajar en el system prompt de cada turno. Automático; se desactiva con "toolFilter": false si una skill los necesita.',
+      nuevo: true,
+    },
+    {
+      t: 'Verificación reutilizable (opt-in)',
+      d: 'Con "verifyCache": true, si TODOS los inputs del verify son bit-idénticos al último verify correcto (spec, informes, ficheros tocados, prompt, lentes y modelo), la opinión de las lentes se reutiliza en vez de re-pagarse. El gate determinista corre SIEMPRE, y el hit queda visible en el timeline — nada en silencio.',
+      nuevo: true,
     },
     {
       t: 'Freno de presupuesto',
@@ -67,7 +77,7 @@ export class AhorroScreen extends CElement {
       <div class="ahorro-grid">
         ${this.tecnicas.map((x) => html`
           <div class="ahorro-card">
-            <!-- sin círculo numerado (loop visual it.1, 2026-07-31): las técnicas NO son una secuencia — el
+            <!-- sin círculo numerado (regla del sistema visual): las técnicas NO son una secuencia — el
                  número era decoración y repetía el acento ×10; el título mono es identidad suficiente -->
             <div class="ah-top">
               <span class="ah-t">${x.t}</span>

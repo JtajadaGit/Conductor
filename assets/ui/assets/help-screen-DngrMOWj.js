@@ -1,4 +1,4 @@
-import{f as e,h as t,t as n,v as r}from"./index-DViF45Bs.js";var i=class extends e{render(){return r`
+import{f as e,h as t,t as n,v as r}from"./index-1EQYeSit.js";var i=class extends e{render(){return r`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
@@ -38,8 +38,7 @@ import{f as e,h as t,t as n,v as r}from"./index-DViF45Bs.js";var i=class extends
       <p class="muted"><b>Garantiza</b>: la secuencia SDD se respetó (el código conduce, no el modelo); spec, tareas y artefactos son <b>coherentes y trazables</b> (cada requisito ↔ código ↔ test vía <code>@conductor</code>); el reviewer no marcó FAIL; y —con el toggle <b>test</b> activo— <b>tus pruebas reales pasan</b>.<br>
       <b>NO garantiza</b> por sí solo la corrección lógica: el gate estructural no ejecuta tu código. Para máxima confianza activa <b>test</b> al lanzar — el toggle autoriza a ejecutar; <code>"checks"</code> en <code>openspec/conductor.json</code> define QUÉ comandos correr. Así Verificado = coherente <i>y</i> pasa tus pruebas.</p>
 
-      <!-- feedback 2026-08-03 «si es local, solo la usa una persona, ¿no?»: son dos MOMENTOS de la misma
-           persona, no dos usuarios — el framing Dev/Tech-lead confundía al que hereda la herramienta -->
+      <!-- dos MOMENTOS de la misma persona, no dos usuarios: la app es local y la usa un solo dev -->
       <h2 class="sect">Dos momentos, la misma persona</h2>
       <ul class="muted">
         <li><b>Pedir</b>: describes el cambio; el sistema propone plan y coste. No hace falta clasificar nada.</li>

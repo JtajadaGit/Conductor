@@ -1,7 +1,7 @@
 // mcp-smoke.test.mjs — HUMO DE TODAS LAS TOOLS MCP contra un proyecto real de mentira.
 // Por qué: `sysops/mcp.mjs` son 32 KB con el 81% de sus funciones sin ejecutar JAMÁS en tests, y son las 17
 // tools que un host de chat (Claude Code, Copilot CLI, OpenCode) invoca en producción. Barriéndolas a mano
-// (2026-07-31) salieron dos fallos que la suite no veía: los `required` del schema no se validaban —la
+// salieron dos fallos que la suite no veía: los `required` del schema no se validaban —la
 // llamada caía al fs y devolvía el error interno de Node— y `conductor_verify` reventaba si le pasabas el
 // sello YA PARSEADO, que es justo lo que hace un modelo. Un tool que nadie ejecuta es un tool sin garantía.
 import { spawn } from 'node:child_process';

@@ -23,7 +23,7 @@ await test('byok-limits: byokCreds devuelve maxOutput/maxPrompt del byok.json (e
   rmSync(home, { recursive: true, force: true });
 });
 
-await test('byok-seal: la key EN CLARO se queda (paridad OpenCode, default 2026-07-31); "seal": true la SELLA', () => {
+await test('byok-seal: la key EN CLARO se queda (paridad OpenCode, default del producto); "seal": true la SELLA', () => {
   const home = join(HERE, '.tmp-byok-seal');
   rmSync(home, { recursive: true, force: true }); mkdirSync(home, { recursive: true });
   const prev = process.env.CONDUCTOR_HOME;

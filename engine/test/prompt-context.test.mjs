@@ -36,7 +36,7 @@ await test('prompt-context: sin @-referencias → bloque vacío (cero ruido)', (
   eq(referencedFiles('haz un contador simple sin ejemplos', join(HERE, '.tmp-none')), '', 'sin @ → vacío');
 });
 
-// presupuesto POR FICHERO + superficie de codemap (deep-search 2026-08-03): un @fichero gigante ya no se
+// presupuesto POR FICHERO + superficie de codemap: un @fichero gigante ya no se
 // come el presupuesto global de los demás, y al truncarse el modelo aún ve su superficie (exports/usedBy)
 await test('prompt-context: @fichero gigante → cap de 6k POR FICHERO, los demás conservan presupuesto, y la superficie del codemap completa el truncado', () => {
   const ROOT = join(HERE, '.tmp-refbudget');

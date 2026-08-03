@@ -1,7 +1,7 @@
 // ci-formats.test.mjs — CONTRATO DE SALIDA PARA CI. Lo que rompe un pipeline no es que el comando falle,
 // es que emita algo MAL FORMADO: un SARIF con JSON inválido o un JUnit con XML roto revienta el job del
 // cliente y el mensaje que ve es del parser de GitHub, no nuestro.
-// Origen (2026-07-31): el mapa de cobertura puso `sysops/ci.mjs` en 27,4% y `core/report.mjs` en 72%,
+// Origen el mapa de cobertura puso `sysops/ci.mjs` en 27,4% y `core/report.mjs` en 72%,
 // así que estos formatos viajaban al CI de la gente sin que ningún test comprobara su forma.
 import { human, json, rdjson, sarif, junit, format, count, isBlocking } from '../lib/core/report.mjs';
 import { githubWorkflow, gitlabCi } from '../lib/sysops/ci.mjs';
@@ -33,7 +33,7 @@ await test('report: json y rdjson emiten JSON VÁLIDO con caracteres que rompen 
   assert(Array.isArray(r.diagnostics) && r.diagnostics.length === F.length, 'un diagnóstico por hallazgo');
 });
 
-// EL BUG GORDO (2026-07-31): normSev existía y solo lo usaba isBlocking. Con una severidad "sucia", el
+// EL BUG GORDO normSev existía y solo lo usaba isBlocking. Con una severidad "sucia", el
 // comando salía con exit != 0 mientras junit no la contaba como failure, sarif la degradaba a "note" y
 // rdjson a "INFO" → el job de CI en verde con el gate en rojo. El fail-open no estaba cerrado, movido.
 await test('report: una severidad SUCIA ("Error", " BREAKING ") bloquea en TODOS los formatos — exit code e informe no pueden discrepar', () => {

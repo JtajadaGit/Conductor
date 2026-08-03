@@ -1,4 +1,4 @@
-// REGRESIÓN de la auditoría adversarial (2026-06-18): cada test ancla un hallazgo CONFIRMADO y verificado.
+// REGRESIÓN de la auditoría adversarial cada test ancla un hallazgo CONFIRMADO y verificado.
 // No vuelven a colarse: false-GREEN forjado (en determinism.test), recursión de contratos, fail-open de
 // políticas, downgrade de firma, race/forgery del ledger, prototype-pollution y DoS de parseo.
 import { diffOpenApi } from '../lib/contract/openapi-diff.mjs';

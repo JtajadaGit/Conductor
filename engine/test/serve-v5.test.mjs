@@ -110,7 +110,7 @@ await test('scrubSecrets: redacta Bearer/sk- en un volcado de error de stderr', 
   assert(/ECONNREFUSED/.test(safe), 'conserva el contexto NO sensible del error');
 });
 
-// ── B5 (plan expertise 2026-07-17): guardar la mezcla de modelos como DEFAULT del proyecto ──
+// ── B5 (plan expertise guardar la mezcla de modelos como DEFAULT del proyecto ──
 await test('models-default: crea conductor.json si falta y guarda SOLO la seccion models (roles y fases)', async () => {
   const { mergeModelsDefault } = await import('../lib/serving/serve.mjs');
   const { readFileSync, existsSync } = await import('node:fs');
@@ -147,7 +147,7 @@ await test('models-default: merge CONSERVADOR — no pisa otras claves; vacio bo
 });
 
 await test('sw honesto: el service worker JAMAS cachea /api ni finge servidor vivo (503 offline sintetico)', async () => {
-  // regresion real 2026-07-28: tras `conductor stop`, la web "seguia funcionando" — el SW servia
+ // regresion real tras `conductor stop`, la web "seguia funcionando" — el SW servia
   // /api/changes de cache y el panel pintaba datos viejos como vivos. Ahora: /api sin cache, fallo => 503.
   const { createAppServer } = await import('../lib/serving/serve.mjs');
   const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');

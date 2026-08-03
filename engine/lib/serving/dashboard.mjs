@@ -26,6 +26,9 @@ export function renderReceipt({ name = '', timeline = null, spec = '', proposal 
   const measured = tl.some((p) => p.tokens && (p.tokens.in || p.tokens.out));
   const tokTxt = measured ? `↓${fmt(inT)} ↑${fmt(outT)} tokens` : 'tokens: no medidos';
   L.push('', `**Resultado:** ${timeline.verdict || '?'} · ${tl.length} fase(s) · ${mins} min · ${tokTxt}${byok ? ` · ${byok} fase(s) a 0 créditos premium` : ''}`);
+  // el PORQUÉ de un verdict no-GREEN viaja SIEMPRE en el recibo (transparencia: un NOT-GREEN sin motivo
+  // obliga a abrir la web para saber qué pasó — caso real: gate de secretos y el chat no decía cuál)
+  if (timeline.verdict && timeline.verdict !== 'GREEN' && timeline.reason) L.push('', `**Por qué:** ${String(timeline.reason).slice(0, 400)}`);
   const what = (md(proposal).split(/^##\s*What Changes\s*$/mi)[1] || '').split(/^##\s/m)[0].trim();
   if (what) L.push('', '### Qué cambia', ...what.split('\n').slice(0, 10));
   const reqs = [...md(spec).matchAll(/<!--\s*id:\s*(REQ-[A-Z0-9-]+)\s*-->\s*\n###\s*Requirement:\s*([^\n]+)/gi)].slice(0, 12);

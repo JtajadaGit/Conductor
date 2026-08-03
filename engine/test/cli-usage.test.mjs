@@ -1,6 +1,6 @@
 // cli-usage.test.mjs — CONTRATO DE ERRORES DEL CLI: a un comando al que le falta un argumento se le exige
 // decir QUÉ falta, nunca escupir el error interno de Node.
-// Origen (2026-07-31): barriendo los ~45 comandos apareció `conductor status` devolviendo
+// Origen barriendo los ~45 comandos apareció `conductor status` devolviendo
 // «The "paths[0]" argument must be of type string. Received undefined» — era el único que no daba su línea
 // de uso, porque pasaba `undefined` a runIdFor(). Misma familia que el crash `st is not defined` de
 // printStats: bin/conductor.mjs tenía 30% de cobertura de funciones y nada de esto se ejecutaba en tests.

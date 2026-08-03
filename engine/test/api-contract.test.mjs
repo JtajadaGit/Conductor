@@ -1,4 +1,4 @@
-// api-contract.test.mjs — CONTRATO HTTP DEL PANEL. Barriendo los ~25 endpoints (2026-07-31) salieron dos
+// api-contract.test.mjs — CONTRATO HTTP DEL PANEL. Barriendo los ~25 endpoints salieron dos
 // fallos que solo se ven ejercitando: `rollback` sin `phase` devolvía 500 con «sin checkpoint para la fase »
 // (en blanco) — un campo que falta es culpa de la PETICIÓN, no del servidor, y el 500 se pinta como caída y
 // ensucia la monitorización —; y cualquier /api/* desconocido caía al app-shell devolviendo HTML con 200, así

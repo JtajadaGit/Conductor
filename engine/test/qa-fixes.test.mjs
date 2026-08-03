@@ -1,4 +1,4 @@
-// qa-fixes.test.mjs — regresión de la pasada de QA adversarial (2026-06-26). Cubre dos invariantes de gobierno
+// qa-fixes.test.mjs — regresión de la pasada de QA adversarial. Cubre dos invariantes de gobierno
 // que un revisor verificó rotos y se arreglaron: (bug 5) byokChildEnv valida que byok.json produce credenciales
 // USABLES antes de strippear las de sesión — un byok.json corrupto NO debe romper un BYOK funcional; (bug 2) el
 // hardfail "byok: sin credenciales" cubre TAMBIÉN el runner SDK, no solo el spawn por defecto (no caer a Copilot

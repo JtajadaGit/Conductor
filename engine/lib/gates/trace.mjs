@@ -89,7 +89,7 @@ export function buildTrace(changeDir, srcDir) {
 
   const F = [];
   for (const m of matrix) {
-    // Dos reglas SEPARADAS (incidente real 2026-07-16: el coder agotó el timeout dejando código sin su
+    // Dos reglas SEPARADAS (incidente real: el coder agotó el timeout dejando código sin su
     // test y el run cerró GREEN):
     //  · trace.coverage-gap — falta CÓDIGO (o todo): señal (warning); solo strictTrace la eleva.
     //  · trace.test-gap    — hay código pero NINGÚN test lo cubre: la mitad peligrosa; el llamador

@@ -1,5 +1,5 @@
 // config-fallos.test.mjs — EL GOBIERNO DEL EQUIPO NO SE PIERDE EN SILENCIO.
-// Origen (2026-07-31, casuística de perfiles junior/senior): `readDriveConfig` metía en el MISMO `catch {}`
+// Origen casuística de perfiles junior/senior): `readDriveConfig` metía en el MISMO `catch {}`
 // vacío dos casos opuestos — "no hay config" (legítimo: todo es opcional) y "la config existe pero está
 // rota". Una coma de más en openspec/conductor.json borraba preset, gates, budget, models y rules, y el run
 // seguía con los defaults hasta cerrar GREEN: un "verificado" que el equipo leería como verificado CON SUS

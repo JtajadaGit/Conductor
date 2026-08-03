@@ -467,7 +467,7 @@ export class PanelScreen extends CElement {
           <div class="inst-body">
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
-              <!-- deep-search 2026-08-03: decia "cifrada" incondicional y el sellado es OPT-IN — mentia sobre seguridad -->
+              <!-- decia "cifrada" incondicional y el sellado es OPT-IN — mentia sobre seguridad -->
               <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · tal cual la escribiste (cifrado opcional: <code>"seal": true</code>)</dd></div>
               <div class="ro-row"><dt>Catálogo</dt><dd>sin verificar aún en esta sesión — se comprueba al abrir el selector de modelos o lanzar un run</dd></div>
             </dl>
@@ -649,11 +649,11 @@ export class PanelScreen extends CElement {
       </div>` : nothing}
       <!-- coste "1 cifra en su momento" (decisión de producto): el desglose vive plegado; la cifra oportuna
            va en el estimate del form (al decidir) y en el run (al terminar). AI Credits queda como única señal ambiente. -->
-      <!-- el PROMPT es el HÉROE: siempre primero y desplegado (decisión UX 2026-07-31); los runs en curso
+      <!-- el PROMPT es el HÉROE: siempre primero y desplegado (decisión UX); los runs en curso
            viven ABAJO con el historial — el panel se abre para LANZAR, el seguimiento va después -->
       ${launchSurface}
 
-      <!-- MÉTRICAS SIEMPRE VISIBLES bajo el formulario (decisión UX 2026-07-31: sin pliegue — el pliegue
+      <!-- MÉTRICAS SIEMPRE VISIBLES bajo el formulario (decisión UX: sin pliegue — el pliegue
            las escondía y nadie las abría). Flechas PEGADAS al número (voz de dato), versión discreta al pie. -->
       <section class="metrics-strip" aria-label="métricas del proyecto">
         <div class="cards">
@@ -773,7 +773,7 @@ export class PanelScreen extends CElement {
           </a>
           <div class="run-foot">
             <span class="meta">${c.phases} fases${(c.tokens?.in ?? 0) + (c.tokens?.out ?? 0) > 0 ? html` · ↓ ${fmt(c.tokens?.in)} entrada · ↑ ${fmt(c.tokens?.out)} salida` : nothing}</span>
-            <!-- pase de calma (loop it.3, 2026-07-31): la ÚNICA primaria del panel es «Lanzar run» — las
+            <!-- sistema visual: la ÚNICA primaria del panel es «Lanzar run» — las
                  acciones del historial hablan en voz secundaria, sin emojis ni colores propios -->
             ${c.resumable ? html`<button class="btn sm sec" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">${icon('play')} Reanudar</button>` : nothing}
             ${!c.resumable && verdictClass(c.verdict) !== 'CURSO' && c.request ? html`<button class="btn sm sec" @click=${() => this.reuse(c)} title="rellena el formulario con esta petición para lanzar una variante">${icon('redo')} Reutilizar</button>` : nothing}

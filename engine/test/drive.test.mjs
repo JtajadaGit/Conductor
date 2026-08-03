@@ -208,7 +208,7 @@ await test('drive(Path X): MCP passthrough por fase — defaults frugales + disa
   assert(agentArgs('coder', {}, '').includes('--allow-all-tools'), 'coder: completo (necesita mkdir/convenciones)');
   assert(agentArgs('planner', {}, '', { planner: 'all' }).includes('--allow-all-tools'), 'configurable vía conductor.json allowTools');
   assert(agentArgs('coder', {}, '--mis-flags').join(' ') === '--mis-flags', 'CONDUCTOR_AGENT_ARGS = override total');
-  // FILTRADO DE VISIBILIDAD (deep-search 2026-08-03: --allow-tool NO oculta schemas; --excluded-tools sí):
+  // FILTRADO DE VISIBILIDAD (--allow-tool NO oculta schemas; --excluded-tools sí):
   // las fases no-coder excluyen los tools pesados que jamás usan — sus schemas se pagaban en cada fase/lente
   const lean = base.join(' ');
   assert(lean.includes('--excluded-tools') && lean.includes('web_search') && lean.includes('powershell') && lean.includes('apply_patch'), 'planner: tools pesados EXCLUIDOS de la visibilidad (ahorro real de schemas)');
@@ -252,7 +252,7 @@ await test('drive(verify-cache): verifyInputsHash — estable con inputs idénti
   assert(verifyInputsHash({ ...base, model: 'm2' }) !== h1, 'cambia el modelo → hash distinto');
   assert(verifyInputsHash({ ...base, prompt: 'REVIEWER… v2' }) !== h1, 'cambia el prompt construido (prompts/reglas/contexto) → hash distinto');
   rmSync(T, { recursive: true, force: true });
-  // RCE-safe (auditoría senior 2026-06-17): --additional-mcp-config inyecta JSON arbitrario como argv y,
+  // RCE-safe (auditoría de seguridad): --additional-mcp-config inyecta JSON arbitrario como argv y,
   // con shell:true, es un vector de RCE-por-config (openspec/conductor.json = entrada NO confiable) →
   // requiere OPT-IN explícito (mcp.allowConfig / CONDUCTOR_ALLOW_MCP_CONFIG=1).
   const aNoOptin = agentArgs('coder', { disable: ['ruidoso'], coder: { postgres: { command: 'npx', args: ['x'] } } }, '');

@@ -9,7 +9,7 @@ export const THEME = `
   --tx:#0f1822;--tx2:#46556a;--tx3:#566073;--bd:#e1e8f0;--bd2:#eef2f7;
   --bg:#f6f8fb;--bg2:#eaf0f6;--card:#ffffff;
   --ok:#0b6b57;--okbg:#daf0e9;--bad:#af2a24;--badbg:#fbe3e1;--warn:#795009;--warnbg:#f6ecd4;
-  --accent:#1d5ae0;--accent2:#5b93ff;--accentbg:#e7efff; /* sync ui/theme.css 2026-07-31: acento-texto ≥4.5 sobre tintes */
+  --accent:#1d5ae0;--accent2:#5b93ff;--accentbg:#e7efff; /* sync ui/theme.css: acento-texto ≥4.5 sobre tintes */
   --sh:0 1px 2px rgba(15,30,55,.06),0 2px 8px rgba(15,30,55,.05);
   --shlg:0 6px 22px rgba(15,30,55,.10),0 20px 48px rgba(15,30,55,.10);--r:11px;
   --font:"Inter var",Inter,-apple-system,"Segoe UI Variable","Segoe UI",ui-sans-serif,system-ui,sans-serif;

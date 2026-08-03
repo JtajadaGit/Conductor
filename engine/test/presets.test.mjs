@@ -18,7 +18,7 @@ const SPEC_ID = '## ADDED Requirements\n<!-- id: REQ-C -->\n### Requirement: C\n
 const SPEC_NOID = '## ADDED Requirements\n### Requirement: C\nThe system SHALL c.\n#### Scenario: s\n- **GIVEN** a\n- **WHEN** b\n- **THEN** c';
 
 // agente parametrizable: spec con/sin id, código con/sin tag @conductor, y test con/sin tag (testTag:false
-// = el incidente real 2026-07-16: código trazado pero NINGÚN test lo cubre)
+// = el incidente real código trazado pero NINGÚN test lo cubre)
 const mkAgent = ({ spec = SPEC_ID, tag = true, testTag = tag } = {}) => (a) => {
   const { phase, writeTo, cwd } = a;
   if (phase === 'apply' || phase === 'fix') {
@@ -112,7 +112,7 @@ await test('presets(P0): el preset llega como OPCIÓN de drive() y GANA sobre co
   } finally { restoreEnv(saved); }
 });
 
-// ── strictTests (DEFAULT ON, incidente real 2026-07-16): "hecho sin test" no es hecho ──
+// ── strictTests (DEFAULT ON, incidente real "hecho sin test" no es hecho ──
 await test('strictTests(default): código trazado SIN test que lo cubra → BLOQUEA aunque no haya preset', async () => {
   const saved = clearEnv();
   try {

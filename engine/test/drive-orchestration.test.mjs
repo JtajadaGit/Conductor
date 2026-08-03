@@ -41,7 +41,7 @@ await test('anti-V1: el ORDEN de fases lo fija el código por complejidad, no el
 });
 
 await test('retry-delta: con progreso parcial el reintento dice "completa lo que falta" (jamas el mensaje falso de "no escribiste nada")', () => {
-  // caso real 2026-07-16: timeout tras escribir la fuente pero NO el test → re-pagaba la implementación entera
+ // caso real timeout tras escribir la fuente pero NO el test → re-pagaba la implementación entera
   const conProgreso = retryHint([{ p: 'src/invertir.pipe.ts', k: 'create' }], ['- [x] 1.1 [REQ-X] pipe base']);
   assert(conProgreso.includes('src/invertir.pipe.ts'), 'lista los ficheros ya escritos');
   assert(/NO los re-crees/.test(conProgreso), 'prohibe re-crear lo existente (ahorro de tokens)');

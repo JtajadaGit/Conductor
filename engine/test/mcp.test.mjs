@@ -80,7 +80,7 @@ await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "
     eq(p.status, 'paused'); eq(p.phase, 'apply');
     assert(p.artifacts['proposal.md']?.includes('porque sí'), 'artefacto de la pausa incluido');
     // 2) SIN FIN → retorna "working" dentro del presupuesto (no 30 min): el bucle lo lleva el agente,
-    //    y CON PROGRESO narrable (caja negra de OpenCode 2026-08-03: el chat no tenía nada que contar)
+ // y CON PROGRESO narrable (caja negra de OpenCode el chat no tenía nada que contar)
     state = {
       verdict: 'running', alive: true,
       phases: [{ phase: 'explore', ms: 56000, model: 'claude-sonnet-5', tokens: { in: 22000, out: 631 } }, { phase: 'propose', ms: 35000, model: 'claude-sonnet-5', tokens: { in: 21000, out: 485 } }],
@@ -96,7 +96,7 @@ await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "
     eq(w.progress.hecho, '2/5 fases');
     eq(w.progress.tokens, '↓43k ↑1.1k');
     assert(w.progress.registro.length === 2 && /spec \(planner\)/.test(w.progress.registro[1]), 'cola del registro incluida (2 líneas: payload a dieta)');
-    assert(/1 línea/.test(w.next) && w.next.length < 120, 'instruye narrar SIN sermón (payload a dieta, feedback 2026-08-03)');
+    assert(/1 línea/.test(w.next) && w.next.length < 120, 'instruye narrar SIN sermón (payload a dieta)');
     // 3) TERMINAL → done con el veredicto
     state = { verdict: 'GREEN', alive: false };
     const d = await pollRun(url, 'api/run/x', CH);
@@ -116,7 +116,7 @@ await test('mcp-config: imprime el snippet con la ruta REAL del motor resuelta e
 });
 
 await test('mcp: STATELESS-tolerante — tools/list y tools/call funcionan SIN initialize (spec 2026-07-28 elimina el handshake)', async () => {
-  // el protocolo MCP publica el 2026-07-28 su mayor revisión: stateless, sin initialize. Los clientes nuevos
+ // el protocolo MCP publica el su mayor revisión: stateless, sin initialize. Los clientes nuevos
   // llamarán directo; este server debe servirles igual que a los viejos (que sí hacen handshake). Guard anti-regresión.
   const c = client();
   const list = await c.rpc('tools/list', {}); // SIN initialize previo, a propósito
@@ -154,7 +154,7 @@ await test('mcp: ping y errores JSON-RPC', async () => {
 // Quien rellena estos argumentos es un MODELO, así que omitir uno es el caso NORMAL, no el raro. Antes la
 // llamada caía directa al fs y devolvía el error interno de Node ('The "path" argument must be of type
 // string. Received undefined'), que no le dice al agente QUÉ arreglar. Detectado barriendo las 17 tools
-// (2026-07-31): mcp.mjs tenía 18,8% de cobertura de funciones, así que nada de esto se ejecutaba en tests.
+// mcp.mjs tenía 18,8% de cobertura de funciones, así que nada de esto se ejecutaba en tests.
 await test('mcp: argumento obligatorio ausente → el mensaje NOMBRA el que falta (sin filtrar errores internos)', async () => {
   const c = client();
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });

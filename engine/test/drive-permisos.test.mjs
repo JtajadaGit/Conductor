@@ -1,4 +1,4 @@
-// Tests del GUARD DE RAÍZ y la detección de permisos denegados del CLI (caso real 2026-07-31: un agente
+// Tests del GUARD DE RAÍZ y la detección de permisos denegados del CLI (caso real un agente
 // de chat lanzó `conductor drive --src src` → projectRoot=subdirectorio sin openspec/ → el CLI denegó toda
 // escritura del artefacto y la fase murió en "no-progress" mudo tras quemar 2 intentos de modelo).
 import { drive, countDeniedPerms } from '../lib/pipeline/drive.mjs';

@@ -1,4 +1,4 @@
-// FAILOVER de modelo OPT-IN (T2 del barrido 2026-07-29): tras agotar maxRetries con fallo NO atribuible
+// FAILOVER de modelo OPT-IN (T2 del barrido tras agotar maxRetries con fallo NO atribuible
 // al contenido (timeout/provider/crash/no-progress), UN único intento extra con el modelo de reserva de
 // cfg.fallback (rol o fase; la fase gana). OFF por defecto = cero cambio de comportamiento.
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';

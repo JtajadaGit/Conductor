@@ -11,14 +11,14 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   const OS = join(TMP, 'openspec'); // openspecDir realista → .copilotignore va al root (padre de openspec/)
   const r = initConfig(OS);
   assert(r.created && existsSync(r.cfgPath), 'config creada');
-  // init v2 (2026-07-29): el schema YA NO se escribe en el repo del usuario (era ruido git; la validación
+  // init v2 : el schema YA NO se escribe en el repo del usuario (era ruido git; la validación
   // real es del motor). En su lugar: árbol OpenSpec completo + project.md (contexto con consumidor real).
   assert(!existsSync(join(OS, 'conductor.schema.json')), 'SIN conductor.schema.json en el repo del usuario');
   assert(existsSync(r.projectMd), 'project.md creado (contexto editable del equipo)');
   assert(existsSync(join(OS, 'specs', 'README.md')), 'specs/ visible (fuente de verdad viva)');
   assert(existsSync(join(OS, 'changes', 'archive', '.gitkeep')), 'changes/archive/ visible');
   assert(/Propósito/.test(readFileSync(r.projectMd, 'utf8')), 'project.md trae las secciones guía');
-  // (2026-07-30) el espejo detectado deja de nacer: se reescribía en cada arranque y no lo parseaba NADIE.
+  //  el espejo detectado deja de nacer: se reescribía en cada arranque y no lo parseaba NADIE.
   assert(!existsSync(join(OS, 'config.yaml')), 'SIN config.yaml (dato derivado: se detecta en runtime, no se versiona)');
   const pm = readFileSync(r.projectMd, 'utf8');
   assert(!/Stack \(detectado\)|## Estructura/.test(pm), 'project.md SIN stack/estructura (se escribían una vez y se pudrían, y van al prompt del planner)');
@@ -30,7 +30,7 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   assert(/^\.conductor\/$/m.test(readFileSync(join(TMP, '.gitignore'), 'utf8')), '.gitignore excluye el punto ÚNICO de estado de la raíz (.conductor/)');
   const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
   assert(!cfg.$schema, 'config SIN $schema colgante (no hay fichero al lado)');
-  assert(typeof cfg._ayuda === 'string' && cfg._ayuda.includes('conductor config'), 'el config que NACE se explica solo: UNA linea _ayuda que apunta a `conductor config` (feedback real: el fichero mudo obligaba a imaginar los mandos)');
+  assert(typeof cfg._ayuda === 'string' && cfg._ayuda.includes('conductor config'), 'el config que NACE se explica solo: UNA linea _ayuda que apunta a `conductor config` (el fichero mudo obligaba a imaginar los mandos)');
   assert(cfg.rules && typeof cfg.rules === 'object', 'config nace con rules (gobierno por fase, descubrible y vacío)');
   // el usuario edita su config y su .copilotignore → re-init NO los pisa (el schema sí se refresca)
   writeFileSync(r.cfgPath, JSON.stringify({ serve: false }));

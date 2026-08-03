@@ -11,10 +11,10 @@ export class FlowScreen extends CElement {
   // secuencia.
   private readonly phases = [
     { ph: 'propose', role: 'planner', prov: 'Copilot/LiteLLM', does: 'Propuesta: Why / What / Impact (lenguaje de dominio, sin nombres de framework).', guard: 'No avanza hasta que existe proposal.md.' },
-    // deep-search 2026-08-03: el guard de avance solo exige spec.md CON CONTENIDO; delta+escenarios los exige el GATE (bloquean el GREEN, no el paso)
+    // el guard de avance solo exige spec.md CON CONTENIDO; delta+escenarios los exige el GATE (bloquean el GREEN, no el paso)
     { ph: 'spec', role: 'planner', prov: 'Copilot/LiteLLM', does: 'Spec OpenSpec: requisitos SHALL + escenarios GIVEN/WHEN/THEN, con id REQ-…', guard: 'No avanza sin spec.md con contenido; la cabecera delta y el escenario por requisito los exige el GATE al verificar (bloquean el GREEN).' },
     { ph: 'apply', role: 'coder', prov: 'LiteLLM / Copilot', does: 'Implementa la spec a calidad de producción; comenta @conductor REQ-… en cada fichero.', guard: 'No avanza si el agente no escribió ningún fichero (reintenta).' },
-    // deep-search 2026-08-03: "checks" define QUÉ comandos, el toggle AUTORIZA a ejecutarlos (anti-RCE) — el "o" anterior mentía
+    // "checks" define QUÉ comandos, el toggle AUTORIZA a ejecutarlos (anti-RCE) — el "o" anterior mentía
     { ph: 'test (opcional)', role: 'tester', prov: '0 tokens', does: 'Ejecuta TUS pruebas reales — determinista, sin LLM. El toggle «test» autoriza; «checks» en conductor.json define los comandos.', guard: 'Si fallan → ciclo fix → re-test (máx. 2); si no converge o el comando ni arranca → escala a ti (BLOCKED).' },
     { ph: 'verify', role: 'reviewer', prov: 'Copilot/LiteLLM', does: 'Revisa por escenario (lentes paralelas: correctness/security/tests, +contract opt-in) + emite Verdict.', guard: 'GATE determinista (sin LLM) + el Verdict del reviewer: si FAIL → no cierra.' },
   ];
@@ -43,7 +43,7 @@ export class FlowScreen extends CElement {
             FALLA o el reviewer marca <code>FAIL</code> → inserta <b>fix → verify</b>; si tras los ciclos no converge → <span class="g-no">BLOCKED</span> («Necesita tu decisión»): el run escala a ti en vez de iterar a ciegas, con el motivo a la vista.</p>
         </div>
         <div class="flow-arrow" aria-hidden="true">↓</div>
-        <!-- deep-search 2026-08-03: "firmado" a secas mentía — por defecto es SHA-256 de integridad; Ed25519 exige clave -->
+        <!-- "firmado" a secas mentía — por defecto es SHA-256 de integridad; Ed25519 exige clave -->
         <div class="flow-seal"><b>GREEN</b> → código + spec + informe + <b>sello de procedencia</b> (SHA-256 de integridad; firma Ed25519 si configuras <code>CONDUCTOR_PRIV_KEY</code>) + entrada en el <i>ledger</i> (audit trail).</div>
       </div>
 

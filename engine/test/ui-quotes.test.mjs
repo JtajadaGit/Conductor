@@ -1,4 +1,4 @@
-// Regresión REAL (2026-06-16): comillas tipográficas (" " ' ') en el fuente de la UI COMPILAN con
+// Regresión REAL comillas tipográficas (" " ' ') en el fuente de la UI COMPILAN con
 // TypeScript/Vite (dentro de un template literal de Lit son texto), pero el navegador NO las reconoce como
 // delimitadores de atributo → class="card" deja de casar → el CSS no aplica → panel roto. Lo destapó la
 // verificación en navegador, no el build. Este guard lo caza en CI sin necesidad de abrir el navegador.

@@ -1,4 +1,4 @@
-// conductor/lib/core/plumb.mjs — COSTURA de la fontanería runtime (plan expertise 2026-07-17, fase 1/2).
+// conductor/lib/core/plumb.mjs — COSTURA de la fontanería runtime .
 // HOY: identidad — la fontanería de un run vive en <change>/.conductor/ como siempre (cero cambio de
 // comportamiento; la prueba del refactor es que NINGÚN test se toca).
 // MAÑANA (fase 2 aprobada): cambiar SOLO estas dos funciones moverá TODO el estado runtime a
@@ -7,8 +7,8 @@
 // motor pasan por aquí — el flip será una función, no 66 sitios.
 import { join, resolve, basename, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
-// FASE 2 EJECUTADA (2026-07-31, feedback real: "una carpeta .conductor dentro de cada feature es poco
-// profesional — ruido para el developer"): la fontanería runtime vive en UN punto de la raíz del
+// FASE 2 — una carpeta .conductor dentro de cada feature es ruido para el developer:
+// la fontanería runtime vive en UN punto de la raíz del
 // proyecto — <proyecto>/.conductor/runs/<change>/ (patrón .git/.angular/.terraform; las skills de
 // proyecto ya vivían en <proyecto>/.conductor/skills). La carpeta del change queda SOLO con los
 // artefactos OpenSpec del desarrollador. HOME (~/.conductor) quedó DESCARTADO con datos de hoy: el
@@ -35,7 +35,7 @@ function plumbBase(changeDir) {
 export const plumbPath = (changeDir, ...rest) => join(plumbBase(changeDir), ...rest);
 export const plumbDir = (changeDir) => plumbBase(changeDir);
 
-// FASE 3 (2026-08-03, feedback real: «¿qué mierda hacen provenance.json y dashboard.html en el change?»):
+// FASE 3 — provenance.json y dashboard.html tampoco pintan nada en el change:
 // los GENERADOS del run (informe HTML, sello) también son fontanería — nacen en la evidencia. Los changes
 // ANTERIORES los tienen en la raíz del change → los lectores buscan en ambos sitios, moderno primero.
 // Sin ninguno de los dos → devuelve el moderno (es el destino de escritura).

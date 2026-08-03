@@ -2,7 +2,7 @@
 // Un validador que acepta de más deja pasar gobierno mal escrito (y el equipo cree tener gates que no
 // tiene); uno que rechaza de más bloquea a gente que hizo las cosas bien. Las dos fallan caro, así que
 // aquí se prueban los dos sentidos: lo válido pasa Y lo inválido se caza, con el motivo correcto.
-// (2026-07-31: `core/jsonschema.mjs` estaba al 60% de funciones — el subconjunto draft 2020-12 que
+// `core/jsonschema.mjs` estaba al 60% de funciones — el subconjunto draft 2020-12 que
 // declara soportar no se ejercitaba casi nada.)
 import { validate } from '../lib/core/jsonschema.mjs';
 import { CONFIG_SCHEMA } from '../lib/analysis/scaffold.mjs';

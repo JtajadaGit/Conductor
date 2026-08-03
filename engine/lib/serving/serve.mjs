@@ -527,13 +527,13 @@ const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><r
 // plugin → al actualizar el motor (auto-relevo), 'activate' purga la vieja (skipWaiting+clients.claim) y
 // NUNCA sirve un app-shell rancio. /api/* = red SIEMPRE y JAMÁS cacheado: con el server caído devuelve un 503
 // sintético {offline:true} — antes servía /api/changes de caché y el panel FINGÍA estar vivo con datos viejos
-// (queja real 2026-07-28: «stop y la web sigue funcionando»). /assets/* hasheados = cache-first (inmutables);
+// (un stop debe apagar también la web). /assets/* hasheados = cache-first (inmutables);
 // navegación = network-first con fallback al shell cacheado (la SPA pinta su estado «apagado» encima).
 // La clave incluye la HUELLA DE BUILD de la UI, no solo la versión del paquete: los assets son cache-first
 // e inmutables, así que con una clave fija por versión (era `conductor-v<version>`) recompilar la UI sin
 // subir versión NO purgaba nada (el activate solo borra claves distintas) y las pestañas abiertas y la PWA
 // instalada se quedaban pidiendo chunks que Vite ya había renombrado → pantalla en blanco. Pasó de verdad
-// el 2026-07-31 tras un `npm i -g`. Con el hash del index.html en la clave, cada build purga el anterior.
+// tras un `npm i -g`. Con el hash del index.html en la clave, cada build purga el anterior.
 const swJs = (version, build) => `const V='conductor-v${version || '0'}-${build || 'dev'}';const SHELL=['/','/manifest.json','/icon.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL).catch(()=>{})))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
@@ -754,7 +754,7 @@ async function _computeAvailableModels(registry) {
     const curHash = byokUrlHash(creds.baseUrl);
     if (cache?.byok?.models?.length && cache.byok.baseUrlHash === curHash) { for (const m of cache.byok.models) byok.add(m); byokSource = 'LiteLLM (cache)'; byokCachedAt = cache.byok.at || null; if (cache.byok.prices) setLivePrices(cache.byok.prices); if (cache.byok.meta) setLiveMeta(cache.byok.meta); }
   }
-  // HONESTIDAD del grupo LiteLLM (feedback real: "aparece qwen, ¿qué mierda es esa?"): sin creds usables o
+  // HONESTIDAD del grupo LiteLLM (un modelo sin origen claro confunde): sin creds usables o
   // con la key RECHAZADA (401/403), NO se ofrecen modelos byok de cache/observados — serían fantasmas no
   // lanzables (el run daría BLOCKED). La UI enseña el MOTIVO (byokReason) o "sin conectar" en su lugar.
   if (!byok.size && obsByok.size && creds && !byokReason) { for (const m of obsByok) byok.add(m); byokSource = 'observados (sin catálogo LiteLLM)'; } // fallback: red caída puntual con key válida
@@ -831,7 +831,7 @@ export function checkByokModels(models, byokList, hasCreds) {
   return { ok: true };
 }
 
-// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO (B5 plan expertise 2026-07-17): el flujo pedido por el propietario del producto —
+// GUARDAR MEZCLA COMO DEFAULT DEL PROYECTO : el flujo pedido por el propietario del producto —
 // "defaults en el repo, la web los cambia". Merge CONSERVADOR en openspec/conductor.json: solo la sección
 // models, clave a clave (roles y fases válidas), '' = borrar esa clave (volver a "Recomendado"); jamás pisa
 // otras claves del fichero; si el JSON del usuario está roto, NO se toca. Puro y exportado (testeable).
@@ -947,7 +947,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
   // init v2: la app garantiza la plantilla de credenciales aunque nadie pasara por setup/init.
   // DENTRO de createAppServer (no a nivel de módulo): un import jamás debe escribir en el HOME real.
   try { ensureByokTemplate(CONDUCTOR_HOME()); } catch { /* best-effort: el panel enseña el formato igualmente */ }
-  // (2026-07-30) SIN refresco de config.yaml al arrancar: el espejo detectado ya no existe — el stack se
+  //  SIN refresco de config.yaml al arrancar: el espejo detectado ya no existe — el stack se
   // detecta en cada run (detectStack) y se enseña en el panel. Un dato derivado no se versiona.
   // registro de proyectos: persistido + el root inicial como proyecto por defecto
   const registry = new Map(); // id → { id, root, name }

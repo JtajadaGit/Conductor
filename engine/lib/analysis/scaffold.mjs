@@ -140,7 +140,7 @@ export const CONFIG_SCHEMA = {
 // (_ayuda/_ejemplos siguen ACEPTADOS por el schema: los repos que ya los tienen no dejan de validar.)
 const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
-  // se puede configurar ("me tengo que imaginar cómo funciona" — feedback real). La doc completa, en
+  // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
   _ayuda: 'TODO es opcional (hay default para todo). Mandos: models (por rol o por FASE — la fase gana), preset, rules, pipeline, checks, preconditions, pauseAt, fallback, tiers, budget… Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
   models: {},
@@ -154,7 +154,7 @@ const COPILOTIGNORE = [
   'node_modules/', 'dist/', 'build/', 'out/', 'target/', 'coverage/', '.angular/',
   '*.log', '*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
   '.env', '.env.*', '*.pem', '*.key', '*.min.js', '*.map',
-  // delta 2026-08-03 (deep-search token-first): más generados/cachés multi-stack. Solo proyectos NUEVOS
+  // delta token-first: más generados/cachés multi-stack. Solo proyectos NUEVOS
   // (el fichero jamás se pisa si existe). vendor/* con asterisco A PROPÓSITO: así ignoreDirsFrom (solo
   // nombres simples) NO deja de capturar un cambio legítimo dentro de vendor/, pero el host sí lo excluye.
   '.next/', '.nuxt/', '.svelte-kit/', 'dist-esm/', 'storybook-static/', 'generated/',
@@ -165,7 +165,7 @@ const COPILOTIGNORE = [
   '.conductor/',
 ].join('\n') + '\n';
 
-// openspec/config.yaml YA NO SE GENERA (2026-07-30). Era un ESPEJO de lo detectado que se reescribía en
+// openspec/config.yaml YA NO SE GENERA . Era un ESPEJO de lo detectado que se reescribía en
 // cada arranque y que NADIE parseaba (su único consumidor era un existsSync de isSdd) — 20 líneas de diff
 // diario en el repo del usuario a cambio de cero información. Un dato derivado no se versiona: se
 // recalcula (detectStack en cada run) y se enseña en el panel. Los repos que ya lo tienen lo conservan y
@@ -194,7 +194,7 @@ export function initConfig(openspecDir) {
   let created = false;
   if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
   const root = dirname(resolve(openspecDir));
-  // ÁRBOL OpenSpec visible desde el minuto uno (init v2, 2026-07-29): un dev que conoce el estándar debe
+  // ÁRBOL OpenSpec visible desde el minuto uno (init v2): un dev que conoce el estándar debe
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
   mkdirSync(join(openspecDir, 'specs'), { recursive: true });

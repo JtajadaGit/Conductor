@@ -1,7 +1,7 @@
 // sdk-usage.test.mjs — TOKENS DEL RUNNER SDK (recibo de cierre "session.shutdown").
 // Con --runner sdk, el runtime de Copilot lo lanza el SDK, no el driver: nadie honra
 // COPILOT_OTEL_FILE_EXPORTER_PATH y readTokens() no encuentra nada. Resultado medido en runtime real
-// (2026-07-31): las 4 fases del run salían con tokens/model/provider en null, y con ellas se apagaban
+// las 4 fases del run salían con tokens/model/provider en null, y con ellas se apagaban
 // EN SILENCIO el presupuesto duro, stats, los AI credits y el MAPE del estimador — la app iba más rápida
 // pero ciega al gasto. Este test fija las dos mitades del arreglo: la CONVERSIÓN del recibo y su CABLEADO
 // hasta el timeline (incluida la rama de lentes, que agrega por su cuenta).
@@ -82,7 +82,7 @@ await test('drive: sin recibo se sigue leyendo el OTel — el runner spawn no ca
 const shutdownLine = (data) => JSON.stringify({ type: 'session.shutdown', data }) + '\n';
 
 await test('parseSessionUsage: sesión BYOK (solo modelMetrics, SIN tokenDetails) — el caso que devolvía null teniendo el dato', () => {
-  // medido 2026-07-31: las sesiones contra LiteLLM no emiten tokenDetails; exigirlo dejaba el runner por
+ // medido las sesiones contra LiteLLM no emiten tokenDetails; exigirlo dejaba el runner por
   // defecto con tokens null aunque el consumo estuviera en disco
   const tr = shutdownLine({ currentModel: 'deepseek-v4-flash', modelMetrics: { 'deepseek-v4-flash': { usage: { inputTokens: 269857, outputTokens: 9278, cacheReadTokens: 170496 } } } });
   eq(parseSessionUsage(tr), { in: 99361, out: 9278, cached: 170496, model: 'deepseek-v4-flash' });

@@ -2,7 +2,7 @@
 import { createSdkRunner } from '../lib/pipeline/sdk-runner.mjs';
 
 function mockSdk(record) {
-  // ESPEJO del SDK real (v1.0, verificado en runtime 2026-07-31): el método de cierre es disconnect() —
+ // ESPEJO del SDK real (v1.0, verificado en runtime el método de cierre es disconnect —
   // destroy() NO EXISTE — y al cerrar se emite "session.shutdown" con el usage. El mock anterior exponía
   // destroy(), así que la suite daba por bueno un `session.destroy?.()` que en producción era un no-op.
   class MockSession {
@@ -40,7 +40,7 @@ await test('sdk-runner: crea sesión POR FASE con modelo y provider BYOK (/v1) c
 
 await test('sdk-runner: el recibo de cierre (session.shutdown) vuelve como usage — sin él la fase iba a tokens null', async () => {
   const rec = { sessions: [], prompts: [], disconnected: 0 };
-  // forma REAL medida en el sandbox contra el CLI (2026-07-31)
+ // forma REAL medida en el sandbox contra el CLI
   rec.shutdown = { currentModel: 'claude-sonnet-5', modelMetrics: { 'claude-sonnet-5': { usage: { inputTokens: 19400, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 19398 }, requests: { count: 1, cost: 1 } } } };
   const run = await createSdkRunner({ sdk: mockSdk(rec), env: {} });
   const r = await run({ prompt: 'x', timeoutMs: 5000 });

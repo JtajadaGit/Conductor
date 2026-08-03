@@ -243,7 +243,7 @@ function runGate(dir, srcDir, strict = {}) {
   if (trace) {
     for (const f of trace.findings) {
       // strict.trace (contractual) eleva AMBOS huecos; strict.tests (DEFAULT ON, opt-out strictTests:false)
-      // eleva SOLO el "código sin test" — cura del incidente real 2026-07-16 (GREEN con el test sin escribir
+      // eleva SOLO el "código sin test" — cura del incidente real (GREEN con el test sin escribir
       // porque el coder agotó el timeout). "Hecho sin test" no es hecho, salvo que el preset laxo lo permita.
       if (strict.trace && (f.rule === 'trace.coverage-gap' || f.rule === 'trace.test-gap')) f.severity = 'error';
       else if (strict.tests !== false && f.rule === 'trace.test-gap') f.severity = 'error';

@@ -1,5 +1,4 @@
-// CONTRATO litellm.json (feedback real: "¿por qué byok.json y no litellm.json? ¿por qué no lo recreamos
-// como mi opencode.json?"): el fichero user-facing es ~/.conductor/litellm.json con el MISMO gesto que la
+// CONTRATO litellm.json (litellm.json es el nombre honesto; la plantilla se garantiza): el fichero user-facing es ~/.conductor/litellm.json con el MISMO gesto que la
 // config de OpenCode ({baseUrl, apiKey, models?}); los modelos DECLARADOS mandan en el picker (no dependen
 // del proxy vivo); byok.json queda como legado leíble; "litellm:" = alias del prefijo "byok:" en modelos.
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
@@ -107,7 +106,7 @@ await test('litellm-compat: el bloque de proveedor de OpenCode PEGADO TAL CUAL f
   try {
     writeFileSync(join(home, 'litellm.json'), JSON.stringify({
       npm: '@ai-sdk/openai-compatible', name: 'LiteLLM',
-      seal: true, // el sellado es OPT-IN desde 2026-07-31 (paridad OpenCode); este test prueba el MECANISMO
+ seal: true, // el sellado es OPT-IN desde (paridad OpenCode); este test prueba el MECANISMO
       options: { baseURL: 'https://proxy.corp', apiKey: 'sk-real-abc', headerTimeout: 15000, chunkTimeout: 60000, timeout: 300000 },
       models: { 'glm-v52': { name: 'GLM 5.2', limit: { context: 250000, output: 16384 } } },
     }));

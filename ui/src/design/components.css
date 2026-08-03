@@ -3,7 +3,7 @@
    raíl del timeline, badges, tokens, ficheros, prompt, form, filas del panel, etc. */
 
 /* badges */
-/* PASE DE CALMA (2026-07-31): los badges dejan de gritar — outline sutil sin relleno; el PROVEEDOR se
+/* PASE DE CALMA: los badges dejan de gritar — outline sutil sin relleno; el PROVEEDOR se
    codifica con un punto de color (información, no decoración); solo warn conserva su ámbar de aviso. */
 .badge { display: inline-flex; align-items: center; gap: .32rem; background: transparent; border: 1px solid var(--bd2); border-radius: 5px; padding: .1rem .5rem; color: var(--tx2); font-weight: 500; font-size: .72rem; white-space: nowrap; }
 .badge.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--bd)); background: var(--warnbg); }
@@ -63,7 +63,7 @@
 .rail .ph:nth-child(10) { animation-delay: 405ms; }
 
 .ph .row { display: flex; align-items: center; gap: .35rem .6rem; flex-wrap: wrap; }
-/* un badge JAMÁS parte su texto ni se encoge (verificación e2e 2026-07-31: a anchos estrechos el flex
+/* un badge JAMÁS parte su texto ni se encoge (verificación e2e: a anchos estrechos el flex
    podía estrujarlos); si no cabe, salta ENTERO a la línea siguiente */
 .ph .row .badge, .ph .row .mod { flex: none; }
 .ph .name { font-weight: 650; letter-spacing: -.01em; }
@@ -542,10 +542,10 @@ details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; l
 .btn.receipt:not(:disabled):hover { background: var(--accent); color: #fff; border-color: var(--accent); filter: none; }
 @media (prefers-reduced-motion: reduce) { .redo-btn { transition: none; } }
 
-/* ── ALERTS del cockpit (decisión UX 2026-07-31): los mensajes de estado dejan de ser texto suelto.
+/* ── ALERTS del cockpit (decisión UX): los mensajes de estado dejan de ser texto suelto.
    info = contexto tranquilo (checkpoint) · warn = requiere tu atención (interrumpido, límites). ── */
 .alert { display: flex; gap: .55rem; align-items: flex-start; margin: .65rem 0; padding: .6rem .8rem; border-radius: var(--r-sm); font-size: .8rem; line-height: 1.5; border: 1px solid var(--bd); background: var(--bg2); color: var(--tx2); }
-/* SIN iconos emoji (verificación visual 2026-07-31: a 14px el 🛟 leía como error rojo dentro de la banda
+/* SIN iconos emoji (verificación visual: a 14px el 🛟 leía como error rojo dentro de la banda
    info): el ancla es tipográfica — borde IZQUIERDO de 3px del color semántico + la palabra clave en bold. */
 .alert.info { border-color: color-mix(in srgb, var(--accent) 30%, var(--bd)); border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--bg2)); }
 .alert.warn { border-color: color-mix(in srgb, var(--warn) 38%, var(--bd)); border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg2)); color: var(--tx); }
@@ -560,7 +560,7 @@ details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; l
 .ph-real { font: 600 .7rem/1 var(--mono); color: var(--tx2); font-variant-numeric: tabular-nums; }
 .ph-est { font: .66rem/1 var(--mono); color: var(--tx3); font-variant-numeric: tabular-nums; padding-left: .55rem; border-left: 1px solid var(--bd2); }
 
-/* ── TABS de la tarjeta de fase (rediseño 2026-07-31): botones FIJOS que jamás se mueven + UN panel de
+/* ── TABS de la tarjeta de fase (rediseño botones FIJOS que jamás se mueven + UN panel de
    contenido único debajo. Abrir/cerrar no reordena nada: cero saltos de línea al interactuar. ── */
 .ph-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .85rem; }
 .tchip { cursor: pointer; display: inline-flex; align-items: center; gap: .35rem; font: 600 .64rem/1 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--tx2); background: transparent; border: 1px solid var(--bd2); border-radius: 6px; padding: .38rem .65rem; transition: color .12s, border-color .12s, background .12s; user-select: none; }

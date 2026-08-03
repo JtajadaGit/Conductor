@@ -104,7 +104,7 @@ export class AppSidebar extends CElement {
           ${nGreen > 0 ? html`<span class="g" title="GREEN">${nGreen} ✓</span>` : nothing}
           ${nActive > 0 ? html`<span class="w" title="en curso">${nActive} ◉</span>` : nothing}
         </div>` : nothing}
-        <!-- notebook: índice discreto en mono, sin emojis (decisión UX 2026-07-31: los iconos de colores
+        <!-- notebook: índice discreto en mono, sin emojis (decisión UX: los iconos de colores
              desentonaban con la voz de instrumento del resto del cockpit) -->
         <nav class="sb-foot-nav" aria-label="Más">
           <a class="sb-flink ${this.activeRoute === 'flow' ? 'active' : ''}" href="/flow" aria-current=${this.activeRoute === 'flow' ? 'page' : nothing}>Flujo</a>

@@ -1,5 +1,5 @@
 // ui-static.test.mjs — el servidor de estáticos del panel. Aquí nacen los 404 de chunks que dejaron la app
-// en blanco (2026-07-31), y al servir ficheros del disco es superficie de travesía de rutas. Se prueba con
+// en blanco y al servir ficheros del disco es superficie de travesía de rutas. Se prueba con
 // un `res` de mentira: sin sockets, sin puertos, sin esperas.
 import { serveStatic, uiStaticDir, hasStaticUi } from '../lib/serving/ui-static.mjs';
 import { dirname, join, sep } from 'node:path';

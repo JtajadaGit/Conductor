@@ -9,7 +9,7 @@ import './components/app-shell';
 // en navegadores sin SW o contextos no seguros (file://) — el cockpit sigue funcionando igual.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').catch(() => {}); });
-  // RELEVO SIN QUEDARSE ATRÁS (bug real 2026-07-31): tras un redeploy, la recarga del auto-relevo aún la
+  // RELEVO SIN QUEDARSE ATRÁS (bug real): tras un redeploy, la recarga del auto-relevo aún la
   // servía el SW VIEJO (assets cache-first) y el SW nuevo activaba DESPUÉS borrando esa caché → la pestaña
   // quedaba UNA RECARGA POR DETRÁS para siempre y los chunks viejos daban 404 (CSS a medias, texto crudo).
   // Patrón estándar: cuando el SW nuevo TOMA EL CONTROL (clients.claim), recarga ÚNICA — todo sale ya del

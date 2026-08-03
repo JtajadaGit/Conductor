@@ -24,7 +24,7 @@ app-sidebar {
 }
 .layout.sbhide aside.sb { display: none; }
 /* con el aside en display:none, main pasa a ser el PRIMER hijo del grid y caía en la columna de 0px
-   (pantalla «apagado» estrujada a ~120px — cazado por el loop visual it.2, 2026-07-31): que abarque todo */
+   (pantalla «apagado» estrujada a ~120px — cazado por el verificación visual): que abarque todo */
 .layout.sbhide main.content { grid-column: 1 / -1; }
 
 /* ── Marca (NO es un enlace: el Dashboard ya lleva a "/"). Identidad, no acción. ── */
@@ -227,7 +227,7 @@ h1 { font-size: 1.55rem; }
 .offline-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 60; display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .4rem .8rem; background: var(--warn); color: #fff; font: 600 .8rem/1.3 var(--font); box-shadow: var(--sh); }
 .offline-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: pulse 1.4s ease-in-out infinite; }
 
-/* estado «servidor apagado» — honesto y a pantalla completa (la barrita se ignoraba; queja real 2026-07-28) */
+/* estado «servidor apagado» — honesto y a pantalla completa (la barrita se ignoraba; queja real */
 /* ── Velo de transición: la firma de conductor en movimiento — 7 fases encendiéndose EN ORDEN,
    izquierda→derecha (un driver determinista no gira: avanza). Tokens del tema → claro/oscuro gratis. ── */
 .veil { position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .85rem; background: color-mix(in srgb, var(--bg) 84%, transparent); backdrop-filter: blur(3px); animation: veilIn .16s ease-out both; }
@@ -241,7 +241,7 @@ h1 { font-size: 1.55rem; }
 @keyframes veilTick { 0%, 12% { background: var(--bd2); box-shadow: none } 18%, 55% { background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent) } 72%, 100% { background: var(--bd2); box-shadow: none } }
 .veil-lbl { font: 700 .62rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--tx2); }
 @media (prefers-reduced-motion: reduce) {
-  /* loop visual it.4 (2026-07-31): phpulse seguía INFINITO con reduced-motion (cazado midiendo, no mirando).
+  /* verificación reduced-motion: phpulse seguía INFINITO con reduced-motion (cazado midiendo, no mirando).
      Se apaga TODA la animación decorativa: pulsos (fase activa, dot en curso, barra), entradas (slideUp/
      slideInLeft/fadeIn) y el velo. El estado sigue legible por color/posición — sin movimiento. */
   .ph.now::before, .ph.pending::before, .sb-run .dot.CURSO, .ph.now .bar > i,
@@ -256,7 +256,7 @@ h1 { font-size: 1.55rem; }
 .srv-down h1 { font-size: 1.25rem; margin: 0; }
 .srv-down p { color: var(--tx2); max-width: 34rem; margin: 0 0 .6rem; line-height: 1.55; }
 
-/* ── .sb-foot-nav notebook (decisión UX 2026-07-31): índice discreto — hairline arriba, mono en caja alta,
+/* ── .sb-foot-nav notebook (decisión UX): índice discreto — hairline arriba, mono en caja alta,
    sin emojis; el activo lleva la barrita de acento como el resto de la navegación. ── */
 .sb-foot-nav { display: flex; flex-direction: column; gap: 0; padding: .55rem 0 .35rem; margin-top: .4rem; border-top: 1px solid var(--bd); }
 .sb-flink { position: relative; display: flex; align-items: center; padding: .34rem .55rem; border-radius: 6px; font: 600 .66rem/1.5 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--tx3); text-decoration: none; transition: color .12s, background .12s; }

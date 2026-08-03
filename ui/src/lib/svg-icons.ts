@@ -1,6 +1,6 @@
 import { html, type TemplateResult } from 'lit';
 
-/** Iconos del cockpit (dirección UX 2026-07-31: "me gustaban los iconos, siempre con sentido y gusto").
+/** Iconos del cockpit ("me gustaban los iconos, siempre con sentido y gusto").
  * NO emojis (rompían en tamaño/color entre plataformas): SVG de TRAZO monocromo, 14px, `currentColor` —
  * heredan la voz del botón donde viven (secundaria tranquila, primaria en acento) sin añadir color propio.
  * Uno por ACCIÓN, solo donde el icono significa algo; jamás decoración. */

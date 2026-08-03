@@ -292,7 +292,7 @@ export class RunScreen extends CElement {
   }
 
   private viewSpecDiff(dom: string): void {
-    // en document, NO en window: el visor escucha en document y un evento despachado en window jamás le llega (bug it.7)
+    // en document, NO en window: el visor escucha en document y un evento despachado en window jamás le llega (los sitios sanos despachan en document)
     document.dispatchEvent(new CustomEvent('cdr-view', { detail: { apiBase: this.apiBase, kind: 'specdiff', path: dom } }));
   }
 
@@ -448,7 +448,7 @@ export class RunScreen extends CElement {
   private toggleTool(key: string, tab: string): void {
     this.tool = { ...this.tool, [key]: this.tool[key] === tab ? '' : tab };
   }
-  // icono por pestaña (dirección 2026-07-31 "añade tabs de fase"): doc=ficheros escritos, eye=lo que vio el agente, terminal=salida cruda
+  // icono por pestaña ("añade tabs de fase"): doc=ficheros escritos, eye=lo que vio el agente, terminal=salida cruda
   private tchip(key: string, tab: string, label: string): TemplateResult {
     const ic = tab === 'files' ? 'doc' : tab === 'ctx' ? 'eye' : 'terminal';
     const on = this.tool[key] === tab;
@@ -478,7 +478,7 @@ export class RunScreen extends CElement {
         ${p.resumed ? html`<span class="badge" title="fase completada en el run anterior (interrumpido/reanudado) — se reutiliza su artefacto SIN volver a pagarla">${icon('redo')} heredada</span>` : nothing}
         <span class="right"><b class="ph-time">${secs(p.ms)}</b>${p.tokens ? html`<span class="ph-real" title="tokens reales de la fase">↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}</span>` : nothing}${this.estFor(p.phase) ? html`<span class="ph-est" title="estimación preflight (sin gastar API)">est ↓${fmt(this.estFor(p.phase)!.estIn)} ↑${fmt(this.estFor(p.phase)!.estOut)}</span>` : nothing}</span>
       </div>
-      <!-- TABS FIJOS de la tarjeta (rediseño 2026-07-31, feedback "saltos al interactuar"): los botones
+      <!-- TABS FIJOS de la tarjeta (interactuar no debe desplazar nada): los botones
            JAMÁS se mueven; el contenido vive en UN panel único debajo que solo intercambia contenido. -->
       <div class="ph-tools" role="tablist" aria-label="detalle de la fase ${p.phase}">
         ${Array.isArray(p.files) && p.files.length ? this.tchip(tkey, 'files', `${p.files.length} ${p.files.length === 1 ? 'fichero' : 'ficheros'}`) : nothing}

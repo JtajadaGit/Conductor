@@ -8,7 +8,7 @@ import { readdirSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-// RUTA ESTÁNDAR (decisión 2026-07-17, "la gente usa estándar Copilot"): `.github/skills` — el MISMO sitio
+// RUTA ESTÁNDAR ("la gente usa estándar Copilot"): `.github/skills` — el MISMO sitio
 // del estándar Agent Skills que Copilot ya entiende; cero carpetas inventadas en el proyecto del usuario.
 const githubSkillsDir = (projectRoot) => join(projectRoot, '.github', 'skills');
 // LEGADO (se sigue leyendo, nunca se crea): .conductor/skills — el invento pre-estándar.

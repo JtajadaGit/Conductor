@@ -237,7 +237,7 @@ switch (cmd) {
       } else {
         // CONDUCTOR_TTY=1 con PIPE (Git Bash/MinTTY/scripts): el pipe cierra stdin ANTES de la primera pausa
         // (las fases tardan minutos) → readline moría con "readline was closed" en plena revisión (bug real,
-        // cazado en la batería de pruebas 2026-07-16). Misma cura que litellm login/setup: TODO stdin de golpe
+ // cazado en la batería de pruebas. Misma cura que litellm login/setup: TODO stdin de golpe
         // en una cola; cada pausa consume una línea. Cola agotada = aprobar (el script ya dijo todo lo suyo).
         const cola = [];
         let colaLista = new Promise((res) => {
@@ -489,7 +489,7 @@ switch (cmd) {
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
     const r = initConfig(join(rootI2, 'openspec'));
-    // /conductor POR-PROYECTO y COMMITTEABLE (decisión 2026-07-29): la integración de MÁQUINA la hace
+ // /conductor POR-PROYECTO y COMMITTEABLE (decisión la integración de MÁQUINA la hace
     // `setup`; init deja los comandos de PROYECTO — al clonar el repo, TODO el equipo hereda /conductor.
     // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.
     const BODY_CMD = [
@@ -739,7 +739,7 @@ switch (cmd) {
         console.log(`  bundle vs lib/: ${cur === embedded ? 'EN SYNC' : 'DESACTUALIZADO → corre `node engine/build.mjs && cp engine/dist/conductor.mjs assets/`'}`);
       } else { console.log('  bundle vs lib/: (no comprobable fuera del repo)'); }
     } catch { console.log('  bundle vs lib/: (no comprobable)'); }
-    // ── DOCTOR v2 (plan expertise 2026-07-17): el mundo nuevo — credenciales, prompts, hosts ──
+ // ── DOCTOR v2 (plan expertise el mundo nuevo — credenciales, prompts, hosts ──
     // credenciales LiteLLM: existe / sellada / motivo (reutiliza la resolución central byokFile)
     try {
       const homeD = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
@@ -1004,7 +1004,7 @@ switch (cmd) {
     const yes = (a) => { const s = String(a).toLowerCase(); return s === '' || s === 's' || s === 'si' || s === 'sí' || s === 'y' || s === 'yes'; };
     const homeI = process.env.CONDUCTOR_HOME || join(homedir(), '.conductor');
     // credenciales: NUNCA se piden aquí (la key jamás se teclea en un wizard/web). El fichero SÍ se deja
-    // CREADO con PLANTILLA (decisión 2026-07-17: "debería estar creado al instalar, con plantilla para que
+ // CREADO con PLANTILLA (decisión "debería estar creado al instalar, con plantilla para que
     // la gente vea cómo meterlo") — el usuario solo lo ABRE y RELLENA. La plantilla sin rellenar no cuenta
     // como credenciales (isTemplateCreds) ni se cifra. `litellm login` sigue para quien prefiera asistente.
     const credF = join(homeI, 'litellm.json');

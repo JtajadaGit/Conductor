@@ -95,7 +95,7 @@ export function isPortableBlob(enc) { return !!enc && String(enc).startsWith(V2)
 // plantilla SIN rellenar jamás cuente como credenciales (ni se cifra, ni pinta modelos en el selector).
 // GARANTÍA DE PLANTILLA (init v2): la crea CUALQUIER punto de entrada (setup, init, arranque de la app,
 // litellm status) — antes solo setup, y quien iba directo a init encontraba un hint hacia un fichero
-// inexistente (queja real 2026-07-29). Idempotente: jamás pisa credenciales existentes (ni legado byok.json).
+// inexistente (queja real). Idempotente: jamás pisa credenciales existentes (ni legado byok.json).
 export function ensureByokTemplate(home) {
   try {
     const dir = home || homeDir();
@@ -135,7 +135,7 @@ export function byokFile(home = homeDir()) {
 // pista de rotación dentro; la key en claro desaparece del disco. Si el cifrado no verifica round-trip,
 // NO se toca nada (mejor plaintext utilizable que credenciales rotas). Un byok.json legado en claro se
 // sella Y MIGRA a litellm.json en el mismo gesto. Devuelve true solo si selló.
-// COMPAT DE FORMA (2026-07-29): el dev puede PEGAR su bloque de proveedor de OpenCode tal cual
+// COMPAT DE FORMA : el dev puede PEGAR su bloque de proveedor de OpenCode tal cual
 // ({options:{baseURL, apiKey, timeout…}, models:{…}}) — o el nuestro plano ({baseUrl, apiKey, models}).
 // Normaliza a plano: baseUrl (acepta baseURL y options.*), apiKey/apiKeyEnc (top u options), timeout total.
 export function normalizeByokShape(j) {
@@ -155,7 +155,7 @@ export function sealByokFile(home = homeDir()) {
   try {
     const p = byokFile(home);
     const j = JSON.parse(readFileSync(p, 'utf8'));
-    // PARIDAD OpenCode (decisión 2026-07-31, feedback real: "cifrar la key es una cagada" — su opencode.json
+    // PARIDAD OpenCode (decisión de producto: "cifrar la key es una cagada" — su opencode.json
     // guarda la key tal cual): el fichero es DEL DEV y la key se queda COMO ÉL la escriba. Sellar es
     // OPT-IN: "seal": true aquí, o `conductor litellm login` (cifra porque el fichero lo escribe conductor).
     // Los ficheros YA sellados (apiKeyEnc) siguen descifrando igual — nada se rompe.
