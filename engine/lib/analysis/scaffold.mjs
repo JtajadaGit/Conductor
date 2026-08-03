@@ -142,7 +142,21 @@ const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
   // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
-  _ayuda: 'TODO es opcional (hay default para todo). Mandos: models (por rol o por FASE — la fase gana), preset, rules, pipeline, checks, preconditions, pauseAt, fallback, tiers, budget… Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
+  _ayuda: 'TODO es opcional (hay default para todo). Copia el mando que quieras de _ejemplos al nivel raíz y ajústalo — el motor ignora _ayuda y _ejemplos. Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
+  // EJEMPLOS COPIABLES dentro del propio fichero (el motor los ignora): un config que nace mudo obliga a
+  // imaginar los mandos; uno con ejemplos realistas se rellena copiando la línea y ajustando el valor.
+  _ejemplos: {
+    models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-haiku-4.5', reviewer: 'copilot:claude-sonnet-4.5', verify: 'copilot:claude-sonnet-4.5' },
+    rules: { spec: ['Un requisito por comportamiento observable'], apply: ['Componentes standalone; signals para estado local'] },
+    preset: 'feature',
+    pauseAt: ['apply', 'verify'],
+    checks: ['npm test --silent'],
+    budget: { maxTokens: 300000, onExceed: 'pause' },
+    tiers: { economy: 'litellm:deepseek-v4-flash', premium: 'copilot:claude-sonnet-4.5' },
+    fallback: { coder: 'copilot:claude-sonnet-4.5' },
+    verifyCache: true,
+    toolFilter: false,
+  },
   models: {},
   rules: {},
   autoApprove: false,
@@ -218,13 +232,24 @@ export function initConfig(openspecDir) {
       '> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.',
       '',
       '## Propósito',
-      '(1-3 líneas: qué hace este producto y para quién)',
+      '_Sustituye este ejemplo:_ App interna de reservas de salas para los equipos de la oficina; la usan',
+      '~200 empleados desde el móvil. Prioridad: fiabilidad sobre features.',
       '',
       '## Convenciones',
-      '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
+      '_Sustituye estos ejemplos por las reglas de TU casa:_',
+      '- Nombres de componentes en kebab-case; un componente por fichero.',
+      '- Tests junto al código (`x.spec.ts`), un test real por comportamiento — nada de tests vacíos.',
+      '- Prohibido añadir dependencias sin aprobación (el package.json lo revisa una persona).',
+      '- Errores siempre visibles para el usuario: nada de catch silencioso.',
       '',
       '## Decisiones vivas',
-      '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
+      '_Decisiones de arquitectura que un agente NO debe reabrir sin preguntar. Ejemplos:_',
+      '- El estado global vive en el servidor; el cliente solo cachea (no introducir stores nuevos).',
+      '- La autenticación es del gateway corporativo: las vistas asumen usuario ya autenticado.',
+      '',
+      '## Fuera de alcance',
+      '_Lo que este repo NO hace (evita que un agente lo intente):_',
+      '- Nada de pagos ni datos personales sensibles: eso vive en otro servicio.',
       '',
     ].join('\n') + '\n');
     projectMdCreated = true;

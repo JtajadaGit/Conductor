@@ -7,7 +7,7 @@ import { CElement } from '../core/element';
  * 100% local y estática — leer esta página cuesta 0 tokens. */
 @customElement('ahorro-screen')
 export class AhorroScreen extends CElement {
-  // Una entrada por técnica. `stat` = dato medido/duro que merece destacarse; `nuevo` marca la novedad.
+  // Una entrada por técnica. `stat` = dato medido/duro que merece destacarse;
   private readonly tecnicas = [
     {
       t: 'No re-escanear: índice verificado',
@@ -23,7 +23,6 @@ export class AhorroScreen extends CElement {
     {
       t: 'Mapa de relaciones (blast-radius)',
       d: 'Índice determinista de imports/exports y quién-usa-qué (hoy para JS/TS): el modelo sabe de qué depende un fichero y a quién rompe si lo toca, sin abrir N ficheros para descubrirlo.',
-      nuevo: true,
     },
     {
       t: 'Contexto a dieta (.copilotignore)',
@@ -45,12 +44,10 @@ export class AhorroScreen extends CElement {
     {
       t: 'Menos tools a la vista',
       d: 'Las fases que solo escriben su artefacto (planificación y revisión) no ven los tools de web, shell o parcheo: sus schemas dejan de viajar en el system prompt de cada turno. Automático; se desactiva con "toolFilter": false si una skill los necesita.',
-      nuevo: true,
     },
     {
       t: 'Verificación reutilizable (opt-in)',
       d: 'Con "verifyCache": true, si TODOS los inputs del verify son bit-idénticos al último verify correcto (spec, informes, ficheros tocados, prompt, lentes y modelo), la opinión de las lentes se reutiliza en vez de re-pagarse. El gate determinista corre SIEMPRE, y el hit queda visible en el timeline — nada en silencio.',
-      nuevo: true,
     },
     {
       t: 'Freno de presupuesto',
@@ -81,7 +78,6 @@ export class AhorroScreen extends CElement {
                  número era decoración y repetía el acento ×10; el título mono es identidad suficiente -->
             <div class="ah-top">
               <span class="ah-t">${x.t}</span>
-              ${x.nuevo ? html`<span class="ah-new">Novedad</span>` : nothing}
             </div>
             <p class="ah-does">${x.d}</p>
             ${x.stat ? html`<p class="ah-stat">${x.stat}</p>` : nothing}
@@ -91,7 +87,7 @@ export class AhorroScreen extends CElement {
 
       <div class="ahorro-note">
         <b>Tu clave, tu máquina.</b> Tu clave del proxy vive en <code>~/.conductor/litellm.json</code> tal cual tú la
-        escribas (cifrado AES-256-GCM opcional con <code>"seal": true</code>) y jamás viaja al modelo ni por HTTP.
+        escribas y jamás viaja al modelo ni por HTTP.
         El catálogo de modelos sale <b>en vivo</b> de tu LiteLLM y del CLI de Copilot cuando responden — con caché
         y modelos observados en tus runs como respaldo. Nunca de listas inventadas.
       </div>

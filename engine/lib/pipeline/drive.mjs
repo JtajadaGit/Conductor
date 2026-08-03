@@ -1293,7 +1293,10 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
         const pmF = join(projectRoot, 'openspec', 'project.md');
         if (existsSync(pmF)) {
           const txt = readFileSync(pmF, 'utf8').slice(0, 1800).trim();
-          const soloPlantilla = txt.includes('(1-3 líneas: qué hace este producto') && txt.length < 700;
+          // "sin rellenar" SEMÁNTICO, no por longitud: la plantilla nueva trae ejemplos guiados marcados
+          // con «_Sustituye» — si el marcador sigue ahí, el dev no la tocó y sería contexto FALSO inyectado.
+          // (Se conserva el detector de la plantilla vieja para repos ya inicializados.)
+          const soloPlantilla = txt.includes('_Sustituye') || (txt.includes('(1-3 líneas: qué hace este producto') && txt.length < 700);
           if (txt && !soloPlantilla) projectCtx = txt;
         }
       } catch { /* sin contexto, sin drama */ }

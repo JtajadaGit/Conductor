@@ -4390,7 +4390,21 @@ const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
   // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
-  _ayuda: 'TODO es opcional (hay default para todo). Mandos: models (por rol o por FASE — la fase gana), preset, rules, pipeline, checks, preconditions, pauseAt, fallback, tiers, budget… Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
+  _ayuda: 'TODO es opcional (hay default para todo). Copia el mando que quieras de _ejemplos al nivel raíz y ajústalo — el motor ignora _ayuda y _ejemplos. Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
+  // EJEMPLOS COPIABLES dentro del propio fichero (el motor los ignora): un config que nace mudo obliga a
+  // imaginar los mandos; uno con ejemplos realistas se rellena copiando la línea y ajustando el valor.
+  _ejemplos: {
+    models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-haiku-4.5', reviewer: 'copilot:claude-sonnet-4.5', verify: 'copilot:claude-sonnet-4.5' },
+    rules: { spec: ['Un requisito por comportamiento observable'], apply: ['Componentes standalone; signals para estado local'] },
+    preset: 'feature',
+    pauseAt: ['apply', 'verify'],
+    checks: ['npm test --silent'],
+    budget: { maxTokens: 300000, onExceed: 'pause' },
+    tiers: { economy: 'litellm:deepseek-v4-flash', premium: 'copilot:claude-sonnet-4.5' },
+    fallback: { coder: 'copilot:claude-sonnet-4.5' },
+    verifyCache: true,
+    toolFilter: false,
+  },
   models: {},
   rules: {},
   autoApprove: false,
@@ -4466,13 +4480,24 @@ function initConfig(openspecDir) {
       '> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.',
       '',
       '## Propósito',
-      '(1-3 líneas: qué hace este producto y para quién)',
+      '_Sustituye este ejemplo:_ App interna de reservas de salas para los equipos de la oficina; la usan',
+      '~200 empleados desde el móvil. Prioridad: fiabilidad sobre features.',
       '',
       '## Convenciones',
-      '(reglas de la casa: naming, patrones, librerías vetadas, cómo se escriben los tests)',
+      '_Sustituye estos ejemplos por las reglas de TU casa:_',
+      '- Nombres de componentes en kebab-case; un componente por fichero.',
+      '- Tests junto al código (`x.spec.ts`), un test real por comportamiento — nada de tests vacíos.',
+      '- Prohibido añadir dependencias sin aprobación (el package.json lo revisa una persona).',
+      '- Errores siempre visibles para el usuario: nada de catch silencioso.',
       '',
       '## Decisiones vivas',
-      '(decisiones de arquitectura que un agente NO debe reabrir sin preguntar)',
+      '_Decisiones de arquitectura que un agente NO debe reabrir sin preguntar. Ejemplos:_',
+      '- El estado global vive en el servidor; el cliente solo cachea (no introducir stores nuevos).',
+      '- La autenticación es del gateway corporativo: las vistas asumen usuario ya autenticado.',
+      '',
+      '## Fuera de alcance',
+      '_Lo que este repo NO hace (evita que un agente lo intente):_',
+      '- Nada de pagos ni datos personales sensibles: eso vive en otro servicio.',
       '',
     ].join('\n') + '\n');
     projectMdCreated = true;
@@ -6089,7 +6114,10 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
         const pmF = join(projectRoot, 'openspec', 'project.md');
         if (existsSync(pmF)) {
           const txt = readFileSync(pmF, 'utf8').slice(0, 1800).trim();
-          const soloPlantilla = txt.includes('(1-3 líneas: qué hace este producto') && txt.length < 700;
+          // "sin rellenar" SEMÁNTICO, no por longitud: la plantilla nueva trae ejemplos guiados marcados
+          // con «_Sustituye» — si el marcador sigue ahí, el dev no la tocó y sería contexto FALSO inyectado.
+          // (Se conserva el detector de la plantilla vieja para repos ya inicializados.)
+          const soloPlantilla = txt.includes('_Sustituye') || (txt.includes('(1-3 líneas: qué hace este producto') && txt.length < 700);
           if (txt && !soloPlantilla) projectCtx = txt;
         }
       } catch { /* sin contexto, sin drama */ }
@@ -10522,4 +10550,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: f2dddeae0907fc3d57f073bea5d7943d2a7689e4b8655b7770c73cd977f0e484
+// build-inputs-sha256: ebee273daa77d06d3d0b9eacb32bfc3ca2fe4e0e303a8153e17baf3bf1779721

@@ -22,7 +22,7 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   assert(!existsSync(join(OS, 'config.yaml')), 'SIN config.yaml (dato derivado: se detecta en runtime, no se versiona)');
   const pm = readFileSync(r.projectMd, 'utf8');
   assert(!/Stack \(detectado\)|## Estructura/.test(pm), 'project.md SIN stack/estructura (se escribían una vez y se pudrían, y van al prompt del planner)');
-  assert(pm.length < 700, 'project.md sigue por debajo del umbral de "plantilla sin rellenar" de drive.mjs');
+  assert(pm.includes('_Sustituye'), 'project.md nace con marcadores _Sustituye: drive NO lo inyecta hasta que el dev lo rellena (detector semantico)');
   assert(r.copilotignore && existsSync(join(TMP, '.copilotignore')), '.copilotignore creado en el root del proyecto');
   assert(/node_modules\//.test(readFileSync(join(TMP, '.copilotignore'), 'utf8')), '.copilotignore excluye node_modules (token-first)');
   // la fontanería del run fuera de git: se excluía del contexto del modelo pero acababa commiteada
@@ -31,6 +31,9 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
   assert(!cfg.$schema, 'config SIN $schema colgante (no hay fichero al lado)');
   assert(typeof cfg._ayuda === 'string' && cfg._ayuda.includes('conductor config'), 'el config que NACE se explica solo: UNA linea _ayuda que apunta a `conductor config` (el fichero mudo obligaba a imaginar los mandos)');
+  // el config nace con EJEMPLOS COPIABLES (el motor los ignora): mezcla de modelos, budget, rules, checks…
+  assert(cfg._ejemplos && cfg._ejemplos.models && cfg._ejemplos.budget && Array.isArray(cfg._ejemplos.checks), 'nace con _ejemplos realistas de los mandos principales (copiar y ajustar, no imaginar)');
+  assert(String(cfg._ejemplos.models.coder || '').includes(':'), 'los ejemplos de modelo llevan el prefijo de proveedor (litellm:/copilot:)');
   assert(cfg.rules && typeof cfg.rules === 'object', 'config nace con rules (gobierno por fase, descubrible y vacío)');
   // el usuario edita su config y su .copilotignore → re-init NO los pisa (el schema sí se refresca)
   writeFileSync(r.cfgPath, JSON.stringify({ serve: false }));

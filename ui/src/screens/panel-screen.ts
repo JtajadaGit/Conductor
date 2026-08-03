@@ -468,7 +468,7 @@ export class PanelScreen extends CElement {
             <dl class="readout">
               <div class="ro-row"><dt>Proveedor</dt><dd>${this.byokHost()}</dd></div>
               <!-- decia "cifrada" incondicional y el sellado es OPT-IN — mentia sobre seguridad -->
-              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · tal cual la escribiste (cifrado opcional: <code>"seal": true</code>)</dd></div>
+              <div class="ro-row"><dt>Credencial</dt><dd>~/.conductor/litellm.json · tal cual la escribiste</dd></div>
               <div class="ro-row"><dt>Catálogo</dt><dd>sin verificar aún en esta sesión — se comprueba al abrir el selector de modelos o lanzar un run</dd></div>
             </dl>
             <p class="inst-note">Si el proxy rechaza la key, aquí saldrá el motivo y cómo arreglarlo.</p>
