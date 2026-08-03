@@ -8811,7 +8811,7 @@ function runProgress(st) {
     hecho: total ? `${done.length}/${total} fases` : `${done.length} fases`,
     ...(tok.in + tok.out > 0 ? { tokens: `↓${kTok(tok.in)} ↑${kTok(tok.out)}` } : {}),
     ...(modelos.length ? { modelos } : {}),
-    ...(Array.isArray(st.logTail) && st.logTail.length ? { registro: st.logTail.slice(-3) } : {}),
+    ...(Array.isArray(st.logTail) && st.logTail.length ? { registro: st.logTail.slice(-2) } : {}),
   };
 }
 async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
@@ -8841,10 +8841,11 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
+  // payload A DIETA (feedback 2026-08-03 "demasiada verborrea": OpenCode pinta el JSON entero expandido):
+  // el contrato completo vive en la description de la tool — aquí solo el dato y un imperativo corto.
   return {
     status: 'working', progress: runProgress(last) || undefined,
-    note: 'la fase sigue trabajando (normal: duran minutos)',
-    next: 'Si `progress` cambió desde tu último mensaje, cuéntaselo al usuario en UNA línea (fases ✓, fase actual, tokens) — sin volcar el registro entero. Después llama conductor_continue {action:"wait"} otra vez; repite hasta status paused/done.',
+    next: 'Narra el avance en 1 línea si cambió; luego conductor_continue {action:"wait"}.',
   };
 }
 
@@ -8949,7 +8950,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       return { ok: true, url, project: name, focused, openspec, runs, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
-  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~55s with a status: "working" = phase still running, with a `progress` snapshot (phases done ✓, current phase, tokens, log tail) → give the user a ONE-LINE update when progress changed, then IMMEDIATELY call conductor_continue {action:"wait"} and repeat; "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
+  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. The FIRST call returns in a few seconds (launch confirmation + initial progress + web link); wait calls return within ~55s. Statuses: "working" = phase still running, with a `progress` snapshot (phases done ✓, current phase, tokens, log tail) → give the user a ONE-LINE update when progress changed, then IMMEDIATELY call conductor_continue {action:"wait"} and repeat; "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
@@ -8968,7 +8969,10 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
           ...(activeChange ? { next: `Hay un run activo («${activeChange}») en este repo — NO lances otro: síguelo con conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"} y ve contando su progreso al usuario.` } : {}),
         };
       }
-      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name));
+      // ARRANQUE RÁPIDO (feedback 2026-08-03 "tarda demasiado en arrancar"): la PRIMERA respuesta vuelve en
+      // ~3s (una lectura de estado) con el enlace y la fase inicial — el spinner del host no se come 50s.
+      // El ritmo largo lo llevan los conductor_continue {action:"wait"} posteriores.
+      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000 });
       return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
     } },
   conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
@@ -8986,7 +8990,9 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
         try { await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }); } catch {}
         // (un 409 aquí = ya no había pausa — p.ej. terminó mientras el usuario respondía; el poll de abajo lo cuenta)
       }
-      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name));
+      // tras una DECISIÓN (aprobar/nota/stop) el usuario quiere confirmación YA (~8s: el run arranca la fase
+      // y se ve el estado); el wait puro sí agota el presupuesto largo — es el que marca el ritmo del bucle.
+      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name), action === 'wait' ? {} : { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 8000 });
       return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + '/run/' + (pid ? pid + '/' : '') + name };
     } },
 };
@@ -10342,4 +10348,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: deb8a18d08a7ece760833424a53490bd8f660bd2e8218e9e0e9ed34cdcdef848
+// build-inputs-sha256: eafef6396bbef6f77efc3a7f485af0338be14f62dd6853fa27f70dd274a23611

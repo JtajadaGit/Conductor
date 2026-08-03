@@ -95,8 +95,8 @@ await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "
     assert(/explore ✓ 56s/.test(w.progress.fases) && /▸ spec EN CURSO \(intento 2\)/.test(w.progress.fases), 'fases hechas + fase actual narrables: ' + w.progress.fases);
     eq(w.progress.hecho, '2/5 fases');
     eq(w.progress.tokens, '↓43k ↑1.1k');
-    assert(w.progress.registro.length === 3 && /spec \(planner\)/.test(w.progress.registro[2]), 'cola del registro incluida');
-    assert(/UNA línea/.test(w.next), 'instruye narrar el progreso al usuario (no caja negra)');
+    assert(w.progress.registro.length === 2 && /spec \(planner\)/.test(w.progress.registro[1]), 'cola del registro incluida (2 líneas: payload a dieta)');
+    assert(/1 línea/.test(w.next) && w.next.length < 120, 'instruye narrar SIN sermón (payload a dieta, feedback 2026-08-03)');
     // 3) TERMINAL → done con el veredicto
     state = { verdict: 'GREEN', alive: false };
     const d = await pollRun(url, 'api/run/x', CH);
