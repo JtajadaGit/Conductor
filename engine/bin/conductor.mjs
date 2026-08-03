@@ -501,9 +501,10 @@ switch (cmd) {
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
-      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} sin narrar cada espera.',
+      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
       '',
     ];
     const DESC = 'Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)';
@@ -1026,6 +1027,7 @@ switch (cmd) {
       '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
@@ -1115,6 +1117,7 @@ switch (cmd) {
         '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
         '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
         '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
         '',
       ].join('\n'));
       console.log(`✅ comando de chat instalado: ${fC}\n   En tu host: /conductor <qué construir>   (pausas en el chat; sin argumentos abre el panel)\n   Requiere el MCP conectado: connect --to <su-config>`);

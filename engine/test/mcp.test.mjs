@@ -79,13 +79,24 @@ await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "
     const p = await pollRun(url, 'api/run/x', CH);
     eq(p.status, 'paused'); eq(p.phase, 'apply');
     assert(p.artifacts['proposal.md']?.includes('porque sí'), 'artefacto de la pausa incluido');
-    // 2) SIN FIN → retorna "working" dentro del presupuesto (no 30 min): el bucle lo lleva el agente
-    state = { verdict: 'running', alive: true };
+    // 2) SIN FIN → retorna "working" dentro del presupuesto (no 30 min): el bucle lo lleva el agente,
+    //    y CON PROGRESO narrable (caja negra de OpenCode 2026-08-03: el chat no tenía nada que contar)
+    state = {
+      verdict: 'running', alive: true,
+      phases: [{ phase: 'explore', ms: 56000, model: 'claude-sonnet-5', tokens: { in: 22000, out: 631 } }, { phase: 'propose', ms: 35000, model: 'claude-sonnet-5', tokens: { in: 21000, out: 485 } }],
+      plan: ['explore', 'propose', 'spec', 'apply', 'verify'], current: { phase: 'spec', attempt: 2 },
+      logTail: ['[08:12] explore ok', '[08:13] propose ok', '[08:13] spec (planner)'],
+    };
     const t0 = Date.now();
     const w = await pollRun(url, 'api/run/x', CH, { timeoutMs: 1200 });
     eq(w.status, 'working');
     assert(Date.now() - t0 < 15000, 'retornó rápido (presupuesto corto respetado)');
     assert(/action:"wait"/.test(w.next), 'instruye el re-llamado con action:"wait"');
+    assert(/explore ✓ 56s/.test(w.progress.fases) && /▸ spec EN CURSO \(intento 2\)/.test(w.progress.fases), 'fases hechas + fase actual narrables: ' + w.progress.fases);
+    eq(w.progress.hecho, '2/5 fases');
+    eq(w.progress.tokens, '↓43k ↑1.1k');
+    assert(w.progress.registro.length === 3 && /spec \(planner\)/.test(w.progress.registro[2]), 'cola del registro incluida');
+    assert(/UNA línea/.test(w.next), 'instruye narrar el progreso al usuario (no caja negra)');
     // 3) TERMINAL → done con el veredicto
     state = { verdict: 'GREEN', alive: false };
     const d = await pollRun(url, 'api/run/x', CH);

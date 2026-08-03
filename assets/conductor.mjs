@@ -8790,20 +8790,43 @@ function pauseBundle(changeDir, pending) {
   return arts;
 }
 // ANTI-TIMEOUT DE HOSTS (bug latente cazado en el plan de expertise): muchos hosts MATAN una tool-call
-// larga (1-5 min). Cada llamada devuelve en ≤~85s SIEMPRE — si ni pausa ni veredicto, retorna
-// status:"working" y el BUCLE lo lleva el agente (re-llama conductor_continue {action:"wait"}).
+// larga. 2026-08-03: OpenCode corta a ~60s — los 85s anteriores daban «Request timed out» con el run vivo
+// por debajo y el chat perdía el hilo. Cada llamada devuelve en ≤~50s SIEMPRE — si ni pausa ni veredicto,
+// retorna status:"working" CON PROGRESO REAL (fases ✓, fase actual, tokens, registro) para que el chat
+// narre en vez de ser una caja negra; el BUCLE lo lleva el agente (re-llama conductor_continue action:"wait").
 // Presupuesto configurable por CONDUCTOR_MCP_WAIT_MS (los tests lo bajan; un host paciente puede subirlo).
 // Exportado para testearlo determinista contra un servidor fake.
+const secsHuman = (ms) => (ms >= 60000 ? `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
+const kTok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+// parte de progreso COMPACTO desde /state — lo que la V1 contaba en el chat (fases, modelos, tokens)
+function runProgress(st) {
+  if (!st) return null;
+  const done = (st.phases || []).map((p) => `${p.phase} ✓${p.ms ? ` ${secsHuman(p.ms)}` : ''}`);
+  const cur = st.current?.phase ? [`▸ ${st.current.phase} EN CURSO${st.current.attempt > 1 ? ` (intento ${st.current.attempt})` : ''}`] : [];
+  const total = (st.plan || []).length || null;
+  const tok = (st.phases || []).reduce((a, p) => { a.in += p.tokens?.in || 0; a.out += p.tokens?.out || 0; return a; }, { in: 0, out: 0 });
+  const modelos = [...new Set((st.phases || []).map((p) => p.model).filter(Boolean))];
+  return {
+    fases: [...done, ...cur].join(' · ') || '(arrancando)',
+    hecho: total ? `${done.length}/${total} fases` : `${done.length} fases`,
+    ...(tok.in + tok.out > 0 ? { tokens: `↓${kTok(tok.in)} ↑${kTok(tok.out)}` } : {}),
+    ...(modelos.length ? { modelos } : {}),
+    ...(Array.isArray(st.logTail) && st.logTail.length ? { registro: st.logTail.slice(-3) } : {}),
+  };
+}
 async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
-  const budget = Number(timeoutMs) || Number(process.env.CONDUCTOR_MCP_WAIT_MS) || 85000;
+  const budget = Number(timeoutMs) || Number(process.env.CONDUCTOR_MCP_WAIT_MS) || 50000;
   const t0 = Date.now();
+  let last = null; // último /state bueno → el retorno "working" lleva progreso real, no una caja negra
   while (Date.now() - t0 < budget) {
     let st = null;
     try { const r = await fetch(url + apiBase + '/state', { signal: AbortSignal.timeout(8000) }); st = r.ok ? await r.json() : null; } catch {}
     if (st) {
+      last = st;
       if (st.pending) {
         return {
           status: 'paused', phase: st.pending.before || '?', findings: st.pending.findings || undefined,
+          progress: runProgress(st) || undefined,
           artifacts: pauseBundle(changeDir, st.pending),
           next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Luego llama conductor_continue — sin note = aprobar; note = instrucción para la fase; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
         };
@@ -8818,7 +8841,11 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
-  return { status: 'working', note: 'la fase sigue trabajando (normal: duran minutos)', next: 'Llama conductor_continue {action:"wait"} AHORA para seguir esperando — repite hasta status paused/done. No narres cada espera.' };
+  return {
+    status: 'working', progress: runProgress(last) || undefined,
+    note: 'la fase sigue trabajando (normal: duran minutos)',
+    next: 'Si `progress` cambió desde tu último mensaje, cuéntaselo al usuario en UNA línea (fases ✓, fase actual, tokens) — sin volcar el registro entero. Después llama conductor_continue {action:"wait"} otra vez; repite hasta status paused/done.',
+  };
 }
 
 const TOOLS = {
@@ -8922,7 +8949,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       return { ok: true, url, project: name, focused, openspec, runs, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
-  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~90s with a status: "working" = phase still running → IMMEDIATELY call conductor_continue {action:"wait"} and repeat (do not narrate each wait); "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
+  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. Every call returns within ~55s with a status: "working" = phase still running, with a `progress` snapshot (phases done ✓, current phase, tokens, log tail) → give the user a ONE-LINE update when progress changed, then IMMEDIATELY call conductor_continue {action:"wait"} and repeat; "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' } }, required: ['request', 'projectRoot'] } },
     run: async ({ request, projectRoot, changeName }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
@@ -8931,11 +8958,20 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       const name = changeName ? slug(changeName) : featureName(request);
       let lr = null, lj = null;
       try { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name, project: root, auto: false }) }); lj = await lr.json().catch(() => null); } catch (e) { return { ok: false, error: String(e.message) }; }
-      if (!lj?.ok) return { ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, needsInit: lj?.needsInit || undefined, web: lj?.url ? app.url.replace(/\/$/, '') + lj.url : undefined };
+      if (!lj?.ok) {
+        // RUN ACTIVO (caso real 2026-08-03: un timeout del host dejó el run vivo y el reintento chocaba a
+        // ciegas): dile al agente CÓMO engancharse al run en marcha en vez de dejarle relanzar en bucle.
+        const activeChange = lj?.url ? String(lj.url).split('/').filter(Boolean).pop() : undefined;
+        return {
+          ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, needsInit: lj?.needsInit || undefined,
+          web: lj?.url ? app.url.replace(/\/$/, '') + lj.url : undefined, activeChange,
+          ...(activeChange ? { next: `Hay un run activo («${activeChange}») en este repo — NO lances otro: síguelo con conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"} y ve contando su progreso al usuario.` } : {}),
+        };
+      }
       const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name));
       return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
     } },
-  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~90s with "working" (→ call again with action:"wait", silently), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
     run: async ({ projectRoot, changeName, note, model, action }) => {
       const root = resolve(projectRoot || process.cwd());
       const name = slug(changeName);
@@ -8989,7 +9025,7 @@ function serve() {
   rl.on('line', (line) => { const s = line.trim(); if (!s) return; let m; try { m = JSON.parse(s); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); } handle(m).catch((e) => log('err', e.message)); });
 }
 
-return { pauseBundle, pollRun, serve };
+return { pauseBundle, runProgress, pollRun, serve };
 })();
 
 // ===== lib/sysops/upgrade.mjs =====
@@ -9531,9 +9567,10 @@ switch (cmd) {
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
-      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} sin narrar cada espera.',
+      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
       '',
     ];
     const DESC = 'Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)';
@@ -10056,6 +10093,7 @@ switch (cmd) {
       '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
@@ -10145,6 +10183,7 @@ switch (cmd) {
         '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
         '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
         '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
+      '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
         '',
       ].join('\n'));
       console.log(`✅ comando de chat instalado: ${fC}\n   En tu host: /conductor <qué construir>   (pausas en el chat; sin argumentos abre el panel)\n   Requiere el MCP conectado: connect --to <su-config>`);
@@ -10303,4 +10342,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 4d8ba5bad341e4625033de8074e2363faa31369294e3c5190a47697d831440f7
+// build-inputs-sha256: deb8a18d08a7ece760833424a53490bd8f660bd2e8218e9e0e9ed34cdcdef848
