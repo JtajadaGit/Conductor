@@ -231,12 +231,12 @@ export class RunScreen extends CElement {
       </div>
       <p class="subhead">${s.project || '—'}${s.branch ? html` <span class="chip-branch" title="rama de git del proyecto">⎇ ${s.branch}</span>` : ''}</p>
       <div class="actbar">
-        <a class="btn sm sec" href=${this.sessionHref()}>${icon('session')} Ver sesión</a>
+        <a class="btn sm sec" href=${this.sessionHref()} title="La traza del agente paso a paso: qué tools usó, qué permisos pidió, hooks y modelos de la sesión del CLI. Lectura local — 0 tokens.">${icon('session')} Ver sesión</a>
         ${(s.done || s.verdict === 'INTERRUMPIDO') && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()} title=${s.verdict === 'INTERRUMPIDO' ? 'El proceso del run murió sin cerrar (¿equipo suspendido / terminal cerrada?) — reanuda desde la última fase completada' : 'reanudar el run'}>${this.busy === 'resume' ? 'Reanudando…' : html`${icon('play')} Reanudar`}</button>` : nothing}
         ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : html`${icon('archive')} Archivar`}</button>` : nothing}
         ${s.done && verdictClass(s.verdict) === 'GREEN' ? html`<button class="btn sm sec" ?disabled=${this.busy === 'receipt'} aria-live="polite" @click=${() => void this.copyReceipt()}>${this.copiedReceipt ? 'Copiado ✓' : this.busy === 'receipt' ? 'Copiando…' : html`${icon('copy')} Copiar descripción de PR`}</button>` : nothing}
-        ${s.hasDashboard ? html`<a class="btn sm sec" href=${this.dashboardHref()} target="_blank">${icon('report')} Informe</a>` : nothing}
-        <a class="btn sm sec" href=${this.apiBase + 'aiact'} target="_blank">${icon('shield')} AI Act</a>
+        ${s.hasDashboard ? html`<a class="btn sm sec" href=${this.dashboardHref()} target="_blank" title="Informe del run para compartir: fases con tokens reales vs estimados, ficheros tocados y consumo por modelo. Se archiva con el cambio como evidencia.">${icon('report')} Informe</a>` : nothing}
+        <a class="btn sm sec" href=${this.apiBase + 'aiact'} target="_blank" title="Expediente de transparencia (Reglamento europeo de IA): qué modelos intervinieron en qué fases, qué aprobó un humano y cómo se verificó. Para enseñar a compliance/auditoría.">${icon('shield')} AI Act</a>
         ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : html`${icon('stop')} Detener`}</button>` : nothing}
       </div>
       <!-- FUERA de .actbar: dentro era un item flex más y partía la barra de botones en dos filas -->

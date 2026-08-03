@@ -1,16 +1,25 @@
-import{f as e,h as t,t as n,v as r}from"./index-CUXTTvZo.js";var i=class extends e{render(){return r`
+import{f as e,h as t,t as n,v as r}from"./index-BNdKDSs1.js";var i=class extends e{render(){return r`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
       <h2 class="sect">Empezar (todo desde esta app)</h2>
       <ol class="muted steps">
-        <li><b>Elige el proyecto</b> en el selector del panel. Si el tuyo no aparece, arranca la app desde su carpeta una vez (<code>conductor</code> en su terminal).</li>
+        <li><b>Arranca desde tu proyecto</b>: <code>conductor</code> en la carpeta del repo. La app abre enfocada en ESE proyecto — el repo desde el que la lanzas es el que se trabaja.</li>
         <li><b>Inicialízalo</b> si el panel lo pide (botón «Inicializar este proyecto»): crea <code>openspec/</code> con la config del pipeline y <code>.copilotignore</code> (ahorro de tokens). No toca tu código.</li>
         <li><b>Describe el cambio</b> en «Prompt». Puedes señalar ficheros con <code>@ruta</code> y patrones de equipo con <code>/nombre</code>. El sistema propone el plan de fases y el coste estimado; tú mandas: ajusta fases, modelos por fase y el toggle <b>test</b>.</li>
         <li><b>Lanza el run</b> y atiende las <b>pausas de revisión</b>: leer/editar la spec, dejar una nota para la fase, cambiar el modelo en caliente, o detener. En el ciclo de corrección eliges qué hallazgos se arreglan.</li>
         <li>Con el run <b>Verificado</b> (GREEN): revisa el <b>Informe</b>, haz tu commit y pulsa <b>Archivar</b> — la spec se promueve a la fuente de verdad del repo.</li>
       </ol>
-      <p class="muted">Desde el chat de tu CLI solo necesitas <code>/conductor</code>: enciende esta app y abre el panel (y con una petición, corre la feature con pausas en el chat). Todo lo demás (init, lanzar, revisar, archivar, informes) vive aquí.</p>
+      <p class="muted">Desde el chat de tu agente (Copilot CLI, VS Code, OpenCode, Claude Code) solo necesitas <code>/conductor</code>: enciende esta app y abre el panel — y con una petición, corre la feature con pausas y progreso EN el chat. Todo lo demás (init, lanzar, revisar, archivar, informes) vive aquí.</p>
+
+      <h2 class="sect">Las tres ventanas de un run</h2>
+      <p class="muted">Cada run deja evidencia consultable con tres botones. Ninguno gasta tokens: leen ficheros locales.</p>
+      <ul class="muted">
+        <li><b>Ver sesión</b> — la <b>traza del agente</b>, paso a paso: qué tools ejecutó la IA, qué permisos pidió, qué hooks saltaron, qué modelos habló y cuándo. Es la respuesta a «¿qué hizo exactamente la IA en mi repo?» — filtrable y con búsqueda.</li>
+        <li><b>Informe</b> — el <b>informe del run</b> en una página para compartir: fases con sus tiempos, tokens reales frente a estimados, ficheros tocados y consumo por modelo. Es lo que adjuntas al PR o enseñas en la demo; se archiva junto al cambio.</li>
+        <li><b>AI Act</b> — el <b>expediente de transparencia</b> pensado para el Reglamento europeo de IA: qué modelos intervinieron en qué fases, qué decisiones aprobó un humano (las pausas), cómo se verificó el resultado y la firma de procedencia. Es lo que le enseñas a compliance o a un auditor sin preparar nada.</li>
+      </ul>
+      <p class="muted">Toda la evidencia (recibos, timeline, sesión) vive en <code>.conductor/runs/&lt;cambio&gt;</code> en la raíz de tu proyecto — fuera de <code>openspec/</code>, sin ensuciar tu árbol de trabajo; la spec y los artefactos revisables quedan en <code>openspec/changes/&lt;cambio&gt;</code>.</p>
 
       <h2 class="sect">El pipeline</h2>
       <p class="muted">Según el alcance: <code>propose → spec → apply → verify</code> (y en cambios mayores <code>explore</code>, <code>clarify</code>, <code>design</code>, <code>tasks</code>). Con el toggle <b>test</b>, tus pruebas reales corren <b>antes</b> de <code>verify</code>: si fallan → ciclo <code>fix</code> → re-test. Un driver determinista lanza al agente en cada fase y valida con el gate; si el fix no converge, el run <b>escala a ti</b> en vez de iterar a ciegas. Al cerrar: código + spec + informe + sello firmado.</p>
@@ -37,6 +46,6 @@ import{f as e,h as t,t as n,v as r}from"./index-CUXTTvZo.js";var i=class extends
       <h2 class="sect">Ahorro de tokens, visible</h2>
       <p class="muted">Tokens y coste <b>por fase</b> y acumulado, mezcla LiteLLM (0 AI Credits) / Copilot en el mismo run, y tus AI Credits — en vivo. El runtime no re-escanea el repo entre fases y el resume no re-paga lo hecho. El chip «LiteLLM · 0 AIC» del run enseña cuántas fases salieron gratis. <a class="lnk" href="/ahorro">Todas las técnicas de ahorro →</a></p>
 
-      <h2 class="sect">Transparencia (AI Act)</h2>
-      <p class="muted">Cada run produce evidencia: informe del run, sello de procedencia firmado (Ed25519) encadenado al ledger del proyecto, y el informe de transparencia AI Act (modelos usados, aprobaciones humanas, verificación, firma).</p>
+      <h2 class="sect">La cadena de evidencia</h2>
+      <p class="muted">Detrás de esos botones hay una cadena verificable: cada run GREEN produce su informe, un <b>sello de procedencia firmado</b> (Ed25519) encadenado al <i>ledger</i> del proyecto, y el expediente AI Act. Cualquiera puede comprobar después que lo verificado no se tocó.</p>
     `}};i=n([t(`help-screen`)],i);export{i as HelpScreen};

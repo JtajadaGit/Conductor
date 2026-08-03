@@ -776,8 +776,8 @@ export class PanelScreen extends CElement {
                  acciones del historial hablan en voz secundaria, sin emojis ni colores propios -->
             ${c.resumable ? html`<button class="btn sm sec" @click=${() => void this.resume(p, c)} aria-label="reanudar ${c.name}">${icon('play')} Reanudar</button>` : nothing}
             ${!c.resumable && verdictClass(c.verdict) !== 'CURSO' && c.request ? html`<button class="btn sm sec" @click=${() => this.reuse(c)} title="rellena el formulario con esta petición para lanzar una variante">${icon('redo')} Reutilizar</button>` : nothing}
-            ${c.hasDashboard ? html`<a class="btn sm sec" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}">${icon('report')} Informe</a>` : nothing}
-            ${c.phases > 0 ? html`<a class="btn sm sec" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}">${icon('shield')} AI Act</a>` : nothing}
+            ${c.hasDashboard ? html`<a class="btn sm sec" href="/artifact/${p.id}/${c.name}/dashboard.html" target="_blank" aria-label="informe de ${c.name}" title="Informe del run: fases, tokens reales vs estimados, ficheros y consumo por modelo.">${icon('report')} Informe</a>` : nothing}
+            ${c.phases > 0 ? html`<a class="btn sm sec" href="/api/run/${p.id}/${c.name}/aiact" target="_blank" aria-label="AI Act de ${c.name}" title="Expediente de transparencia (Reglamento europeo de IA): modelos, aprobaciones humanas y verificación.">${icon('shield')} AI Act</a>` : nothing}
           </div>
         </div>
         <a class="run-open" href="/run/${p.id}/${c.name}" tabindex="-1" aria-hidden="true"><span class="chev" aria-hidden="true"></span></a>

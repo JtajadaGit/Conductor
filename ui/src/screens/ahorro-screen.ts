@@ -82,7 +82,7 @@ export class AhorroScreen extends CElement {
         El catálogo de modelos sale <b>EN VIVO</b> de tu LiteLLM y del CLI de Copilot — nunca de listas inventadas.
       </div>
 
-      <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/flow">Cómo conduce conductor</a> · <a class="lnk" href="/">Dashboard</a></p>
+      <p class="muted"><a class="lnk" href="/help">← Cómo empezar</a> · <a class="lnk" href="/flow">Cómo conduce conductor</a> · <a class="lnk" href="/">Panel</a></p>
     `;
   }
 }
