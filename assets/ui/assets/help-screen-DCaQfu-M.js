@@ -1,4 +1,4 @@
-import{f as e,h as t,t as n,v as r}from"./index-_fUb-acD.js";var i=class extends e{render(){return r`
+import{f as e,h as t,t as n,v as r}from"./index-DvHBtlSu.js";var i=class extends e{render(){return r`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
@@ -14,7 +14,7 @@ import{f as e,h as t,t as n,v as r}from"./index-_fUb-acD.js";var i=class extends
 
       <h2 class="sect">Las tres ventanas de un run</h2>
       <p class="muted">Cada run deja evidencia consultable con tres botones. Ninguno gasta tokens: leen ficheros locales.</p>
-      <ul class="muted">
+      <ul class="muted fichas">
         <li><b>Ver sesión</b> — la <b>traza del agente</b>, paso a paso: tools ejecutadas, hooks, permisos pedidos, mensajes, subagentes y skills, con los modelos usados en el resumen. Es la respuesta a «¿qué hizo exactamente la IA en mi repo?» — filtrable y con búsqueda. Sale de la sesión del CLI (y si no hay, se reconstruye de la telemetría del run).</li>
         <li><b>Informe</b> — el <b>informe del run</b> en una página para compartir: la tabla de fases (modelo, tiempo, intentos, ficheros y tokens reales frente a estimados), el resultado del gate determinista y el linaje requisito→código→test. Es lo que adjuntas al PR o enseñas en la demo; se archiva junto al cambio. (El desglose de coste por modelo vive en el panel y en <code>conductor stats</code>.)</li>
         <li><b>AI Act</b> — el <b>«quién hizo qué»</b> del run, firmado: (1) qué modelos intervinieron en cada fase y con qué consumo; (2) qué decisiones aprobó una persona — cada pausa, con hash de lo aprobado; (3) el inventario exacto de ficheros escritos por la IA; (4) cómo se verificó; (5) el sello de procedencia. El nombre viene del Reglamento europeo de IA, que exige justo esa transparencia — es el papel que enseñas cuando pregunten «¿esto lo escribió una IA y quién lo supervisó?».</li>
@@ -25,7 +25,7 @@ import{f as e,h as t,t as n,v as r}from"./index-_fUb-acD.js";var i=class extends
       <p class="muted">Según el alcance: <code>propose → spec → apply → verify</code> (y en cambios mayores <code>explore</code>, <code>clarify</code>, <code>design</code>, <code>tasks</code>). Con el toggle <b>test</b>, tus pruebas reales corren <b>antes</b> de <code>verify</code>: si fallan → ciclo <code>fix</code> → re-test. Un driver determinista lanza al agente en cada fase y valida con el gate; si el fix no converge, el run <b>escala a ti</b> en vez de iterar a ciegas. Al cerrar: código + spec + informe + sello firmado.</p>
 
       <h2 class="sect">Estados de un run</h2>
-      <ul class="muted">
+      <ul class="muted fichas">
         <li><b>Verificado</b> (GREEN) — el gate confirmó coherencia spec↔código↔tests. Listo para commit y Archivar.</li>
         <li><b>No verificado</b> (NOT-GREEN) — el gate encontró incumplimientos tras los ciclos de corrección. El informe dice cuáles.</li>
         <li><b>Necesita tu decisión</b> (BLOCKED) — el gobierno detuvo el run (preguntas sin responder, presupuesto, política de modelos, fix sin converger…). El motivo aparece bajo la cabecera.</li>
@@ -40,9 +40,9 @@ import{f as e,h as t,t as n,v as r}from"./index-_fUb-acD.js";var i=class extends
 
       <!-- dos MOMENTOS de la misma persona, no dos usuarios: la app es local y la usa un solo dev -->
       <h2 class="sect">Dos momentos, la misma persona</h2>
-      <ul class="muted">
-        <li><b>Pedir</b>: describes el cambio; el sistema propone plan y coste. No hace falta clasificar nada.</li>
-        <li><b>Revisar</b>: en cada pausa apruebas, editas la spec, dejas una nota, cambias el modelo en caliente o rehaces una fase; en el fix eliges qué hallazgos arreglar. <b>El experto manda</b> — el piloto automático no existe.</li>
+      <ul class="muted fichas">
+        <li><b>Pedir</b> — describes el cambio; el sistema propone plan y coste. No hace falta clasificar nada.</li>
+        <li><b>Revisar</b> — en cada pausa apruebas, editas la spec, dejas una nota, cambias el modelo en caliente o rehaces una fase; en el fix eliges qué hallazgos arreglar. <b>El experto manda</b> — el piloto automático no existe.</li>
       </ul>
       <p class="muted">El segundo par de ojos llega después y por git: quien revise tu PR tendrá el Informe, el expediente AI Act y el ledger delante — evidencia en vez de fe. Y la config del pipeline (<code>openspec/conductor.json</code>) viaja committeada, así que todo el equipo hereda las mismas reglas.</p>
 

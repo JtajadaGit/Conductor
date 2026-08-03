@@ -6,7 +6,7 @@
 // + provenance) con fallback al legado y GC al archivar. Todos los join(<change>, '.conductor', …) del
 // motor pasan por aquí — el flip será una función, no 66 sitios.
 import { join, resolve, basename, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 // FASE 2 — una carpeta .conductor dentro de cada feature es ruido para el developer:
 // la fontanería runtime vive en UN punto de la raíz del
 // proyecto — <proyecto>/.conductor/runs/<change>/ (patrón .git/.angular/.terraform; las skills de
@@ -45,6 +45,17 @@ export const evidencePath = (changeDir, file) => {
   const legacy = join(resolve(changeDir), file);
   return existsSync(legacy) ? legacy : modern;
 };
+
+// Fases PROGRAMADAS de un run (state.json del driver, con fallback legado). Los gates la usan para no
+// acusar la ausencia de artefactos de fases que este run nunca programó: en complejidad simple no hay
+// fase tasks/design, y el aviso «tasks.md ausente» se leía como error en el informe de un GREEN limpio.
+// Solo afecta a AVISOS de presencia — los errores (spec/report ausentes) jamás dependen del plan.
+export function runPhases(changeDir) {
+  for (const p of [plumbPath(changeDir, 'state.json'), join(resolve(changeDir), '.conductor-run.json')]) {
+    try { const s = JSON.parse(readFileSync(p, 'utf8')); if (Array.isArray(s.phases) && s.phases.length) return s.phases.map(String); } catch {}
+  }
+  return null;
+}
 
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,

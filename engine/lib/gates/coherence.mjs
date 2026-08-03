@@ -1,6 +1,7 @@
 // conductor/lib/coherence.mjs — gate de coherencia spec↔tasks↔apply-report (findings unificados).
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { runPhases } from '../core/plumb.mjs';
 
 const read = (dir, ...names) => { for (const n of names) { const p = join(dir, n); if (existsSync(p)) return readFileSync(p, 'utf8'); } return null; };
 
@@ -66,7 +67,10 @@ export function checkCoherence(dir, opts = {}) {
   const tasksRaw = read(dir, 'tasks.md');
   const reportRaw = read(dir, 'apply-report.md');
   if (specRaw == null) E('files.spec-missing', 'falta spec.md', 'spec.md');
-  if (tasksRaw == null) W('files.tasks-missing', 'tasks.md ausente (normal en complejidad simple, que no tiene fase tasks)', 'tasks.md');
+  // el aviso solo tiene sentido si la fase tasks estaba PROGRAMADA (plan del run vía state.json u
+  // opts.phases): en un run simple no hay fase tasks y «ausente» era ruido leído como error.
+  const planned = Array.isArray(opts.phases) ? opts.phases : runPhases(dir);
+  if (tasksRaw == null && (!planned || planned.includes('tasks'))) W('files.tasks-missing', 'tasks.md ausente (normal en complejidad simple, que no tiene fase tasks)', 'tasks.md');
   if (reportRaw == null) E('files.report-missing', 'falta apply-report.md', 'apply-report.md');
 
   const spec = specRaw != null ? parseSpec(specRaw) : null;

@@ -19,6 +19,30 @@ await test('coherence: change-pass sin errores', () => {
 await test('coherence: change-fail detecta 4 errores', () => {
   eq(checkCoherence(join(F1, 'change-fail')).filter((f) => f.severity === 'error').length, 4);
 });
+await test('gates: la ausencia de tasks.md/design.md solo es aviso si su fase estaba PROGRAMADA (state.json)', async () => {
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const T = join(HERE, '.tmp-gates-plan');
+  rmSync(T, { recursive: true, force: true });
+  mkdirSync(T, { recursive: true });
+  writeFileSync(join(T, 'proposal.md'), '## Why\nx\n## What Changes\n- y\n## Impact\n- z');
+  writeFileSync(join(T, 'spec.md'), '## ADDED Requirements\n### Requirement: A\nSHALL x\n#### Scenario: s\n- GIVEN a WHEN b THEN c');
+  writeFileSync(join(T, 'apply-report.md'), '## Status: done\n## Files created\n- a.js');
+  const missing = (F) => F.filter((f) => f.rule === 'artifact.missing').map((f) => f.file).sort();
+  // sin plan conocido (change sin run): el aviso «¿fase opcional?» se mantiene — ahí es una pregunta honesta
+  eq(missing(checkArtifacts(T)), ['design.md', 'tasks.md'], 'sin state.json => avisos de ausencia');
+  assert(checkCoherence(T).some((f) => f.rule === 'files.tasks-missing'), 'sin plan => aviso tasks.md');
+  // run SIMPLE registrado (state.json sin fase tasks/design): la ausencia es lo esperado, no un hallazgo
+  mkdirSync(join(T, '.conductor'), { recursive: true });
+  writeFileSync(join(T, '.conductor', 'state.json'), JSON.stringify({ phases: ['propose', 'spec', 'apply', 'verify'], idx: 4, status: 'done' }));
+  eq(missing(checkArtifacts(T)), [], 'run simple => cero ruido por fases que no corren');
+  eq(checkCoherence(T).filter((f) => f.rule === 'files.tasks-missing'), [], 'idem en coherencia');
+  // override explícito (opts.phases) manda sobre el state.json
+  eq(missing(checkArtifacts(T, { phases: ['tasks', 'apply', 'verify'] })), ['design.md', 'tasks.md'].filter((f) => f === 'tasks.md'), 'con tasks programada, su ausencia vuelve a avisar');
+  // si el fichero EXISTE, su schema se valida SIEMPRE (esto solo silencia ausencias, jamás calidad)
+  writeFileSync(join(T, 'tasks.md'), 'sin checkboxes');
+  assert(checkArtifacts(T).some((f) => f.rule === 'artifact.schema' && f.file === 'tasks.md'), 'tasks.md presente y roto => error de schema aunque la fase no estuviera en el plan');
+  rmSync(T, { recursive: true, force: true });
+});
 await test('trace: detecta hueco REQ-SESSION (sin test)', () => {
   const t = buildTrace(join(F2, 'change'), join(F2, 'project'));
   assert(t.gaps.includes('REQ-SESSION'));

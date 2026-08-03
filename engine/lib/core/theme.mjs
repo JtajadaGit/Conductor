@@ -81,4 +81,11 @@ export const THEME = `
  /* toggle dark/light — mismo chip que la SPA */
  .thm-tog{position:fixed;top:.8rem;right:.9rem;z-index:30;display:inline-grid;place-items:center;width:2.1rem;height:2.1rem;border-radius:9px;background:var(--card);border:1px solid var(--bd);color:var(--tx2);cursor:pointer;box-shadow:var(--sh);transition:color .15s,border-color .15s;font-size:1rem;line-height:1}
  .thm-tog:hover{color:var(--accent);border-color:var(--accent)}
+ .thm-tog .tg-sun{display:none}
+ [data-theme=dark] .thm-tog .tg-sun{display:block}
+ [data-theme=dark] .thm-tog .tg-moon{display:none}
 `;
+
+// Botón de tema para las páginas HTML generadas (informe, AI Act): MISMO icono sol/luna de trazo que la
+// SPA (theme-toggle.ts), nada de glifos/emoji — qué SVG se ve lo decide el CSS de arriba según data-theme.
+export const THEME_TOGGLE = `<button class="thm-tog" id="thm" aria-label="Cambiar tema" title="Claro/Oscuro"><svg class="tg-sun" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg><svg class="tg-moon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>`;

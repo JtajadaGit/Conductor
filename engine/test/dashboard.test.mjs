@@ -32,6 +32,29 @@ await test('dashboard (R-T3): suma los tokens cacheados y muestra la tarjeta "Ca
   assert(/↺/.test(html), 'el símbolo de caché aparece en la columna de tokens del timeline');
 });
 
+await test('dashboard: run simple (sin fase tasks) => columna task "—" y la fila NO se pinta como hueco', () => {
+  const trace = { matrix: [{ id: 'REQ-A', name: 'a', scenarios: [], cov: { task: false, code: true, test: true } }], gaps: [] };
+  const tlSimple = { verdict: 'GREEN', phases: [{ phase: 'apply', role: 'coder', model: 'm', files: [], attempts: 1, ms: 1000, ok: true }] };
+  const html = renderDashboard({ change: 'x', gates: [], trace, timeline: tlSimple });
+  assert(/no aplica/.test(html), 'la celda task declara que no aplica (title) en vez de un ✗ acusador');
+  assert(!/<tr class="gap"><td><code>REQ-A/.test(html), 'code+test cubiertos => fila SIN clase gap (la task es informativa, como en trace.mjs)');
+  assert(/task no aplica: run sin fase de tasks/.test(html), 'el subtítulo del linaje explica por qué la columna va vacía');
+  // el MISMO trace con la fase tasks corrida => el ✗ de task vuelve (ahí sí es información), pero sigue sin ser hueco
+  const tlConTasks = { verdict: 'GREEN', phases: [{ phase: 'tasks', ok: true }, ...tlSimple.phases] };
+  const html2 = renderDashboard({ change: 'x', gates: [], trace, timeline: tlConTasks });
+  assert(/tick n/.test(html2), 'con fase tasks, la celda task pinta el ✗ real');
+  assert(!/<tr class="gap"><td><code>REQ-A/.test(html2), 'aun así, sin hueco: gap = code+test, jamás la task');
+});
+
+await test('dashboard: iconos SVG del sistema, cero emojis (toggle sol/luna, tarjetas sin pictogramas)', () => {
+  const html = renderDashboard({
+    change: 'x', gates: [],
+    timeline: { verdict: 'GREEN', approvals: [{ phase: 'spec' }], phases: [{ phase: 'spec', ok: true, ms: 1000, attempts: 1, files: [], lenses: ['a', 'b'] }] },
+  });
+  assert(/tg-sun/.test(html) && /tg-moon/.test(html), 'el toggle de tema es el sol/luna SVG de la SPA');
+  assert(!/[\u{1F300}-\u{1FAFF}]|◐/u.test(html), 'ni emojis ni el glifo ◐ en el informe (el sistema es de iconos de trazo)');
+});
+
 await test('dashboard (R-T3): sin tokens cacheados NO muestra la tarjeta de caché (cero ruido)', () => {
   const html = renderDashboard({
     change: 'x', gates: [],

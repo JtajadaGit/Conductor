@@ -93,6 +93,17 @@ await test('api-humo: todos los endpoints de lectura responden sin 5xx y con el 
   eq(rotos, [], `endpoints con problemas:\n   ${rotos.join('\n   ')}`);
 });
 
+await test('api(state): change inexistente => {missing:true} y, con archivado homonimo, archivedAs — jamas un run vivo FALSO', async () => {
+  const r1 = await fetch(srv.url + 'api/run/fantasma/state');
+  const j1 = await r1.json();
+  eq(j1.missing, true, 'inexistente => missing (la UI pinta la verdad, no EN CURSO 0/0)');
+  eq(j1.archivedAs, null, 'sin archivado homonimo => null');
+  mkdirSync(join(ROOT, 'openspec', 'changes', 'archive', '2026-01-01-fantasma'), { recursive: true });
+  const j2 = await (await fetch(srv.url + 'api/run/fantasma/state')).json();
+  eq(j2.missing, true);
+  eq(j2.archivedAs, '2026-01-01-fantasma', 'archivado homonimo => la UI enlaza el destino');
+});
+
 await srv.close();
 rmSync(ROOT, { recursive: true, force: true });
 rmSync(process.env.CONDUCTOR_HOME, { recursive: true, force: true });

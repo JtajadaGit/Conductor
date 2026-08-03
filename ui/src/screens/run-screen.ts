@@ -223,6 +223,17 @@ export class RunScreen extends CElement {
     const s = this.s;
     if (!s) return loader('Cargando run');
     const isDemo = this.apiBase.includes('/demo');
+    // change que ya NO está en changes/ (archivado o URL errónea): pantalla honesta, jamás un run vivo vacío.
+    // `missing`/`archivedAs` aún no viajan en el contrato RunState de types.ts (compartido) → cast local documentado.
+    const sx = s as RunState & { missing?: boolean; archivedAs?: string | null };
+    if (sx.missing) {
+      return html`
+        <div class="apphdr"><h1 class="trunc">${this.change || 'run'}</h1></div>
+        ${sx.archivedAs
+          ? html`<p class="alert info" role="status"><span>Este cambio está <b>archivado</b> como <code>${sx.archivedAs}</code> — su spec ya vive en la fuente de verdad (<code>openspec/specs/</code>) y su evidencia en <code>.conductor/runs/archive/</code>. <a class="lnk" href="/">Volver al panel</a></span></p>`
+          : html`<p class="alert warn" role="status"><span>Este cambio <b>no existe</b> en el proyecto en foco — revisa la URL o vuelve al panel. <a class="lnk" href="/">Volver al panel</a></span></p>`}
+      `;
+    }
     return html`
       ${isDemo ? html`<p class="alert info" role="note" style="margin-bottom:1rem"><span><b>Demo</b> — pantalla de muestra con datos ficticios (modelos, cambios y coste no son reales). <a class="lnk" href="/">Ir a tu panel</a></span></p>` : nothing}
       <div class="apphdr">

@@ -62,6 +62,17 @@ const evidencePath = (changeDir, file) => {
   return existsSync(legacy) ? legacy : modern;
 };
 
+// Fases PROGRAMADAS de un run (state.json del driver, con fallback legado). Los gates la usan para no
+// acusar la ausencia de artefactos de fases que este run nunca programó: en complejidad simple no hay
+// fase tasks/design, y el aviso «tasks.md ausente» se leía como error en el informe de un GREEN limpio.
+// Solo afecta a AVISOS de presencia — los errores (spec/report ausentes) jamás dependen del plan.
+function runPhases(changeDir) {
+  for (const p of [plumbPath(changeDir, 'state.json'), join(resolve(changeDir), '.conductor-run.json')]) {
+    try { const s = JSON.parse(readFileSync(p, 'utf8')); if (Array.isArray(s.phases) && s.phases.length) return s.phases.map(String); } catch {}
+  }
+  return null;
+}
+
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
 // un dominio sin sentido que ensucia la fuente de verdad para siempre). Sin token útil → core.
@@ -73,7 +84,7 @@ function domainFromName(name) {
   return 'core';
 }
 
-return { domainFromName, plumbPath, plumbDir, evidencePath };
+return { runPhases, domainFromName, plumbPath, plumbDir, evidencePath };
 })();
 
 // ===== lib/core/theme.mjs =====
@@ -161,9 +172,16 @@ const THEME = `
  /* toggle dark/light — mismo chip que la SPA */
  .thm-tog{position:fixed;top:.8rem;right:.9rem;z-index:30;display:inline-grid;place-items:center;width:2.1rem;height:2.1rem;border-radius:9px;background:var(--card);border:1px solid var(--bd);color:var(--tx2);cursor:pointer;box-shadow:var(--sh);transition:color .15s,border-color .15s;font-size:1rem;line-height:1}
  .thm-tog:hover{color:var(--accent);border-color:var(--accent)}
+ .thm-tog .tg-sun{display:none}
+ [data-theme=dark] .thm-tog .tg-sun{display:block}
+ [data-theme=dark] .thm-tog .tg-moon{display:none}
 `;
 
-return { THEME };
+// Botón de tema para las páginas HTML generadas (informe, AI Act): MISMO icono sol/luna de trazo que la
+// SPA (theme-toggle.ts), nada de glifos/emoji — qué SVG se ve lo decide el CSS de arriba según data-theme.
+const THEME_TOGGLE = `<button class="thm-tog" id="thm" aria-label="Cambiar tema" title="Claro/Oscuro"><svg class="tg-sun" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg><svg class="tg-moon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>`;
+
+return { THEME, THEME_TOGGLE };
 })();
 
 // ===== lib/provenance/secret.mjs =====
@@ -1040,6 +1058,7 @@ __M['coherence'] = (function(){
 // conductor/lib/coherence.mjs — gate de coherencia spec↔tasks↔apply-report (findings unificados).
 
 
+const { runPhases } = __M['plumb'];
 const read = (dir, ...names) => { for (const n of names) { const p = join(dir, n); if (existsSync(p)) return readFileSync(p, 'utf8'); } return null; };
 
 // Lee la spec del cambio desde CUALQUIERA de las ubicaciones OpenSpec válidas: spec.md en la raíz
@@ -1104,7 +1123,10 @@ function checkCoherence(dir, opts = {}) {
   const tasksRaw = read(dir, 'tasks.md');
   const reportRaw = read(dir, 'apply-report.md');
   if (specRaw == null) E('files.spec-missing', 'falta spec.md', 'spec.md');
-  if (tasksRaw == null) W('files.tasks-missing', 'tasks.md ausente (normal en complejidad simple, que no tiene fase tasks)', 'tasks.md');
+  // el aviso solo tiene sentido si la fase tasks estaba PROGRAMADA (plan del run vía state.json u
+  // opts.phases): en un run simple no hay fase tasks y «ausente» era ruido leído como error.
+  const planned = Array.isArray(opts.phases) ? opts.phases : runPhases(dir);
+  if (tasksRaw == null && (!planned || planned.includes('tasks'))) W('files.tasks-missing', 'tasks.md ausente (normal en complejidad simple, que no tiene fase tasks)', 'tasks.md');
   if (reportRaw == null) E('files.report-missing', 'falta apply-report.md', 'apply-report.md');
 
   const spec = specRaw != null ? parseSpec(specRaw) : null;
@@ -1162,17 +1184,27 @@ __M['artifacts'] = (function(){
 // conductor/lib/artifacts.mjs — validación estructural de artefactos OpenSpec (findings).
 
 
+const { runPhases } = __M['plumb'];
 const RULES = {
   'proposal.md': [[/^##\s+(Why|Por qu[eé]|Motivaci[oó]n)/im, 'falta sección ## Why'], [/^##\s+(What Changes|Qu[eé] cambia|Cambios)/im, 'falta ## What Changes'], [/^##\s+(Impact|Impacto)/im, 'falta ## Impact']],
   'design.md': [[/^##\s+(Context|Contexto)/im, 'falta ## Context'], [/^##\s+(Decisions|Decisiones)/im, 'falta ## Decisions']],
   'tasks.md': [[/^\s*-\s*\[( |x|X)\]/im, 'sin checkboxes de tarea']],
 };
 
-function checkArtifacts(dir) {
+// design.md/tasks.md solo se ECHAN EN FALTA si su fase estaba programada en este run (state.json, o
+// opts.phases explícito): en complejidad simple no hay fase tasks/design y el aviso era ruido que se
+// leía como error en un GREEN limpio. Sin plan conocido (gate suelto sobre un change sin run) el aviso
+// se mantiene. Si el fichero EXISTE, su schema se valida siempre — esto solo silencia ausencias.
+const PHASE_OF = { 'design.md': 'design', 'tasks.md': 'tasks' };
+function checkArtifacts(dir, opts = {}) {
   const F = [];
+  const planned = Array.isArray(opts.phases) ? opts.phases : runPhases(dir);
   for (const [file, checks] of Object.entries(RULES)) {
     const p = join(dir, file);
-    if (!existsSync(p)) { F.push({ rule: 'artifact.missing', severity: 'warning', message: `${file} ausente (¿fase opcional?)`, file }); continue; }
+    if (!existsSync(p)) {
+      if (planned && PHASE_OF[file] && !planned.includes(PHASE_OF[file])) continue;
+      F.push({ rule: 'artifact.missing', severity: 'warning', message: `${file} ausente (¿fase opcional?)`, file }); continue;
+    }
     // L8: ignorar el contenido DENTRO de fences ```…``` (y `inline`): una sección "## Why" metida en un bloque
     // de código no es una sección real y NO debe satisfacer el check (false PASS detectado en la auditoría).
     const raw = readFileSync(p, 'utf8').replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
@@ -4527,7 +4559,7 @@ __M['aiact'] = (function(){
 
 
 
-const { THEME } = __M['theme'];
+const { THEME, THEME_TOGGLE } = __M['theme'];
 const { plumbPath, evidencePath } = __M['plumb'];
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 const sha = (p) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex'); } catch { return null; } };
@@ -4577,7 +4609,7 @@ function aiactData(changeDir) {
 function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
-  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>🛟 reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
     ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
@@ -4594,7 +4626,7 @@ function renderAiact(changeDir) {
  .kv{display:grid;grid-template-columns:auto 1fr;gap:.3rem .9rem;font-size:.88rem} .kv dt{color:var(--tx2)} .kv dd{margin:0}
  ul{margin:.4rem 0;padding-left:1.2rem} li{margin:.2rem 0}
 </style>
-<button class="thm-tog" id="thm" aria-label="Cambiar tema" title="Claro/Oscuro">◐</button>
+${THEME_TOGGLE}
 <script>(function(){var r=document.documentElement,k='conductorTheme';document.getElementById('thm').addEventListener('click',function(){var n=r.dataset.theme==='dark'?'light':'dark';r.dataset.theme=n;try{localStorage.setItem(k,n);}catch(e){}});})()</script>
 <div class=head><span class=logo>C</span><h1>Informe de transparencia de IA</h1><span class="pill ${vc}">${E(d.verdict || '—')}</span></div>
 <p class=sub>Qué generó la IA, con qué modelos, quién lo aprobó y qué verificación pasó — evidencia técnica alineada con el EU AI Act (transparencia de contenido IA, en vigor el 2-ago-2026).</p>
@@ -4692,7 +4724,7 @@ __M['dashboard'] = (function(){
 // conductor/lib/dashboard.mjs — informe HTML agregado autocontenido (gate + linaje + coste + timeline).
 // Usa el SISTEMA DE DISEÑO ÚNICO (theme.mjs) → mismo look&feel que panel/run/aiact (sin paletas dobles).
 const { count, isBlocking } = __M['report'];
-const { THEME } = __M['theme'];
+const { THEME, THEME_TOGGLE } = __M['theme'];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 // M2: coercer a número — un tokens.in string ("</td><script>…") en timeline.json se emitía CRUDO (String(n))
 // → HTML injection en el dashboard. Number()||0 garantiza que fmt SIEMPRE produce dígitos, nunca markup.
@@ -4775,7 +4807,11 @@ function renderDashboard({ change, gates = [], trace, cost, timeline }) {
   const findRows = gates.length
     ? gates.map((f) => `<tr class="${['breaking', 'error'].includes(f.severity) ? 'gap' : ''}"><td><span class="pill ${['breaking', 'error'].includes(f.severity) ? 'bad' : 'neutral'}" style="text-transform:none">${esc(f.severity)}</span></td><td><code>${esc(f.rule)}</code></td><td>${esc(f.message)}</td><td style="color:var(--tx3)">${esc(f.file || f.pointer || '')}</td></tr>`).join('')
     : '<tr><td colspan=4 style="color:var(--ok)">✓ sin findings — el gate pasa limpio</td></tr>';
-  const traceRows = trace ? trace.matrix.map((m) => `<tr class="${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><td><code>${esc(m.id)}</code></td><td>${esc(m.name)}</td><td>${tick(m.cov.task)}</td><td>${tick(m.cov.code)}</td><td>${tick(m.cov.test)}</td><td>${m.scenarios.length}</td></tr>`).join('') : '';
+  // la columna task solo aplica si la fase tasks CORRIÓ (en complejidad simple no existe: un ✗ rojo ahí
+  // acusaba un hueco imposible de cerrar). El rojo de fila sigue la regla REAL de gaps (code+test, como trace.mjs).
+  const hadTasks = !!(tl && tl.some((p) => p.phase === 'tasks'));
+  const naTick = '<span class="tick" style="color:var(--tx3)" title="no aplica: este run no llevó fase de tasks">—</span>';
+  const traceRows = trace ? trace.matrix.map((m) => `<tr class="${m.cov.code && m.cov.test ? '' : 'gap'}"><td><code>${esc(m.id)}</code></td><td>${esc(m.name)}</td><td>${hadTasks ? tick(m.cov.task) : naTick}</td><td>${tick(m.cov.code)}</td><td>${tick(m.cov.test)}</td><td>${m.scenarios.length}</td></tr>`).join('') : '';
   const devInfo = estimateDeviation(timeline?.estimate, tl || []);
   const devMap = new Map((devInfo?.phases || []).map((r) => [r.phase, r]));
   const tlRows = tl ? tl.map((p) => `<tr class="${p.ok ? '' : 'gap'}"><td>${esc(p.phase)}</td><td style="color:var(--tx2)">${esc(p.role || '')}</td><td><code>${esc(p.model || '—')}</code>${p.provider ? ` <span style="color:var(--tx3);font-size:.85em">${esc(p.provider)}</span>` : ''}</td><td>${(p.files || []).length}</td><td>${Number(p.attempts) || 1}</td><td>${((Number(p.ms) || 0) / 1000).toFixed(1)}s</td><td style="font-variant-numeric:tabular-nums">${p.tokens ? `↓${fmt(p.tokens.in)} ↑${fmt(p.tokens.out)}${p.tokens.cached ? ` ↺${fmt(p.tokens.cached)}` : ''}` : '—'}</td><td style="font-variant-numeric:tabular-nums;color:var(--tx3)">${devMap.has(p.phase) ? `~↓${fmt(devMap.get(p.phase).estIn)} ↑${fmt(devMap.get(p.phase).estOut)}${devMap.get(p.phase).devPct !== null ? ` (${devMap.get(p.phase).devPct > 0 ? '+' : ''}${devMap.get(p.phase).devPct}%)` : ''}` : '—'}</td><td>${tick(p.ok)}</td></tr>`).join('') : '';
@@ -4792,7 +4828,7 @@ function renderDashboard({ change, gates = [], trace, cost, timeline }) {
  .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem;box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 42%,transparent)}
  .sub{color:var(--tx2);font-size:.84rem;margin:.1rem 0 1.1rem}
 </style>
-<button class="thm-tog" id="thm" aria-label="Cambiar tema" title="Claro/Oscuro">◐</button>
+${THEME_TOGGLE}
 <script>(function(){var r=document.documentElement,k='conductorTheme';document.getElementById('thm').addEventListener('click',function(){var n=r.dataset.theme==='dark'?'light':'dark';r.dataset.theme=n;try{localStorage.setItem(k,n);}catch(e){}});})()</script>
 <div class=head><span class=logo>C</span><h1>Informe del run</h1><span class="pill ${esc(verdict)}">${esc(verdict)}</span></div>
 <p class=sub><code>${esc(change)}</code> · evidencia determinista del pipeline (gate sin LLM + linaje + timeline).</p>
@@ -4800,14 +4836,14 @@ function renderDashboard({ change, gates = [], trace, cost, timeline }) {
  <div class="card ${c.breaking + c.error ? 'no' : 'ok'}"><small>Bloqueantes</small><span>${c.breaking + c.error}</span></div>
  <div class="card ${c.warning ? 'warn' : ''}"><small>Warnings</small><span>${c.warning}</span></div>
  ${trace ? `<div class="card ${trace.gaps.length ? 'no' : 'ok'}"><small>Huecos de traza</small><span>${trace.gaps.length}</span></div>` : ''}
- ${approvals.length ? `<div class="card ok"><small>Aprobaciones humanas</small><span>🧑‍⚖️ ${approvals.length}</span></div>` : ''}
- ${lensesUsed ? `<div class="card"><small>Lentes de review</small><span>🔍 ${lensesUsed.length}</span></div>` : ''}
+ ${approvals.length ? `<div class="card ok"><small>Aprobaciones humanas</small><span>${approvals.length}</span></div>` : ''}
+ ${lensesUsed ? `<div class="card"><small>Lentes de review</small><span>${lensesUsed.length}</span></div>` : ''}
  ${cost ? `<div class="card ok"><small>Ahorro vs all-Opus</small><span>${cost.saved_pct}%</span></div>` : ''}
  ${cachedTotal ? `<div class="card ok"><small>Caché de prefijo</small><span>↺ ${fmt(cachedTotal)} tok</span></div>` : ''}
 </div>
 <h2 class=sect>Gate determinista <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— coherencia spec↔código↔artefactos, sin LLM</span></h2>
 <table><tr><th>severidad</th><th>regla</th><th>mensaje</th><th>ubicación</th></tr>${findRows}</table>
-${trace ? `<h2 class=sect>Linaje spec → task → code → test <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué requisito cubre cada artefacto (rojo = hueco)</span></h2><table><tr><th>requisito</th><th>nombre</th><th>task</th><th>code</th><th>test</th><th>scn</th></tr>${traceRows}</table>` : ''}
+${trace ? `<h2 class=sect>Linaje spec → task → code → test <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué requisito cubre cada artefacto (rojo = hueco)${hadTasks ? '' : ' · task no aplica: run sin fase de tasks'}</span></h2><table><tr><th>requisito</th><th>nombre</th><th>task</th><th>code</th><th>test</th><th>scn</th></tr>${traceRows}</table>` : ''}
 ${cost ? `<h2 class=sect>Coste por fase <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— tokens por fase y modelo (Copilot = AI Credits · LiteLLM = 0 AIC)</span></h2><table><tr><th>fase</th><th>calls</th><th>modelos</th><th>tokens in</th><th>tokens out</th></tr>${cost.phases.map((p) => `<tr><td>${esc(p.phase)}</td><td>${p.calls}</td><td><code>${esc(p.models.join(','))}</code></td><td>${fmt(p.in)}</td><td>${fmt(p.out)}</td></tr>`).join('')}</table>` : ''}
 ${tl ? `<h2 class=sect>Timeline del run <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— fase × modelo × duración × tokens</span></h2><table><tr><th>fase</th><th>rol</th><th>modelo</th><th>archivos</th><th>intentos</th><th>duración</th><th>tokens</th><th>est (preflight)</th><th>ok</th></tr>${tlRows}</table>` : ''}
 <footer>Generado por conductor — determinista, sin LLM. Evidencia para provenance de green-gate.</footer>
@@ -7343,6 +7379,8 @@ const { KNOWN_PHASES } = __M['orchestrate'];
 const { PRESET_NAMES } = __M['presets'];
 const { resolvePlan, PHASE_ACTION } = __M['plan'];
 const { loadPolicy } = __M['policy'];
+const { checkCoherence } = __M['coherence'];
+const { checkArtifacts } = __M['artifacts'];
 const { classifyTier, tierFromPriceCategory } = __M['tiers'];
 const { setLivePrices, setLiveMeta, metaOf, priceOf } = __M['cost'];
 const { renderAiact } = __M['aiact'];
@@ -8618,6 +8656,11 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name, tl.pipeline, tl.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
+      // GATES FRESCOS para el informe re-renderizado: coherencia+artefactos se recalculan en vivo (baratos
+      // y conscientes del plan del run — un report.json viejo arrastra avisos de fases que el run jamás
+      // programó). El trace (escaneo del proyecto, caro) sí se sirve del report.json. Micro no lleva spec
+      // por decisión: sus gates propios viven solo en el report del run.
+      const freshGates = (dir, tl, rj) => { if (!tl || tl.complexity === 'micro') return rj?.gates ?? []; try { return [...checkCoherence(dir), ...checkArtifacts(dir)]; } catch { return rj?.gates ?? []; } };
       const mArt2 = u.pathname.match(/^\/artifact\/([a-z0-9-]+~[a-f0-9]{6})\/([a-z0-9-]+)\/dashboard\.html$/);
       const mArt = mArt2 ? null : u.pathname.match(/^\/artifact\/([a-z0-9-]+)\/dashboard\.html$/);
       if (mArt2) {
@@ -8626,7 +8669,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const ch2 = join(proj.root, 'openspec', 'changes', mArt2[2]);
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
-        if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
+        if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: freshGates(ch2, tl2, rj), trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
@@ -8635,7 +8678,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const ch2 = join(root, 'openspec', 'changes', mArt[1]);
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
-        if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
+        if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: freshGates(ch2, tl2, rj), trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
@@ -8660,6 +8703,15 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         const changeDir = join(proj.root, 'openspec', 'changes', name);
         const reg = runs.get(runKey(proj.id, name));
         if (action === 'state') {
+          // URL de un change que YA NO está en changes/ (perfil «usuario que refresca» tras archivar, o URL
+          // errónea): la pantalla pintaba un run vivo VACÍO («EN CURSO», Detener, 0/0) — una mentira doble.
+          // Honesto: si hay un archivado homónimo se dice y se enlaza; si no, «no existe». SOLO sin run vivo
+          // registrado: entre launch y el mkdir del driver hay una ventana sin carpeta con run legítimo.
+          if (!existsSync(changeDir) && !(reg && !reg.exited)) {
+            let archivedAs = null;
+            try { archivedAs = readdirSync(join(proj.root, 'openspec', 'changes', 'archive')).find((d) => d.endsWith(`-${name}`)) || null; } catch {}
+            return json(200, { missing: true, archivedAs, phases: [], plan: [], logTail: [], done: true, verdict: null, now: Date.now() });
+          }
           const alive = !!((reg && !reg.exited) || activeRun(changeDir));
           return json(200, { ...runState(changeDir, proj.root, { alive }), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
         }
@@ -8993,10 +9045,20 @@ const artClip = (dir, f, max = 1800) => {
     return body + `\n… [compactado (${t.length} chars) — completo en ${f}]`;
   } catch { return null; }
 };
+// la SPEC es EL OBJETO de la aprobación: jamás viaja sin sus SHALL (caso real: el revisor del chat veía
+// requisitos VACÍOS porque el resumen genérico se quedaba solo con cabeceras). Presupuesto propio y, si aun
+// así no cabe, recorte POR REQUISITO conservando id + nombre + línea SHALL + títulos de escenario — los
+// GIVEN/WHEN/THEN caen primero. Exportada para test determinista.
+function specClip(t, max = 4000) {
+  if (t.length <= max) return t;
+  const keep = String(t).split('\n').filter((l) => /^\s*(<!--\s*id:|#{2,4}\s|The system SHALL)/.test(l) || /\bSHALL\b/.test(l));
+  const out = keep.join('\n');
+  return (out.length <= max ? out : out.slice(0, max)) + `\n… [spec compactada (${t.length} chars): SHALL y escenarios conservados — completa en el fichero]`;
+}
 function pauseBundle(changeDir, pending) {
   const arts = {};
   const p1 = artClip(changeDir, 'proposal.md'); if (p1) arts['proposal.md'] = p1;
-  try { for (const d of readdirSync(join(changeDir, 'specs'))) { const s = artClip(changeDir, join('specs', d, 'spec.md')); if (s) { arts[`specs/${d}/spec.md`] = s; break; } } } catch {}
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) { let s = null; try { s = specClip(readFileSync(join(changeDir, 'specs', d, 'spec.md'), 'utf8')); } catch {} if (s) { arts[`specs/${d}/spec.md`] = s; break; } } } catch {}
   if (pending?.before === 'verify' || pending?.before === 'fix') { const a = artClip(changeDir, 'apply-report.md'); if (a) arts['apply-report.md'] = a; }
   if (pending?.before === 'fix') { const v = artClip(changeDir, 'verify-report.md'); if (v) arts['verify-report.md'] = v; }
   return arts;
@@ -9040,7 +9102,7 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
           status: 'paused', phase: st.pending.before || '?', findings: st.pending.findings || undefined,
           progress: runProgress(st) || undefined,
           artifacts: pauseBundle(changeDir, st.pending),
-          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Luego llama conductor_continue — sin note = aprobar; note = instrucción para la fase; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
+          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Dile que también puede decidir desde la web (enlace `web`) — si lo hace, cualquier mensaje suyo aquí te re-engancha con conductor_continue {action:"wait"}. Con su decisión: sin note = aprobar; note = instrucción; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
         };
       }
       const verdict = st.verdict || st.timeline?.verdict || null;
@@ -9243,7 +9305,7 @@ function serve() {
   rl.on('line', (line) => { const s = line.trim(); if (!s) return; let m; try { m = JSON.parse(s); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); } handle(m).catch((e) => log('err', e.message)); });
 }
 
-return { pauseBundle, runProgress, pollRun, serve };
+return { specClip, pauseBundle, runProgress, pollRun, serve };
 })();
 
 // ===== lib/sysops/upgrade.mjs =====
@@ -9330,7 +9392,8 @@ const { detectDrift } = __M['drift'];
 const L = __M['ledger'];
 const { lintMigrations } = __M['migration'];
 const { scoreCandidate } = __M['eval'];
-const { drive, readDriveConfig } = __M['drive'];
+const { drive, readDriveConfig, defaultRunAgent } = __M['drive'];
+const { buildCodeMap, renderCodeMap } = __M['codemap'];
 const { runGolden, GOLDEN_SCENARIOS, promptsFingerprint, appendEvalResult } = __M['evals'];
 const { resolveInstalledOrigin, upgradePlan } = __M['upgrade'];
 const { createTtyPause } = __M['ttypause'];
@@ -9773,6 +9836,62 @@ switch (cmd) {
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
     const r = initConfig(join(rootI2, 'openspec'));
+    // INIT INTELIGENTE (--smart; el flag ES el consentimiento: gasta tokens): UN one-shot del agente analiza
+    // ESTE repo y rellena project.md + propone checks/rules en conductor.json. REGLA DE ORO anti-duplicación:
+    // lo que AGENTS.md/CLAUDE.md/copilot-instructions ya documenten se REFERENCIA, no se repite. Jamás pisa
+    // un project.md rellenado por una persona (marcadores _Sustituye ausentes = suyo) ni toca models.
+    if (has('--smart')) {
+      const pmPath = join(rootI2, 'openspec', 'project.md');
+      const cfgPathS = join(rootI2, 'openspec', 'conductor.json');
+      const pmNow = existsSync(pmPath) ? readFileSync(pmPath, 'utf8') : '';
+      if (pmNow && !pmNow.includes('_Sustituye')) {
+        console.log('init --smart: project.md ya está rellenado por una persona — no se toca (restaura la plantilla si quieres regenerarlo).');
+      } else {
+        const stackS = (() => { try { return detectStack(rootI2); } catch { return null; } })();
+        let mapaS = ''; try { mapaS = renderCodeMap(buildCodeMap(rootI2), { maxFiles: 30 }); } catch { /* repo sin JS/TS */ }
+        const docsS = [];
+        for (const f of ['AGENTS.md', 'CLAUDE.md', join('.github', 'copilot-instructions.md')]) {
+          try { const t = readFileSync(join(rootI2, f), 'utf8').slice(0, 6000); if (t.trim()) docsS.push(`--- ${f} ---\n${t}`); } catch { /* no existe */ }
+        }
+        const outFileS = join(rootI2, '.conductor', 'smart-init.md');
+        try { mkdirSync(join(rootI2, '.conductor'), { recursive: true }); } catch {}
+        const promptS = [
+          'Analyze THIS repository and produce the conductor project context. Write ONE file at the absolute path given below, with EXACTLY this structure:',
+          '1) The full content for openspec/project.md in Spanish, sections: "## Propósito", "## Convenciones", "## Decisiones vivas", "## Fuera de alcance". REAL facts from THIS repo only — read source files as needed. GOLDEN RULE: if the agent docs included below already document something, REFERENCE them ("ver AGENTS.md") instead of repeating. Do NOT include stack/structure listings (derived data that rots). Under 60 lines.',
+          '2) Then a fenced ```json block: {"checks": ["<the real test command of this repo, if any>"], "rules": {"<phase>": ["<short team rule derived from the observed conventions>"]}} — phases apply/spec/verify only, max 3 rules each; empty if nothing real. NEVER invent model names.',
+          stackS ? `Detected stack (derived — do NOT repeat in project.md): ${JSON.stringify(stackS).slice(0, 600)}` : '',
+          mapaS ? `Code relationship map (derived):\n${mapaS.slice(0, 2500)}` : '',
+          docsS.length ? `Existing agent docs (do NOT duplicate their content):\n${docsS.join('\n\n').slice(0, 12000)}` : 'No agent docs (AGENTS.md/CLAUDE.md) found in this repo.',
+          `Write the result to this absolute path and nothing else: ${outFileS}`,
+        ].filter(Boolean).join('\n\n');
+        console.log('init --smart: analizando el repo con el agente (un one-shot; gasta tokens)…');
+        const rrS = await defaultRunAgent({ prompt: promptS, cwd: rootI2, timeoutMs: 240000, role: 'planner', phase: 'smart-init', mcp: {}, allowTools: {} });
+        const rawS = existsSync(outFileS) ? readFileSync(outFileS, 'utf8') : '';
+        const jmS = rawS.match(/```json\s*\n([\s\S]*?)```/);
+        const mdS = (jmS ? rawS.slice(0, rawS.indexOf(jmS[0])) : rawS).trim();
+        if (!mdS || !/## Propósito/.test(mdS)) {
+          console.log(`init --smart: el agente no produjo un project.md válido${rrS?.err ? ` (${String(rrS.err).slice(0, 120)})` : ''} — las plantillas quedan intactas; reintenta con la sesión de Copilot activa.`);
+        } else {
+          writeFileSync(pmPath, mdS.replace(/\r\n/g, '\n') + '\n');
+          console.log('✓ openspec/project.md rellenado desde el análisis del repo — revísalo: es TU contexto y las fases de planificación lo van a leer.');
+          try {
+            const jS = jmS ? JSON.parse(jmS[1]) : null;
+            if (jS && typeof jS === 'object') {
+              const cfgS = JSON.parse(readFileSync(cfgPathS, 'utf8'));
+              let touchedS = false;
+              if (Array.isArray(jS.checks) && jS.checks.length && !Array.isArray(cfgS.checks)) { cfgS.checks = jS.checks.slice(0, 3).map(String); touchedS = true; }
+              if (jS.rules && typeof jS.rules === 'object' && !Object.keys(cfgS.rules || {}).length) {
+                const rlS = {};
+                for (const [ph, arr] of Object.entries(jS.rules)) if (['apply', 'spec', 'verify'].includes(ph) && Array.isArray(arr) && arr.length) rlS[ph] = arr.slice(0, 3).map((x) => String(x).slice(0, 240));
+                if (Object.keys(rlS).length) { cfgS.rules = rlS; touchedS = true; }
+              }
+              if (touchedS) { writeFileSync(cfgPathS, JSON.stringify(cfgS, null, 2) + '\n'); console.log('✓ conductor.json: checks/rules propuestos desde el análisis (models NO se toca). Revísalos: el toggle «test» sigue mandando sobre checks.'); }
+            }
+          } catch { console.log('init --smart: el bloque json de checks/rules no parseó — solo se rellenó project.md.'); }
+        }
+        try { rmSync(outFileS, { force: true }); } catch {}
+      }
+    }
  // /conductor POR-PROYECTO y COMMITTEABLE (decisión la integración de MÁQUINA la hace
     // `setup`; init deja los comandos de PROYECTO — al clonar el repo, TODO el equipo hereda /conductor.
     // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.
@@ -10560,4 +10679,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: eb4642b243fc7d5364115325eb452b5f521916f2afad4fa50681594af9c09ab5
+// build-inputs-sha256: 1270d215d1389f44405c430c13ace7fd0453fb238fd71cc610567534578d0e69

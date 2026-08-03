@@ -21,9 +21,10 @@ await test('pauseBundle: spec GIGANTE => compactada con TODAS las cabeceras/ids 
   const arts = pauseBundle(T, { before: 'apply' });
   const spec = arts['specs/core/spec.md'];
   assert(spec, 'la spec SIEMPRE viaja en la pausa');
-  assert(spec.length <= 1800 + 120, 'respeta el cap (+ nota de compactado)');
+  // la spec tiene presupuesto PROPIO (4000, mayor que el genérico) y recorte por requisito (specClip)
+  assert(spec.length <= 4000 + 140, 'respeta el cap propio de la spec (+ nota de compactado)');
   for (let i = 1; i <= 30; i++) assert(spec.includes(`REQ-R${i}`), `el id REQ-R${i} sobrevive a la compactación`);
-  assert(/compactado/.test(spec), 'declara que es un resumen y dónde está el completo');
+  assert(/spec compactada/.test(spec) && /SHALL y escenarios conservados/.test(spec), 'declara el resumen Y qué conserva (los SHALL jamás caen)');
   eq(arts['proposal.md'].includes('compactado'), false, 'lo que cabe entero viaja entero');
   rmSync(T, { recursive: true, force: true });
 });

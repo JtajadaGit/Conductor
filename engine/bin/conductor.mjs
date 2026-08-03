@@ -44,7 +44,8 @@ import { detectDrift } from '../lib/contract/drift.mjs';
 import * as L from '../lib/provenance/ledger.mjs';
 import { lintMigrations } from '../lib/contract/migration.mjs';
 import { scoreCandidate } from '../lib/gates/eval.mjs';
-import { drive, readDriveConfig } from '../lib/pipeline/drive.mjs';
+import { drive, readDriveConfig, defaultRunAgent } from '../lib/pipeline/drive.mjs';
+import { buildCodeMap, renderCodeMap } from '../lib/analysis/codemap.mjs';
 import { runGolden, GOLDEN_SCENARIOS, promptsFingerprint, appendEvalResult } from '../lib/pipeline/evals.mjs';
 import { resolveInstalledOrigin, upgradePlan } from '../lib/sysops/upgrade.mjs';
 import { createTtyPause } from '../lib/pipeline/ttypause.mjs';
@@ -489,6 +490,62 @@ switch (cmd) {
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
     const r = initConfig(join(rootI2, 'openspec'));
+    // INIT INTELIGENTE (--smart; el flag ES el consentimiento: gasta tokens): UN one-shot del agente analiza
+    // ESTE repo y rellena project.md + propone checks/rules en conductor.json. REGLA DE ORO anti-duplicación:
+    // lo que AGENTS.md/CLAUDE.md/copilot-instructions ya documenten se REFERENCIA, no se repite. Jamás pisa
+    // un project.md rellenado por una persona (marcadores _Sustituye ausentes = suyo) ni toca models.
+    if (has('--smart')) {
+      const pmPath = join(rootI2, 'openspec', 'project.md');
+      const cfgPathS = join(rootI2, 'openspec', 'conductor.json');
+      const pmNow = existsSync(pmPath) ? readFileSync(pmPath, 'utf8') : '';
+      if (pmNow && !pmNow.includes('_Sustituye')) {
+        console.log('init --smart: project.md ya está rellenado por una persona — no se toca (restaura la plantilla si quieres regenerarlo).');
+      } else {
+        const stackS = (() => { try { return detectStack(rootI2); } catch { return null; } })();
+        let mapaS = ''; try { mapaS = renderCodeMap(buildCodeMap(rootI2), { maxFiles: 30 }); } catch { /* repo sin JS/TS */ }
+        const docsS = [];
+        for (const f of ['AGENTS.md', 'CLAUDE.md', join('.github', 'copilot-instructions.md')]) {
+          try { const t = readFileSync(join(rootI2, f), 'utf8').slice(0, 6000); if (t.trim()) docsS.push(`--- ${f} ---\n${t}`); } catch { /* no existe */ }
+        }
+        const outFileS = join(rootI2, '.conductor', 'smart-init.md');
+        try { mkdirSync(join(rootI2, '.conductor'), { recursive: true }); } catch {}
+        const promptS = [
+          'Analyze THIS repository and produce the conductor project context. Write ONE file at the absolute path given below, with EXACTLY this structure:',
+          '1) The full content for openspec/project.md in Spanish, sections: "## Propósito", "## Convenciones", "## Decisiones vivas", "## Fuera de alcance". REAL facts from THIS repo only — read source files as needed. GOLDEN RULE: if the agent docs included below already document something, REFERENCE them ("ver AGENTS.md") instead of repeating. Do NOT include stack/structure listings (derived data that rots). Under 60 lines.',
+          '2) Then a fenced ```json block: {"checks": ["<the real test command of this repo, if any>"], "rules": {"<phase>": ["<short team rule derived from the observed conventions>"]}} — phases apply/spec/verify only, max 3 rules each; empty if nothing real. NEVER invent model names.',
+          stackS ? `Detected stack (derived — do NOT repeat in project.md): ${JSON.stringify(stackS).slice(0, 600)}` : '',
+          mapaS ? `Code relationship map (derived):\n${mapaS.slice(0, 2500)}` : '',
+          docsS.length ? `Existing agent docs (do NOT duplicate their content):\n${docsS.join('\n\n').slice(0, 12000)}` : 'No agent docs (AGENTS.md/CLAUDE.md) found in this repo.',
+          `Write the result to this absolute path and nothing else: ${outFileS}`,
+        ].filter(Boolean).join('\n\n');
+        console.log('init --smart: analizando el repo con el agente (un one-shot; gasta tokens)…');
+        const rrS = await defaultRunAgent({ prompt: promptS, cwd: rootI2, timeoutMs: 240000, role: 'planner', phase: 'smart-init', mcp: {}, allowTools: {} });
+        const rawS = existsSync(outFileS) ? readFileSync(outFileS, 'utf8') : '';
+        const jmS = rawS.match(/```json\s*\n([\s\S]*?)```/);
+        const mdS = (jmS ? rawS.slice(0, rawS.indexOf(jmS[0])) : rawS).trim();
+        if (!mdS || !/## Propósito/.test(mdS)) {
+          console.log(`init --smart: el agente no produjo un project.md válido${rrS?.err ? ` (${String(rrS.err).slice(0, 120)})` : ''} — las plantillas quedan intactas; reintenta con la sesión de Copilot activa.`);
+        } else {
+          writeFileSync(pmPath, mdS.replace(/\r\n/g, '\n') + '\n');
+          console.log('✓ openspec/project.md rellenado desde el análisis del repo — revísalo: es TU contexto y las fases de planificación lo van a leer.');
+          try {
+            const jS = jmS ? JSON.parse(jmS[1]) : null;
+            if (jS && typeof jS === 'object') {
+              const cfgS = JSON.parse(readFileSync(cfgPathS, 'utf8'));
+              let touchedS = false;
+              if (Array.isArray(jS.checks) && jS.checks.length && !Array.isArray(cfgS.checks)) { cfgS.checks = jS.checks.slice(0, 3).map(String); touchedS = true; }
+              if (jS.rules && typeof jS.rules === 'object' && !Object.keys(cfgS.rules || {}).length) {
+                const rlS = {};
+                for (const [ph, arr] of Object.entries(jS.rules)) if (['apply', 'spec', 'verify'].includes(ph) && Array.isArray(arr) && arr.length) rlS[ph] = arr.slice(0, 3).map((x) => String(x).slice(0, 240));
+                if (Object.keys(rlS).length) { cfgS.rules = rlS; touchedS = true; }
+              }
+              if (touchedS) { writeFileSync(cfgPathS, JSON.stringify(cfgS, null, 2) + '\n'); console.log('✓ conductor.json: checks/rules propuestos desde el análisis (models NO se toca). Revísalos: el toggle «test» sigue mandando sobre checks.'); }
+            }
+          } catch { console.log('init --smart: el bloque json de checks/rules no parseó — solo se rellenó project.md.'); }
+        }
+        try { rmSync(outFileS, { force: true }); } catch {}
+      }
+    }
  // /conductor POR-PROYECTO y COMMITTEABLE (decisión la integración de MÁQUINA la hace
     // `setup`; init deja los comandos de PROYECTO — al clonar el repo, TODO el equipo hereda /conductor.
     // Mini-menú con TTY; en pipe/CI conecta los hosts DETECTADOS en la máquina, sin preguntar ni colgarse.

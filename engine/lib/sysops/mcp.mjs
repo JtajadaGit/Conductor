@@ -90,10 +90,20 @@ const artClip = (dir, f, max = 1800) => {
     return body + `\n… [compactado (${t.length} chars) — completo en ${f}]`;
   } catch { return null; }
 };
+// la SPEC es EL OBJETO de la aprobación: jamás viaja sin sus SHALL (caso real: el revisor del chat veía
+// requisitos VACÍOS porque el resumen genérico se quedaba solo con cabeceras). Presupuesto propio y, si aun
+// así no cabe, recorte POR REQUISITO conservando id + nombre + línea SHALL + títulos de escenario — los
+// GIVEN/WHEN/THEN caen primero. Exportada para test determinista.
+export function specClip(t, max = 4000) {
+  if (t.length <= max) return t;
+  const keep = String(t).split('\n').filter((l) => /^\s*(<!--\s*id:|#{2,4}\s|The system SHALL)/.test(l) || /\bSHALL\b/.test(l));
+  const out = keep.join('\n');
+  return (out.length <= max ? out : out.slice(0, max)) + `\n… [spec compactada (${t.length} chars): SHALL y escenarios conservados — completa en el fichero]`;
+}
 export function pauseBundle(changeDir, pending) {
   const arts = {};
   const p1 = artClip(changeDir, 'proposal.md'); if (p1) arts['proposal.md'] = p1;
-  try { for (const d of readdirSync(join(changeDir, 'specs'))) { const s = artClip(changeDir, join('specs', d, 'spec.md')); if (s) { arts[`specs/${d}/spec.md`] = s; break; } } } catch {}
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) { let s = null; try { s = specClip(readFileSync(join(changeDir, 'specs', d, 'spec.md'), 'utf8')); } catch {} if (s) { arts[`specs/${d}/spec.md`] = s; break; } } } catch {}
   if (pending?.before === 'verify' || pending?.before === 'fix') { const a = artClip(changeDir, 'apply-report.md'); if (a) arts['apply-report.md'] = a; }
   if (pending?.before === 'fix') { const v = artClip(changeDir, 'verify-report.md'); if (v) arts['verify-report.md'] = v; }
   return arts;
@@ -137,7 +147,7 @@ export async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
           status: 'paused', phase: st.pending.before || '?', findings: st.pending.findings || undefined,
           progress: runProgress(st) || undefined,
           artifacts: pauseBundle(changeDir, st.pending),
-          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Luego llama conductor_continue — sin note = aprobar; note = instrucción para la fase; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
+          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Dile que también puede decidir desde la web (enlace `web`) — si lo hace, cualquier mensaje suyo aquí te re-engancha con conductor_continue {action:"wait"}. Con su decisión: sin note = aprobar; note = instrucción; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
         };
       }
       const verdict = st.verdict || st.timeline?.verdict || null;

@@ -60,6 +60,19 @@ await test('mcp: conductor_gate ejecuta el gate real', async () => {
   eq(fail.verdict, 'FAIL');
   await c.close();
 });
+await test('mcp(pausa): specClip conserva SHALL y títulos de escenario al compactar — el revisor JAMÁS aprueba requisitos vacíos', async () => {
+  const { specClip } = await import('../lib/sysops/mcp.mjs');
+  const bloque = '<!-- id: REQ-CAMPO-USUARIO -->\n### Requirement: Campo Usuario\nThe system SHALL mostrar un campo de usuario editable.\n#### Scenario: usuario escribe su nombre\n- **GIVEN** un formulario vacio\n- **WHEN** el usuario teclea su nombre\n- **THEN** el campo refleja el texto\n';
+  const spec = '## ADDED Requirements\n' + bloque.repeat(30); // >4000 chars
+  const out = specClip(spec, 2000);
+  assert(out.length < spec.length, 'se compacta');
+  assert(/The system SHALL mostrar un campo/.test(out), 'la línea SHALL SOBREVIVE (es el objeto de la aprobación)');
+  assert(/#### Scenario: usuario escribe su nombre/.test(out), 'los títulos de escenario sobreviven');
+  assert(!/\*\*GIVEN\*\*/.test(out), 'los GIVEN/WHEN/THEN caen primero (detalle, no objeto)');
+  assert(/spec compactada/.test(out), 'el recorte se DECLARA (nunca en silencio)');
+  eq(specClip('corta', 2000), 'corta', 'por debajo del cap viaja entera');
+});
+
 await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "working" DENTRO del presupuesto (los hosts matan tool-calls largas)', async () => {
   const { pollRun } = await import('../lib/sysops/mcp.mjs');
   const { createServer } = await import('node:http');

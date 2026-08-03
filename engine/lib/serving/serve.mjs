@@ -15,6 +15,8 @@ import { KNOWN_PHASES } from '../pipeline/orchestrate.mjs';
 import { PRESET_NAMES } from '../pipeline/presets.mjs';
 import { resolvePlan, PHASE_ACTION } from '../pipeline/plan.mjs';
 import { loadPolicy } from '../gates/policy.mjs';
+import { checkCoherence } from '../gates/coherence.mjs';
+import { checkArtifacts } from '../gates/artifacts.mjs';
 import { classifyTier, tierFromPriceCategory } from '../core/tiers.mjs';
 import { setLivePrices, setLiveMeta, metaOf, priceOf } from '../core/cost.mjs';
 import { renderAiact } from './aiact.mjs';
@@ -1291,6 +1293,11 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         launch(proj, b.name, tl.request, tl.complexity, tl.domain, tl.models, undefined, tl.preset?.name, tl.pipeline, tl.runTests === true);
         return json(200, { ok: true, url: `/run/${proj.id}/${b.name}` });
       }
+      // GATES FRESCOS para el informe re-renderizado: coherencia+artefactos se recalculan en vivo (baratos
+      // y conscientes del plan del run — un report.json viejo arrastra avisos de fases que el run jamás
+      // programó). El trace (escaneo del proyecto, caro) sí se sirve del report.json. Micro no lleva spec
+      // por decisión: sus gates propios viven solo en el report del run.
+      const freshGates = (dir, tl, rj) => { if (!tl || tl.complexity === 'micro') return rj?.gates ?? []; try { return [...checkCoherence(dir), ...checkArtifacts(dir)]; } catch { return rj?.gates ?? []; } };
       const mArt2 = u.pathname.match(/^\/artifact\/([a-z0-9-]+~[a-f0-9]{6})\/([a-z0-9-]+)\/dashboard\.html$/);
       const mArt = mArt2 ? null : u.pathname.match(/^\/artifact\/([a-z0-9-]+)\/dashboard\.html$/);
       if (mArt2) {
@@ -1299,7 +1306,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const ch2 = join(proj.root, 'openspec', 'changes', mArt2[2]);
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
-        if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
+        if (tl2) { try { return html(renderDashboard({ change: mArt2[2], gates: freshGates(ch2, tl2, rj), trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
@@ -1308,7 +1315,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const ch2 = join(root, 'openspec', 'changes', mArt[1]);
         const tl2 = readJson(plumbPath(ch2, 'timeline.json'));
         const rj = readJson(plumbPath(ch2, 'report.json'));
-        if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: rj?.gates ?? [], trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
+        if (tl2) { try { return html(renderDashboard({ change: mArt[1], gates: freshGates(ch2, tl2, rj), trace: rj?.trace ?? null, cost: null, timeline: tl2 })); } catch {} }
         const body = (() => { try { return readFileSync(evidencePath(ch2, 'dashboard.html'), 'utf8').slice(0, 1e6); } catch { return null; } })();
         res.writeHead(body != null ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' }); return res.end(body ?? 'no encontrado');
       }
@@ -1333,6 +1340,15 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         const changeDir = join(proj.root, 'openspec', 'changes', name);
         const reg = runs.get(runKey(proj.id, name));
         if (action === 'state') {
+          // URL de un change que YA NO está en changes/ (perfil «usuario que refresca» tras archivar, o URL
+          // errónea): la pantalla pintaba un run vivo VACÍO («EN CURSO», Detener, 0/0) — una mentira doble.
+          // Honesto: si hay un archivado homónimo se dice y se enlaza; si no, «no existe». SOLO sin run vivo
+          // registrado: entre launch y el mkdir del driver hay una ventana sin carpeta con run legítimo.
+          if (!existsSync(changeDir) && !(reg && !reg.exited)) {
+            let archivedAs = null;
+            try { archivedAs = readdirSync(join(proj.root, 'openspec', 'changes', 'archive')).find((d) => d.endsWith(`-${name}`)) || null; } catch {}
+            return json(200, { missing: true, archivedAs, phases: [], plan: [], logTail: [], done: true, verdict: null, now: Date.now() });
+          }
           const alive = !!((reg && !reg.exited) || activeRun(changeDir));
           return json(200, { ...runState(changeDir, proj.root, { alive }), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
         }

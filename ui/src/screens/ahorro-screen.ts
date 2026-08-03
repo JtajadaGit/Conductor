@@ -4,62 +4,87 @@ import { CElement } from '../core/element';
 
 /** PANTALLA /ahorro : las técnicas de ahorro de tokens, explicadas en humano (pilar "token-first" +
  * "panel de ahorro"). Consultable por el dev junior (qué gano) y el tech-lead (por qué es fiable).
+ * Cada técnica lleva su «Cómo» (mecanismo real: fichero/flag/momento) — decirlo no basta, se enseña.
  * 100% local y estática — leer esta página cuesta 0 tokens. */
 @customElement('ahorro-screen')
 export class AhorroScreen extends CElement {
-  // Una entrada por técnica. `stat` = dato medido/duro que merece destacarse;
+  // Una entrada por técnica. `d` = qué gano; `como` = mecanismo real; `stat` = dato duro destacable.
   private readonly tecnicas = [
     {
       t: 'No re-escanear: índice verificado',
       d: 'Al planificar, el modelo recibe un índice compacto de lo YA verificado (las capacidades de la spec viva y los cambios archivados) en vez de re-leer el código fuente. Lo que el pipeline validó ayer no se vuelve a pagar hoy.',
-      // el «30–45% observado» NO existía en el código (cifra inventada). Lo único
-      // que el motor calcula es su estimación conservadora (~8k tokens por fase derivada) y la DECLARA estimación.
+      como: 'índice de openspec/specs/** + archivo de cambios, construido 1× por run e inyectado solo a las fases de planificación',
       stat: 'Estimación conservadora del propio motor: ~8.000 tokens de entrada evitados por fase de planificación (estimación declarada, no medición)',
     },
     {
       t: 'Mapa del repo para orientarse',
       d: 'Stack, carpetas clave, entrypoints y el comando de test, resumidos en unas pocas líneas. La fase de exploración localiza las áreas relevantes del cambio sin escanear el repo entero.',
+      como: 'detección determinista del stack (sin LLM, sin red), inyectada solo a la fase explore',
     },
     {
       t: 'Mapa de relaciones (blast-radius)',
       d: 'Índice determinista de imports/exports y quién-usa-qué (hoy para JS/TS): el modelo sabe de qué depende un fichero y a quién rompe si lo toca, sin abrir N ficheros para descubrirlo.',
+      como: 'índice regex 0-dep construido 1× por run; el mapa general va a explore y el radio focalizado de tus @ficheros, a apply/fix',
     },
     {
       t: 'Contexto a dieta (.copilotignore)',
       d: 'El motor genera un .copilotignore con node_modules, builds, lockfiles, .env y claves; el CLI anfitrión lo honra para el contexto del modelo y el driver lo respeta al capturar cambios. Solo entra lo que un revisor humano querría leer.',
+      como: 'se escribe en el init (jamás pisa el tuyo); lo honra el CLI anfitrión y lo respeta la captura de cambios del driver',
+    },
+    {
+      t: 'Cada fase empieza de cero',
+      d: 'Ninguna fase arrastra la conversación de la anterior: cada una es una llamada fresca con SOLO su contexto presupuestado. El coste no crece turno a turno como en un chat.',
+      como: 'one-shot por fase + presupuesto de contexto (~12k tokens): lo que no cabe viaja resumido a cabeceras e ids, no cortado a ciegas',
+    },
+    {
+      t: 'Caché de prefijo estable',
+      d: 'El prompt de cada fase pone lo estático primero y nada volátil (cero timestamps): el proveedor puede servir ese prefijo desde su caché a una fracción del precio.',
+      como: 'orden del prompt fijado por test; los tokens cached reales del recibo de sesión se enseñan en el informe',
+    },
+    {
+      t: 'Pausas compactadas',
+      d: 'Lo que viaja al chat en una pausa va topado: por debajo del cap, entero; por encima, resumen estructurado. La spec conserva SIEMPRE sus SHALL y los títulos de escenario — el revisor nunca aprueba requisitos que no puede leer.',
+      como: 'cap por artefacto en el bundle de pausa; la spec con presupuesto propio y recorte por requisito (caen los GIVEN/WHEN/THEN, jamás el SHALL)',
     },
     {
       t: 'Estimar antes de gastar',
       d: 'Estimación de tokens por fase ANTES de lanzar el run, sin llamar a ninguna API. Presupuestar cuesta 0: decides con el coste delante, no después de la factura.',
+      como: 'estimador local (chars/4 + contexto acumulado); se persiste y el informe compara estimado vs real por fase',
     },
     {
       t: 'Reanudar sin re-pagar',
       d: 'Tras un corte o un timeout, el run reanuda donde iba: las fases completadas no se vuelven a pagar. La verificación (verify) sí se re-ejecuta siempre — el gate no se hereda. Un fallo a mitad no significa empezar de cero.',
+      como: 'el timeline registra cada fase ok; el fast-forward las salta sin llamar al modelo (verify y fix, jamás)',
     },
     {
       t: 'El modelo justo en cada fase',
-      // el routing economy/premium NO es automático (exige "tiers" en conductor.json) — decirlo
       d: 'Mezcla de suscripciones en el MISMO run: Copilot Business + tu proveedor LiteLLM (0 AI Credits). El botón «Optimizar coste» del panel arma la mezcla con un clic; con "tiers" en conductor.json el reparto economy/premium por fase queda fijado para el equipo.',
+      como: 'prefijos litellm:/copilot: por rol o por fase (la fase gana); cada fase corre en su proceso con sus credenciales',
     },
     {
       t: 'Menos tools a la vista',
       d: 'Las fases que solo escriben su artefacto (planificación y revisión) no ven los tools de web, shell o parcheo: sus schemas dejan de viajar en el system prompt de cada turno. Automático; se desactiva con "toolFilter": false si una skill los necesita.',
+      como: 'el spawn de fases no-coder añade --excluded-tools (web_search, web_fetch, powershell, task, apply_patch)',
     },
     {
       t: 'Verificación reutilizable (opt-in)',
-      d: 'Con "verifyCache": true, si TODOS los inputs del verify son bit-idénticos al último verify correcto (spec, informes, ficheros tocados, prompt, lentes y modelo), la opinión de las lentes se reutiliza en vez de re-pagarse. El gate determinista corre SIEMPRE, y el hit queda visible en el timeline — nada en silencio.',
+      d: 'Con "verifyCache": true, si TODOS los inputs del verify son bit-idénticos al último verify correcto, la opinión de las lentes se reutiliza en vez de re-pagarse. El gate determinista corre SIEMPRE, y el hit queda visible en el timeline — nada en silencio.',
+      como: 'sha256 de spec + informes + contenido de ficheros tocados + prompt + lentes + modelo → verify-cache.json en la evidencia',
     },
     {
       t: 'Freno de presupuesto',
-      d: 'Límite duro por run con "budget" en conductor.json ({ maxTokens, maxCostUsd, onExceed: "block"|"pause" }): al superarlo, el run pausa para tu revisión o corta. Se evalúa con los tokens REALES entre fases; sin datos de consumo, frena igual (fail-closed). Sin sustos a fin de mes.',
+      d: 'Límite duro por run con "budget" en conductor.json ({ maxTokens, maxCostUsd, onExceed: "block"|"pause" }): al superarlo, el run pausa para tu revisión o corta. Sin sustos a fin de mes.',
+      como: 'se evalúa ENTRE fases con los tokens reales del timeline; sin datos de consumo, frena igual (fail-closed)',
     },
     {
       t: 'Artefactos a disco, no al chat',
       d: 'Cada fase deja su artefacto en fichero (el agente escribe specs y planes; el driver, los informes); el contexto de cada fase lleva solo lo necesario, no una conversación que crece sin freno con cada turno.',
+      como: 'los artefactos viven en openspec/changes/<cambio>; la evidencia técnica, en .conductor/runs/<cambio>',
     },
     {
       t: 'Ahorro visible',
       d: 'Estadísticas reales por proveedor y modelo: cuántas fases salieron a 0 créditos y el ahorro estimado. Sin humo: si un dato no se conoce, se dice.',
+      como: 'tokens reales del recibo de cierre de cada sesión del CLI → timeline por fase → stats, informe y el chip «0 AIC» del run',
     },
   ];
 
@@ -67,19 +92,18 @@ export class AhorroScreen extends CElement {
     return html`
       <h1>Cómo ahorra tokens conductor</h1>
       <p class="muted">Cada fase del pipeline paga <b>solo el contexto que necesita</b> — nada de arrastrar el repo
-        entero ni una conversación que engorda turno a turno. Estas son las técnicas — casi todas automáticas; las
-        que piden un ajuste (mezcla de modelos, freno de presupuesto) lo dicen. Esta página es 100% local — <b>0 tokens</b>.</p>
+        entero ni una conversación que engorda turno a turno. Estas son las técnicas, cada una con su mecanismo real
+        — casi todas automáticas; las que piden un ajuste lo dicen. Esta página es 100% local — <b>0 tokens</b>.</p>
 
       <h2 class="sect">Las técnicas</h2>
       <div class="ahorro-grid">
         ${this.tecnicas.map((x) => html`
           <div class="ahorro-card">
-            <!-- sin círculo numerado (regla del sistema visual): las técnicas NO son una secuencia — el
-                 número era decoración y repetía el acento ×10; el título mono es identidad suficiente -->
             <div class="ah-top">
               <span class="ah-t">${x.t}</span>
             </div>
             <p class="ah-does">${x.d}</p>
+            ${x.como ? html`<p class="ah-como"><span class="ah-como-lbl">cómo</span>${x.como}</p>` : nothing}
             ${x.stat ? html`<p class="ah-stat">${x.stat}</p>` : nothing}
           </div>
         `)}

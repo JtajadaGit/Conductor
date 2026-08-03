@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BIN = resolve(HERE, '..', 'bin', 'conductor.mjs');
@@ -75,3 +75,34 @@ await test('cli-humo: el gate ve el proyecto trazado y stats no miente con los t
 });
 
 rmSync(ROOT, { recursive: true, force: true });
+
+await test('cli(init --smart): el agente rellena project.md y propone checks/rules SIN pisar lo humano ni tocar models', () => {
+  const T = join(HERE, '.tmp-smart');
+  rmSync(T, { recursive: true, force: true });
+  mkdirSync(T, { recursive: true });
+  w(join(T, 'AGENTS.md'), '# Agentes\nConvenciones ya documentadas aqui.');
+  // agente FAKE (stdin = prompt): extrae la ruta de smart-init.md del prompt y escribe md valido + json
+  const FAKE = join(T, 'fake-agent.mjs');
+  w(FAKE, [
+    "let s=''; process.stdin.on('data',(c)=>s+=c); process.stdin.on('end',()=>{",
+    "const m=s.match(/([A-Z]:[^\\n]*?smart-init\\.md)/); if(!m) process.exit(1);",
+    "const md='## Propósito\\nApp de prueba del init inteligente.\\n\\n## Convenciones\\nver AGENTS.md\\n\\n## Decisiones vivas\\n- ninguna\\n\\n## Fuera de alcance\\n- pagos\\n\\n```json\\n{\"checks\":[\"npm test\"],\"rules\":{\"apply\":[\"tests junto al codigo\"]}}\\n```\\n';",
+    "import('node:fs').then(f=>{ f.writeFileSync(m[1].trim(), md); process.exit(0); });",
+    '});',
+  ].join('\n'));
+  const env2 = { ...process.env, CONDUCTOR_AGENT_CMD: `node ${FAKE}` };
+  const out = execFileSync(process.execPath, [BIN, 'init-config', T, '--smart'], { encoding: 'utf8', env: env2, timeout: 120000, windowsHide: true });
+  assert(/project\.md rellenado/.test(out), 'anuncia el relleno: ' + out.slice(-200));
+  const pm = readFileSync(join(T, 'openspec', 'project.md'), 'utf8');
+  assert(/App de prueba del init inteligente/.test(pm) && !/_Sustituye/.test(pm), 'project.md rellenado con contenido real');
+  assert(/ver AGENTS\.md/.test(pm), 'anti-duplicacion: referencia AGENTS.md en vez de repetirlo');
+  const cfg = JSON.parse(readFileSync(join(T, 'openspec', 'conductor.json'), 'utf8'));
+  eq(cfg.checks, ['npm test'], 'checks propuestos del analisis');
+  eq(cfg.rules.apply, ['tests junto al codigo'], 'rules por fase propuestas');
+  eq(Object.keys(cfg.models).length, 0, 'models JAMAS se toca');
+  // re-ejecutar NO pisa lo rellenado (ya no tiene marcadores _Sustituye = es del humano)
+  const out2 = execFileSync(process.execPath, [BIN, 'init-config', T, '--smart'], { encoding: 'utf8', env: env2, timeout: 120000, windowsHide: true });
+  assert(/no se toca/.test(out2), 're-init --smart respeta el project.md ya rellenado');
+  rmSync(T, { recursive: true, force: true });
+});
+

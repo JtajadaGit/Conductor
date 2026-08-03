@@ -364,7 +364,15 @@ help-screen code { white-space: nowrap; }
 .ah-n { width: 1.5rem; height: 1.5rem; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font: 700 .8rem/1 var(--mono); flex: none; }
 .ah-t { font-weight: 700; font-size: .92rem; }
 .ah-new { font: 700 .62rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); background: var(--accentbg); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--bd)); border-radius: 999px; padding: .18rem .5rem; }
+/* FICHAS de /help: cada entrada como fila de instrumento — hairline entre filas, el término (<b> inicial)
+   respira y el cuerpo queda en texto tranquilo. Mata el muro de texto sin inventar componentes nuevos. */
+.fichas { list-style: none; padding: 0; margin: .3rem 0 0; }
+.fichas li { padding: .55rem 0 .55rem .9rem; border-left: 2px solid var(--bd); margin: 0 0 .45rem; line-height: 1.55; }
+.fichas li > b:first-child { display: block; font: 700 .78rem/1.4 var(--mono); letter-spacing: .02em; color: var(--tx); margin-bottom: .12rem; }
 .ah-does { margin: .45rem 0 0; font-size: .84rem; color: var(--tx2); line-height: 1.55; }
+/* el «Cómo» de cada técnica: mecanismo real en voz de dato (mono), con etiqueta en caja alta — enseña, no promete */
+.ah-como { margin: .5rem 0 0; font: 500 .72rem/1.5 var(--mono); color: var(--tx3); padding-left: .6rem; border-left: 2px solid var(--bd); }
+.ah-como-lbl { display: inline-block; font-weight: 700; font-size: .6rem; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-right: .45rem; }
 .ah-stat { margin: .45rem 0 0; font: 600 .72rem/1.4 var(--mono); color: var(--ok); }
 .ahorro-note { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--bd)); background: var(--accentbg); border-radius: 12px; padding: .7rem .9rem; margin: 1rem 0; max-width: 1080px; font-size: .84rem; line-height: 1.55; }
 
