@@ -1,7 +1,7 @@
 // Tests del GUARD DE RAÍZ y la detección de permisos denegados del CLI (caso real un agente
 // de chat lanzó `conductor drive --src src` → projectRoot=subdirectorio sin openspec/ → el CLI denegó toda
 // escritura del artefacto y la fase murió en "no-progress" mudo tras quemar 2 intentos de modelo).
-import { drive, countDeniedPerms } from '../lib/pipeline/drive.mjs';
+import { drive, countDeniedPerms, preserveTimeline } from '../lib/pipeline/drive.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,4 +111,23 @@ await test('lock(suspension): latido continuo de 15s + ventana de huerfano 75s �
   assert(/lockHb\.unref\?\.\(\)/.test(src), 'unref: el latido jamas retiene el proceso vivo');
   assert(/st\.mtimeMs < 75_000/.test(src), 'ventana de huerfano 75s (5 latidos de margen)');
   assert(!/setInterval\(takeLock, 5 \* 60_000\)/.test(src), 'el latido viejo de 5 min en pausa se retiro');
+});
+
+await test('preserveTimeline: un run TERMINADO se copia a timeline-prev.json al relanzar; uno vivo o ausente, no', async () => {
+  const { plumbPath } = await import('../lib/core/plumb.mjs');
+  const { writeFileSync, readFileSync, existsSync } = await import('node:fs');
+  const T = join(HERE, '.tmp-tlprev');
+  rmSync(T, { recursive: true, force: true });
+  const CH = join(T, 'openspec', 'changes', 'mi-feature');
+  mkdirSync(CH, { recursive: true });
+  eq(preserveTimeline(CH), false, 'sin timeline previo: nada que preservar');
+  mkdirSync(plumbPath(CH), { recursive: true });
+  writeFileSync(plumbPath(CH, 'timeline.json'), JSON.stringify({ verdict: 'running', phases: [] }));
+  eq(preserveTimeline(CH), false, 'un run VIVO jamas se rota (es el mismo run)');
+  writeFileSync(plumbPath(CH, 'timeline.json'), JSON.stringify({ verdict: 'NOT-GREEN', reason: 'gate SECRETS-FAIL', phases: [{ phase: 'verify' }] }));
+  eq(preserveTimeline(CH), true, 'run terminado: se preserva');
+  const prev = JSON.parse(readFileSync(plumbPath(CH, 'timeline-prev.json'), 'utf8'));
+  eq(prev.reason, 'gate SECRETS-FAIL', 'el PORQUE del run anterior sobrevive al relanzamiento');
+  assert(existsSync(plumbPath(CH, 'timeline.json')), 'COPIA, no movimiento: el original queda para el resume');
+  rmSync(T, { recursive: true, force: true });
 });

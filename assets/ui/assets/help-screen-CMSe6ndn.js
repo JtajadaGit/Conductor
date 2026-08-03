@@ -1,4 +1,4 @@
-import{f as e,h as t,t as n,v as r}from"./index-1EQYeSit.js";var i=class extends e{render(){return r`
+import{f as e,h as t,t as n,v as r}from"./index--TcxrEi2.js";var i=class extends e{render(){return r`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
