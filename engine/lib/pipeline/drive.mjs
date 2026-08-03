@@ -1612,6 +1612,16 @@ ${body || raw}` };
           // log HONESTO del caso timeout-con-progreso (antes: "timeout" seguido de "✅ apply" sin explicación)
           if (r?.err) log(`   ⚠ el intento acabó con error pero dejó ${files.length} fichero(s) — se acepta el progreso y continúa (el gate decide)`);
           capturedFiles = files;
+          // INFORME ESPURIO EN LA RAÍZ (bug real): el agente a veces escribe apply-report/test-report/
+          // verify-report en SU cwd (la raíz del proyecto) en vez del change. El informe real lo sintetiza
+          // el driver en el change — el espurio contamina el repo del usuario: fuera, y fuera del changeset.
+          capturedFiles = capturedFiles.filter((f) => {
+            const rel = String(f?.p || '').replace(/\\/g, '/');
+            if (!/^(apply-report|test-report|verify-report)\.md$/.test(rel)) return true;
+            try { rmSync(join(projectRoot, rel), { force: true }); } catch {}
+            log(`   🧹 ${rel} espurio en la raíz del proyecto eliminado (el informe real vive en el change)`);
+            return false;
+          });
           // el DRIVER sintetiza el apply-report (determinista) a partir de lo que el agente escribió,
           // y cierra las tareas para que el gate de coherencia cuadre.
           const tasksPath = join(changeDir, 'tasks.md');

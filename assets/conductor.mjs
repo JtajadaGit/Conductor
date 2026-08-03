@@ -6433,6 +6433,16 @@ ${body || raw}` };
           // log HONESTO del caso timeout-con-progreso (antes: "timeout" seguido de "✅ apply" sin explicación)
           if (r?.err) log(`   ⚠ el intento acabó con error pero dejó ${files.length} fichero(s) — se acepta el progreso y continúa (el gate decide)`);
           capturedFiles = files;
+          // INFORME ESPURIO EN LA RAÍZ (bug real): el agente a veces escribe apply-report/test-report/
+          // verify-report en SU cwd (la raíz del proyecto) en vez del change. El informe real lo sintetiza
+          // el driver en el change — el espurio contamina el repo del usuario: fuera, y fuera del changeset.
+          capturedFiles = capturedFiles.filter((f) => {
+            const rel = String(f?.p || '').replace(/\\/g, '/');
+            if (!/^(apply-report|test-report|verify-report)\.md$/.test(rel)) return true;
+            try { rmSync(join(projectRoot, rel), { force: true }); } catch {}
+            log(`   🧹 ${rel} espurio en la raíz del proyecto eliminado (el informe real vive en el change)`);
+            return false;
+          });
           // el DRIVER sintetiza el apply-report (determinista) a partir de lo que el agente escribió,
           // y cierra las tareas para que el gate de coherencia cuadre.
           const tasksPath = join(changeDir, 'tasks.md');
@@ -10550,4 +10560,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: ebee273daa77d06d3d0b9eacb32bfc3ca2fe4e0e303a8153e17baf3bf1779721
+// build-inputs-sha256: eb4642b243fc7d5364115325eb452b5f521916f2afad4fa50681594af9c09ab5
