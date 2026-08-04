@@ -13,7 +13,7 @@ conductor convierte "pedirle código a la IA" en un **proceso de ingeniería aud
 | Sin conductor | Con conductor |
 |---|---|
 | La IA genera código al vuelo | **Spec primero**; el código se implementa contra ella |
-| "Hecho" = "el modelo dice que está hecho" | **Gate sin LLM** verifica coherencia y trazabilidad requisito→código→test; si falta un test, **bloquea** |
+| "Hecho" = "el modelo dice que está hecho" | **Gate sin LLM** verifica coherencia y trazabilidad requisito→código→test; sin NINGÚN test = **aviso visible** (y **bloquea** en presets estrictos). Un test sin etiqueta que ejercita el código **cuenta** (cobertura por referencia) |
 | Un modelo flojo se salta pasos | La secuencia la garantiza **código**: con cualquier modelo, las fases van en orden o no avanzan |
 | Un solo modelo para todo | **Modelo por FASE**, mezclando proveedores en el mismo run: planifica barato con tu proxy, codea con tu licencia premium |
 | El consumo es una caja negra | **Tokens y coste por fase**, estimación ANTES de lanzar (sin gastar API) y precisión del estimador medida |
@@ -67,17 +67,18 @@ cd tu-proyecto
 conductor init
 ```
 
-Crea el árbol **OpenSpec** completo y listo:
+`init` **detecta tu repo** (determinista, 0 tokens) y te lo enseña: versiones exactas, gestor de paquetes, proyectos del workspace y los **comandos reales** de build/test/lint — que quedan **ya sembrados como `checks`** en conductor.json (la fase test los ejecuta). Crea el árbol **OpenSpec** completo:
 
 ```
 openspec/
-├── project.md            ← CONTEXTO del proyecto (RELLÉNALO: las fases de planificación lo leen)
-├── conductor.json        gobierno del equipo (modelos, preset, gates) — mínimo a propósito: TODO es opcional
+├── project.md            ← CONTEXTO (con el bloque «detectado» que cada init refresca; el resto es tuyo)
+├── conductor.json        gobierno del equipo — nace con TUS checks detectados; todo lo demás es opcional
+├── config.yaml           marcador del estándar OpenSpec (el CLI oficial reconoce el repo)
 ├── specs/                fuente de verdad VIVA (la llena el ciclo al archivar)
 └── changes/  + archive/  cambios activos e histórico
 ```
 
-`init` también ofrece (mini-menú) el comando `/conductor` **por-proyecto** para cada CLI — ficheros committeables: al clonar el repo, todo tu equipo lo hereda.
+Si el repo ya tiene **AGENTS.md / copilot-instructions**, init lo detecta y el project.md los **referencia** en vez de repetirlos (cero duplicidad: cada dato, una casa). Para el relleno semántico leyendo tu repo con IA: `conductor init-config . --smart`. `init` también ofrece (mini-menú) el comando `/conductor` **por-proyecto** para cada CLI — ficheros committeables: al clonar el repo, todo tu equipo lo hereda.
 
 ---
 
@@ -105,7 +106,7 @@ La app es única y local (127.0.0.1, solo tú), instalable como PWA, se apaga so
 /conductor                                            ← estado y ayuda, sin abrir navegador
 ```
 
-Las pausas te llegan como conversación: apruebas, das instrucciones, cambias modelo o paras — mismo motor, mismo gate. Para procesos/CI existe además el modo job: la tool MCP `conductor_drive {async:true}` lanza y devuelve el identificador al instante.
+Las pausas te llegan como conversación **legible**: el motor construye la presentación (fase, progreso, decisiones previas, hallazgos y la spec en titulares — jamás el muro GIVEN/WHEN/THEN) y el chat la imprime tal cual. Web y chat se coordinan: si apruebas en la web, cualquier mensaje tuyo re-engancha el chat con lo decidido, y una aprobación tardía **jamás** cae en una pausa que no viste. En VS Code, la primera vez el chat pedirá permiso por cada tool: elige **«Always allow»**. Para procesos/CI existe además el modo job: la tool MCP `conductor_drive {async:true}` lanza y devuelve el identificador al instante.
 
 ---
 
@@ -127,7 +128,7 @@ Las pausas te llegan como conversación: apruebas, das instrucciones, cambias mo
 }
 ```
 
-Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige test nuevo) · `feature` (default: trazabilidad estricta) · `migration` (además: clarify obligatorio, spec congelada, gate de datos SQL). `verify` está SIEMPRE — es innegociable.
+Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige test nuevo) · `feature` (default: trazabilidad estricta) · `migration` (además: clarify obligatorio, spec congelada, gate de datos SQL). `verify` está SIEMPRE — es innegociable. Y las **lentes de review van por riesgo**: quick-fix/visual pasan 1 lente, feature 3, migración 4 — un typo no paga tres revisores.
 
 ---
 
@@ -135,9 +136,9 @@ Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige 
 
 - **Gate determinista sin LLM**: coherencia, estructura, trazabilidad, tests que verifican de verdad (caza tests "huecos"), secretos hardcodeados, SQL destructivo, breaking-changes de contrato. No obedece prompts: o cumple, o FAIL.
 - **El propio harness se auto-certifica**: un golden-set de 12 escenarios (`conductor evals`, offline, 0 tokens) ejercita cada gate e invariante con su resultado esperado; el pass-rate queda **versionado en git**, y cambiar un prompt del pipeline **exige** re-certificar en verde.
-- **Provenance**: sello Ed25519 por GREEN + ledger hash-encadenado (manipular una entrada rompe la cadena) + `conductor upgrade` que reinstala de tu origen y **verifica el motor nuevo** antes de dártelo por bueno.
+- **Provenance**: sello Ed25519 por GREEN **atado al árbol git exacto** del working tree («verificado» = ESTE código, no la fe) + ledger hash-encadenado (manipular una entrada rompe la cadena) + `conductor upgrade` que reinstala de tu origen y **verifica el motor nuevo** antes de dártelo por bueno.
 - **Agentes con correa corta**: sin git, sin red, sin comandos destructivos; toolset mínimo por rol; el contenido del repo se trata como **datos**, no como instrucciones; ejecutar los tests del proyecto requiere TU consentimiento explícito.
-- **AI Act**: informe de transparencia por cambio (modelos por fase, aprobaciones humanas **con hash de lo aprobado**, verificación, firma) — la evidencia que exige la UE desde el 2-ago-2026, como subproducto del pipeline.
+- **AI Act**: el acta de «quién hizo qué» por cambio (modelo y **papel** de cada agente por fase, aprobaciones humanas **con hash de lo aprobado**, verificación, sello) — la evidencia que exige la UE desde el 2-ago-2026, como subproducto gratis del pipeline. **No es el sello de calidad** (eso es GREEN, el veredicto SDD): es la respuesta preparada si un cliente o auditoría pregunta por la IA. Cuándo aplica y cuándo no: en la Ayuda del panel.
 
 ---
 
@@ -155,6 +156,7 @@ Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige 
 | Cuando lo necesites | |
 |---|---|
 | `conductor setup` | (re)conectar CLIs y regenerar la plantilla de credenciales |
+| `conductor init-config . --smart` | relleno semántico de project.md/checks/rules leyendo TU repo (un one-shot de agente) |
 | `conductor litellm status` | estado de tus credenciales del proxy |
 | `conductor evals` | golden-set del harness (offline, 0 tokens) |
 | `conductor upgrade` | actualizar desde tu origen + verificación del motor nuevo |

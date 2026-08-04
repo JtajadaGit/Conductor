@@ -11,6 +11,11 @@ export class AhorroScreen extends CElement {
   // Una entrada por técnica. `d` = qué gano; `como` = mecanismo real; `stat` = dato duro destacable.
   private readonly tecnicas = [
     {
+      t: 'Lentes de review por riesgo',
+      d: 'Un arreglo rápido no paga tres revisores: el número de lentes de verify lo marca el preset. Un typo pasa una lente; una migración pasa cuatro. Mismo gobierno, coste proporcional al riesgo.',
+      como: 'quick-fix/visual → 1 lente (vía verify simple) · feature → 3 · migración → 4 (+contract); "lenses" explícito en conductor.json manda',
+    },
+    {
       t: 'No re-escanear: índice verificado',
       d: 'Al planificar, el modelo recibe un índice compacto de lo YA verificado (las capacidades de la spec viva y los cambios archivados) en vez de re-leer el código fuente. Lo que el pipeline validó ayer no se vuelve a pagar hoy.',
       como: 'índice de openspec/specs/** + archivo de cambios, construido 1× por run e inyectado solo a las fases de planificación',

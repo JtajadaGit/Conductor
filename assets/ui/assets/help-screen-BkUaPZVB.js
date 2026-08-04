@@ -1,4 +1,4 @@
-import{f as e,h as t,t as n,v as r}from"./index-D5ggTDQu.js";var i=class extends e{render(){return r`
+import{f as e,h as t,t as n,v as r}from"./index-DalnPHOZ.js";var i=class extends e{render(){return r`
       <h1>Cómo funciona</h1>
       <p class="muted">Spec primero, código contra la spec, y un <b>gate determinista (sin LLM)</b> que decide si el resultado queda <b>Verificado</b>. La <b>secuencia</b> la garantiza el código: ningún modelo se salta fases. Funciona con cualquier modelo — incluidos los de tu LiteLLM a coste 0 de AI Credits.</p>
 
@@ -35,7 +35,7 @@ import{f as e,h as t,t as n,v as r}from"./index-D5ggTDQu.js";var i=class extends
       </ul>
 
       <h2 class="sect">Qué garantiza «Verificado» (y qué no)</h2>
-      <p class="muted"><b>Garantiza</b>: la secuencia SDD se respetó (el código conduce, no el modelo); spec, tareas y artefactos son <b>coherentes y trazables</b> (cada requisito ↔ código ↔ test vía <code>@conductor</code>); el reviewer no marcó FAIL; y —con el toggle <b>test</b> activo— <b>tus pruebas reales pasan</b>.<br>
+      <p class="muted"><b>Garantiza</b>: la secuencia SDD se respetó (el código conduce, no el modelo); spec, tareas y artefactos son <b>coherentes y trazables</b> (cada requisito ↔ código ↔ test, vía etiqueta <code>@conductor</code> — o <b>por referencia</b>: un test sin etiqueta que ejercita el código también cuenta); el reviewer no marcó FAIL; y —con el toggle <b>test</b> activo— <b>tus pruebas reales pasan</b>. Un requisito sin NINGÚN test es <b>aviso visible</b> por defecto y <b>bloquea</b> en los presets estrictos (feature/migración).<br>
       <b>NO garantiza</b> por sí solo la corrección lógica: el gate estructural no ejecuta tu código. Para máxima confianza activa <b>test</b> al lanzar — el toggle autoriza a ejecutar; <code>"checks"</code> en <code>openspec/conductor.json</code> define QUÉ comandos correr. Así Verificado = coherente <i>y</i> pasa tus pruebas.</p>
 
       <!-- dos MOMENTOS de la misma persona, no dos usuarios: la app es local y la usa un solo dev -->

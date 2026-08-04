@@ -19,7 +19,11 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   assert(existsSync(join(OS, 'changes', 'archive', '.gitkeep')), 'changes/archive/ visible');
   assert(/Propósito/.test(readFileSync(r.projectMd, 'utf8')), 'project.md trae las secciones guía');
   //  el espejo detectado deja de nacer: se reescribía en cada arranque y no lo parseaba NADIE.
-  assert(!existsSync(join(OS, 'config.yaml')), 'SIN config.yaml (dato derivado: se detecta en runtime, no se versiona)');
+  // el ESPEJO rico murió; lo que nace es el MARCADOR mínimo del estándar (el CLI oficial de OpenSpec
+  // reconoce el repo por él) — una línea, sin datos derivados que pudran
+  const yamlTxt = readFileSync(join(OS, 'config.yaml'), 'utf8');
+  assert(yamlTxt.startsWith('schema: spec-driven'), 'config.yaml = marcador mínimo del estándar');
+  assert(yamlTxt.length < 200, 'marcador, no espejo: jamás datos detectados dentro');
   const pm = readFileSync(r.projectMd, 'utf8');
   assert(!/Stack \(detectado\)|## Estructura/.test(pm), 'project.md SIN stack/estructura (se escribían una vez y se pudrían, y van al prompt del planner)');
   assert(pm.includes('_Sustituye'), 'project.md nace con marcadores _Sustituye: drive NO lo inyecta hasta que el dev lo rellena (detector semantico)');
