@@ -554,6 +554,8 @@ switch (cmd) {
       // FAIL-CLOSED (caso real: VS Code con skill pero sin MCP → el agente improvisó CLI, flags inventados,
       // init interactivo bloqueado y un run contra un muro de permisos): sin tools, se conecta y se PARA.
       '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
+      '- PERMISOS DEL HOST: la primera vez el chat pedirá permiso por CADA tool de conductor — dile al usuario que elija «Always allow»; sin permiso para `conductor_continue` el run no se puede seguir desde el chat.',
+      '- Si una tool es DENEGADA por permisos: NO reintentes en bucle (máximo 1 reintento). Da el enlace `web` («síguelo y aprueba ahí»), pide conceder el permiso, y recuerda que CUALQUIER mensaje suyo aquí te reengancha con conductor_continue {action:"wait"}.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
@@ -1088,6 +1090,7 @@ switch (cmd) {
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
+      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}.',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
@@ -1155,10 +1158,12 @@ switch (cmd) {
           const addArg = portableC ? { name: 'conductor', command: 'conductor', args: ['mcp'] } : { name: 'conductor', command: 'node', args: [engineC, 'mcp'] };
           execFileSync('code', ['--add-mcp', JSON.stringify(addArg)], { stdio: 'pipe', timeout: 15000 });
           console.log('✅ conductor conectado a VS Code (code --add-mcp). Reinicia la ventana y pide en el chat: "abre el panel de conductor".');
+          console.log('   La primera vez, el chat pedirá permiso por cada tool de conductor: elige «Always allow» — sin permiso para conductor_continue no se puede seguir el run desde el chat.');
           process.exit(0);
         } catch { /* sin CLI `code` en PATH → fusión directa abajo */ }
       }
       applyMerge(join(dirV, '.vscode', 'mcp.json'), 'servers');
+      console.log('   La primera vez, el chat pedirá permiso por cada tool de conductor: elige «Always allow» — sin permiso para conductor_continue no se puede seguir el run desde el chat.');
     }
     // /conductor NATIVO para hosts con comandos-markdown: deja conductor.md en el dir de comandos del host
     // (el nombre del fichero se convierte en el slash-command; el cuerpo instruye al agente a llamar conductor_app).

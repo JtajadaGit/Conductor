@@ -76,12 +76,20 @@ function runPhases(changeDir) {
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
 // un dominio sin sentido que ensucia la fuente de verdad para siempre). Sin token útil → core.
-const DOMAIN_STOP = new Set('quiero quieres necesito necesitamos crea crear creame hazme haz hacer anade anadir agrega agregar implementa implementar genera generar pon poner un una unos unas el la los las de del en con sin para por que y o u a al es me mi tu se lo nuevo nueva componente pagina want need create make add build new please the of with without for and or to my this este esta'.split(' '));
+const DOMAIN_STOP = new Set('quiero quieres necesito necesitamos crea crear creame hazme haz hacer anade anadir agrega agregar implementa implementar genera generar pon poner mejora mejorar arregla arreglar corrige corregir actualiza actualizar cambia cambiar quita quitar elimina eliminar borra borrar modifica modificar ajusta ajustar refactoriza renombra muestra mostrar oculta ocultar mueve mover revisa revisar un una unos unas el la los las de del en con sin para por que y o u a al es me mi tu se lo nuevo nueva componente pagina want need create make add build fix update improve change remove delete refactor rename show hide edit move new please the of with without for and or to my this este esta'.split(' '));
+// palabras-ARTEFACTO de UI (la FORMA del entregable, no la capacidad): stopwords BLANDAS — solo valen
+// como dominio si no hay nada mejor después. Caso real: «genera una pantalla de contacto…» creaba
+// specs/pantalla; la capacidad era «contacto». Pero «un componente formulario» sin más contexto SÍ es
+// del dominio formulario — por eso blandas (fallback), no prohibidas.
+const DOMAIN_SOFT = new Set('pantalla pantallas formulario formularios boton botones vista vistas modal campo campos tabla tablas lista listas tarjeta widget popup dialogo seccion cabecera barra icono imagen texto titulo estilo estilos layout contenedor elemento bloque caja ventana pestana etiqueta form screen view button field table list dialog section style grid panel box window tab label'.split(' '));
 function domainFromName(name) {
+  let soft = null;
   for (const t of String(name || '').toLowerCase().split('-')) {
-    if (t && t.length >= 3 && !DOMAIN_STOP.has(t)) return t;
+    if (!t || t.length < 3 || DOMAIN_STOP.has(t)) continue;
+    if (DOMAIN_SOFT.has(t)) { if (!soft) soft = t; continue; }
+    return t;
   }
-  return 'core';
+  return soft || 'core';
 }
 
 return { runPhases, domainFromName, plumbPath, plumbDir, evidencePath };
@@ -9998,6 +10006,8 @@ switch (cmd) {
       // FAIL-CLOSED (caso real: VS Code con skill pero sin MCP → el agente improvisó CLI, flags inventados,
       // init interactivo bloqueado y un run contra un muro de permisos): sin tools, se conecta y se PARA.
       '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
+      '- PERMISOS DEL HOST: la primera vez el chat pedirá permiso por CADA tool de conductor — dile al usuario que elija «Always allow»; sin permiso para `conductor_continue` el run no se puede seguir desde el chat.',
+      '- Si una tool es DENEGADA por permisos: NO reintentes en bucle (máximo 1 reintento). Da el enlace `web` («síguelo y aprueba ahí»), pide conceder el permiso, y recuerda que CUALQUIER mensaje suyo aquí te reengancha con conductor_continue {action:"wait"}.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
@@ -10532,6 +10542,7 @@ switch (cmd) {
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
+      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}.',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
@@ -10599,10 +10610,12 @@ switch (cmd) {
           const addArg = portableC ? { name: 'conductor', command: 'conductor', args: ['mcp'] } : { name: 'conductor', command: 'node', args: [engineC, 'mcp'] };
           execFileSync('code', ['--add-mcp', JSON.stringify(addArg)], { stdio: 'pipe', timeout: 15000 });
           console.log('✅ conductor conectado a VS Code (code --add-mcp). Reinicia la ventana y pide en el chat: "abre el panel de conductor".');
+          console.log('   La primera vez, el chat pedirá permiso por cada tool de conductor: elige «Always allow» — sin permiso para conductor_continue no se puede seguir el run desde el chat.');
           process.exit(0);
         } catch { /* sin CLI `code` en PATH → fusión directa abajo */ }
       }
       applyMerge(join(dirV, '.vscode', 'mcp.json'), 'servers');
+      console.log('   La primera vez, el chat pedirá permiso por cada tool de conductor: elige «Always allow» — sin permiso para conductor_continue no se puede seguir el run desde el chat.');
     }
     // /conductor NATIVO para hosts con comandos-markdown: deja conductor.md en el dir de comandos del host
     // (el nombre del fichero se convierte en el slash-command; el cuerpo instruye al agente a llamar conductor_app).
@@ -10780,4 +10793,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: bbf4b6546b550ed9d65119ded8fb253420310707ed705fa9d1c55204f81d9d9e
+// build-inputs-sha256: 909dcec46f50bf32d03f50f01d3fc0db42e8d3d4ca9a6f9316be4e491b8920fb

@@ -40,10 +40,16 @@ await test('drive: countDeniedPerms cuenta SOLO las denegaciones appendeadas des
 
 await test('dominio: domainFromName salta muletillas — specs/quiero jamas volvera a existir', async () => {
   const { domainFromName } = await import('../lib/core/plumb.mjs');
-  eq(domainFromName('quiero-un-componente-formulario-con-campo'), 'formulario', 'primer token con SIGNIFICADO');
+  eq(domainFromName('quiero-un-componente-formulario-con-campo'), 'formulario', 'sin nada mejor, el artefacto UI vale (blanda como fallback)');
   eq(domainFromName('crea-un-endpoint-salud'), 'endpoint');
   eq(domainFromName('quiero-un'), 'core', 'sin token util => core');
   eq(domainFromName(''), 'core');
+  // palabras-ARTEFACTO de UI son stopwords BLANDAS: si hay una capacidad de verdad después, gana ella
+  // (caso real: «genera una pantalla de contacto…» creaba specs/pantalla — la capacidad era contacto)
+  eq(domainFromName('genera-pantalla-contacto-campo'), 'contacto', 'la pantalla es la FORMA; contacto es la capacidad');
+  eq(domainFromName('crea-formulario-login-simple'), 'login', 'idem: formulario cede ante login');
+  eq(domainFromName('mejora-tabla-pedidos'), 'pedidos', 'idem: tabla cede ante pedidos');
+  eq(domainFromName('crea-una-pantalla'), 'pantalla', 'sin capacidad detras, el artefacto es mejor que core');
 });
 
 await test('tests-fuertes: checkUnrunnable distingue "no pudo EJECUTARSE" (config) de "pruebas rojas" (codigo)', async () => {

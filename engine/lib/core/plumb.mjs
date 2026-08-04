@@ -60,10 +60,18 @@ export function runPhases(changeDir) {
 // dominio de spec DERIVADO del nombre del change: el PRIMER token con SIGNIFICADO — no "quiero"/"crea"/
 // "componente" (caso real: un prompt "Quiero un componente formulario..." creaba specs/quiero/spec.md,
 // un dominio sin sentido que ensucia la fuente de verdad para siempre). Sin token útil → core.
-const DOMAIN_STOP = new Set('quiero quieres necesito necesitamos crea crear creame hazme haz hacer anade anadir agrega agregar implementa implementar genera generar pon poner un una unos unas el la los las de del en con sin para por que y o u a al es me mi tu se lo nuevo nueva componente pagina want need create make add build new please the of with without for and or to my this este esta'.split(' '));
+const DOMAIN_STOP = new Set('quiero quieres necesito necesitamos crea crear creame hazme haz hacer anade anadir agrega agregar implementa implementar genera generar pon poner mejora mejorar arregla arreglar corrige corregir actualiza actualizar cambia cambiar quita quitar elimina eliminar borra borrar modifica modificar ajusta ajustar refactoriza renombra muestra mostrar oculta ocultar mueve mover revisa revisar un una unos unas el la los las de del en con sin para por que y o u a al es me mi tu se lo nuevo nueva componente pagina want need create make add build fix update improve change remove delete refactor rename show hide edit move new please the of with without for and or to my this este esta'.split(' '));
+// palabras-ARTEFACTO de UI (la FORMA del entregable, no la capacidad): stopwords BLANDAS — solo valen
+// como dominio si no hay nada mejor después. Caso real: «genera una pantalla de contacto…» creaba
+// specs/pantalla; la capacidad era «contacto». Pero «un componente formulario» sin más contexto SÍ es
+// del dominio formulario — por eso blandas (fallback), no prohibidas.
+const DOMAIN_SOFT = new Set('pantalla pantallas formulario formularios boton botones vista vistas modal campo campos tabla tablas lista listas tarjeta widget popup dialogo seccion cabecera barra icono imagen texto titulo estilo estilos layout contenedor elemento bloque caja ventana pestana etiqueta form screen view button field table list dialog section style grid panel box window tab label'.split(' '));
 export function domainFromName(name) {
+  let soft = null;
   for (const t of String(name || '').toLowerCase().split('-')) {
-    if (t && t.length >= 3 && !DOMAIN_STOP.has(t)) return t;
+    if (!t || t.length < 3 || DOMAIN_STOP.has(t)) continue;
+    if (DOMAIN_SOFT.has(t)) { if (!soft) soft = t; continue; }
+    return t;
   }
-  return 'core';
+  return soft || 'core';
 }
