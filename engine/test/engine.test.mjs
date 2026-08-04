@@ -66,8 +66,9 @@ await test('cost: ahorro mixto ~51% y BYOK $0', () => {
 });
 await test('provenance HMAC: seal GREEN y verify OK', () => {
   const gates = [{ name: 'coherence', findings: checkCoherence(join(F1, 'change-pass')) }, { name: 'artifacts', findings: checkArtifacts(join(F1, 'change-pass')) }];
-  const doc = seal({ change: 'x', gates, at: 'T', key: 'k' });
+  const doc = seal({ change: 'x', gates, at: 'T', key: 'k', gitTree: 'arbol123' });
   eq(doc.verdict, 'GREEN'); eq(doc.signature.algo, 'HMAC-SHA256');
+  eq(doc.git_tree, 'arbol123', 'el sello ata el árbol git exacto: «verificado» = ESTE código');
   const v = verifySeal(doc, { key: 'k' }); assert(v.shaOk && v.sigOk);
 });
 await test('provenance HMAC: tamper detectado y clave incorrecta', () => {

@@ -164,6 +164,19 @@ await test('strictTests: preset quick-fix (laxo) lo relaja solo — un typo no e
   } finally { restoreEnv(saved); }
 });
 
+await test('lentes por riesgo: quick-fix NO paga 3 revisores — 1 lente => vía verify simple (config explícita manda)', async () => {
+  const saved = clearEnv();
+  try {
+    const logs = [];
+    fresh();
+    mkdirSync(join(TMP, 'openspec'), { recursive: true });
+    writeFileSync(join(TMP, 'openspec', 'conductor.json'), JSON.stringify({ maxRetries: 0, preset: 'quick-fix' }));
+    const r = await drive({ changeDir: join(TMP, 'openspec', 'changes', 'l1'), request: 'x', complexity: 'simple', domain: 'c', srcDir: TMP, runAgent: mkAgent({}), log: (l) => logs.push(l) });
+    eq(r.verdict, 'GREEN');
+    assert(!logs.some((l) => /lentes en paralelo/.test(l)), 'quick-fix => sin abanico de lentes (el camino barato)');
+  } finally { restoreEnv(saved); }
+});
+
 await test('strictTests: código SIN tag (greenfield sin trazar) NO dispara test-gap → GREEN sin cambio', async () => {
   const saved = clearEnv();
   try {

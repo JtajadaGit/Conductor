@@ -1187,7 +1187,13 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     tests: 'test coverage: which spec scenarios lack a REAL test (not empty/trivial)? cite the test file:line or its absence',
     contract: 'public contract/API: breaking changes vs the spec (signatures, routes, schemas) — cite the symbol',
   };
-  const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
+  // LENTES POR RIESGO (token-first): el defecto lo marca el PRESET — un arreglo rápido no paga 3
+  // revisores (1 lente = vía verify simple, la más barata) y una migración las paga todas.
+  // La config explícita (cfg.lenses array | false) SIEMPRE manda sobre el preset.
+  const defaultLenses = (preset?.name === 'quick-fix' || preset?.name === 'visual') ? ['correctness']
+    : preset?.name === 'migration' ? ['correctness', 'security', 'tests', 'contract']
+    : ['correctness', 'security', 'tests'];
+  const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : defaultLenses).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
   let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
   let projectCtx; // cache por-run: contexto de openspec/project.md para fases de planificación (init v2)
@@ -1920,7 +1926,17 @@ ${body || raw}` };
       // de traza ya bloquea el GREEN, así que el sello también es estricto (traceAffectsVerdict:true): la
       // evidencia firmada prueba que NO hubo huecos. En modo laxo (trace = warning) el sello sigue laxo para
       // coincidir con el verdict del pipeline (no degradar a NOT-GREEN un GREEN laxo legítimo).
-      const doc = seal({ change: resolve(changeDir), gates, trace, traceAffectsVerdict: strictGate.trace === true, at: new Date().toISOString(), key: process.env.CONDUCTOR_PROV_KEY, privateKeyPem, engineVersion: 'drive', specHash: hashSpecs(changeDir) });
+      // el sello queda atado al ÁRBOL GIT exacto del working tree en el GREEN (índice propio, cero
+      // impacto en HEAD/staging — misma técnica que los checkpoints): «verificado» = ESTE código.
+      let gitTree = null;
+      try {
+        const idxS = resolve(plumbPath(changeDir, 'seal-index'));
+        const envS = { ...process.env, GIT_INDEX_FILE: idxS };
+        execSync('git add -A', { cwd: projectRoot, stdio: 'ignore', timeout: 30000, windowsHide: true, env: envS });
+        gitTree = execSync('git write-tree', { cwd: projectRoot, encoding: 'utf8', timeout: 15000, windowsHide: true, env: envS }).trim();
+        try { rmSync(idxS, { force: true }); } catch {}
+      } catch { /* sin git no hay árbol — el sello sigue valiendo por sus hashes */ }
+      const doc = seal({ change: resolve(changeDir), gates, trace, traceAffectsVerdict: strictGate.trace === true, at: new Date().toISOString(), key: process.env.CONDUCTOR_PROV_KEY, privateKeyPem, engineVersion: 'drive', specHash: hashSpecs(changeDir), gitTree });
       mkdirSync(plumbPath(changeDir), { recursive: true }); // fase 3: el sello es evidencia, no artefacto del dev
       writeFileSync(plumbPath(changeDir, 'provenance.json'), JSON.stringify(doc, null, 2));
       log(`🔏 provenance: ${doc.verdict} (${doc.signature?.algo || 'sha256'})`);

@@ -143,7 +143,7 @@ const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
   // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
-  _ayuda: 'TODO es opcional (hay default para todo). Copia el mando que quieras de _ejemplos al nivel raíz y ajústalo — el motor ignora _ayuda y _ejemplos. Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
+  _ayuda: 'Todo es opcional. Copia un mando de _ejemplos a la raíz y ajústalo (el motor ignora _ayuda/_ejemplos). Doc: `conductor config`.',
   // EJEMPLOS COPIABLES dentro del propio fichero (el motor los ignora): un config que nace mudo obliga a
   // imaginar los mandos; uno con ejemplos realistas se rellena copiando la línea y ajustando el valor.
   _ejemplos: {
@@ -180,11 +180,10 @@ const COPILOTIGNORE = [
   '.conductor/',
 ].join('\n') + '\n';
 
-// openspec/config.yaml YA NO SE GENERA . Era un ESPEJO de lo detectado que se reescribía en
-// cada arranque y que NADIE parseaba (su único consumidor era un existsSync de isSdd) — 20 líneas de diff
-// diario en el repo del usuario a cambio de cero información. Un dato derivado no se versiona: se
-// recalcula (detectStack en cada run) y se enseña en el panel. Los repos que ya lo tienen lo conservan y
-// isSdd() lo sigue reconociendo: cero regresión, simplemente deja de nacer y de refrescarse.
+// openspec/config.yaml: el ESPEJO rico de lo detectado murió (se reescribía en cada arranque y nadie
+// lo parseaba — lo derivado se recalcula, no se versiona). Lo que SÍ nace es el MARCADOR MÍNIMO del
+// estándar (`schema: spec-driven`, una línea): el CLI oficial de OpenSpec reconoce el repo por él —
+// conformidad upstream sin espejo que pudra. Idempotente: uno existente jamás se pisa.
 
 // .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
 // MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
@@ -211,6 +210,9 @@ export function initConfig(openspecDir) {
   // Semilla de `checks` en el config recién nacido + resumen que imprime init — el config no nace mudo.
   // Jamás se escribe como espejo versionado: el motor re-detecta vivo en cada run.
   let deep = null; try { deep = detectStackDeep(root); } catch {}
+  // GUARDIA ANTI-DUPLICIDAD del setup: si el repo ya tiene ficheros de instrucciones del host, el
+  // project.md debe REFERENCIARLOS, no repetirlos (cada dato, UNA casa) — y el init lo dice.
+  const instrucciones = ['AGENTS.md', 'CLAUDE.md', join('.github', 'copilot-instructions.md')].filter((f) => existsSync(join(root, f)));
   let created = false;
   if (!existsSync(cfgPath)) {
     const cfg = { ...DEFAULT_CONFIG, ...(deep?.checks?.length ? { checks: deep.checks } : {}) };
@@ -220,6 +222,8 @@ export function initConfig(openspecDir) {
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
   mkdirSync(join(openspecDir, 'specs'), { recursive: true });
+  const yamlPath = join(openspecDir, 'config.yaml');
+  if (!existsSync(yamlPath)) writeFileSync(yamlPath, 'schema: spec-driven\n# marcador del estándar OpenSpec — la config del motor vive en conductor.json\n');
   const specsReadme = join(openspecDir, 'specs', 'README.md');
   if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
   const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');
@@ -256,20 +260,18 @@ export function initConfig(openspecDir) {
       '~200 empleados desde el móvil. Prioridad: fiabilidad sobre features.',
       '',
       '## Convenciones',
+      ...(instrucciones.length ? [`- Reglas de la casa: **ver ${instrucciones.join(' y ')}** — aquí SOLO lo que no esté allí (cero duplicidad).`] : []),
       '_Sustituye estos ejemplos por las reglas de TU casa:_',
-      '- Nombres de componentes en kebab-case; un componente por fichero.',
-      '- Tests junto al código (`x.spec.ts`), un test real por comportamiento — nada de tests vacíos.',
-      '- Prohibido añadir dependencias sin aprobación (el package.json lo revisa una persona).',
+      '- Tests junto al código, un test real por comportamiento — nada de tests vacíos.',
       '- Errores siempre visibles para el usuario: nada de catch silencioso.',
       '',
       '## Decisiones vivas',
-      '_Decisiones de arquitectura que un agente NO debe reabrir sin preguntar. Ejemplos:_',
-      '- El estado global vive en el servidor; el cliente solo cachea (no introducir stores nuevos).',
-      '- La autenticación es del gateway corporativo: las vistas asumen usuario ya autenticado.',
+      '_Lo que un agente NO debe reabrir sin preguntar. Ejemplo:_',
+      '- El estado global vive en el servidor; el cliente solo cachea.',
       '',
       '## Fuera de alcance',
-      '_Lo que este repo NO hace (evita que un agente lo intente):_',
-      '- Nada de pagos ni datos personales sensibles: eso vive en otro servicio.',
+      '_Lo que este repo NO hace. Ejemplo:_',
+      '- Nada de pagos ni datos personales: eso vive en otro servicio.',
       '',
     ].join('\n') + '\n');
     projectMdCreated = true;
@@ -291,5 +293,5 @@ export function initConfig(openspecDir) {
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
   const gitignore = ensureGitignore(root);
-  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore, deep };
+  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore, deep, instrucciones };
 }

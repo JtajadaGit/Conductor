@@ -71,7 +71,7 @@ export function hashSpecs(changeDir) {
 }
 
 // gates: [{name, findings}]
-export function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersion, traceAffectsVerdict = true, specHash = null }) {
+export function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersion, traceAffectsVerdict = true, specHash = null, gitTree = null }) {
   // traceAffectsVerdict=true (def): huecos de traza → NOT-GREEN (estándar estricto de `conductor seal`).
   // false: la traza es informativa y el verdict = solo gates (lo usa el driver, cuyo gate trata los
   // huecos como warning → así el sello coincide con el verdict del pipeline).
@@ -81,6 +81,7 @@ export function seal({ change, gates, trace, cost, at, key, privateKeyPem, engin
     spec_version: 'conductor-provenance/2', engine: engineVersion || null, change, sealed_at: at,
     verdict: allGreen ? 'GREEN' : 'NOT-GREEN', gates: gateSummary,
     spec_sha256: specHash || null, // spec-freeze: fija CONTRA QUÉ spec se logró el verde (mutarla después se detecta)
+    git_tree: gitTree || null, // árbol git EXACTO del working tree en el sellado: «verificado» = este código, no la fe
     traceability: trace ? { requirements: trace.matrix?.length ?? 0, gaps: trace.gaps || [] } : null,
     cost: cost ? { real_usd: cost.cost_usd, naive_usd: cost.naive_all_opus_usd, saved_pct: cost.saved_pct } : null,
   };

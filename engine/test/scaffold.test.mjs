@@ -132,6 +132,14 @@ await test('init profundo: detecta versiones/gestor/proyectos/comandos REALES y 
   rmSync(T2, { recursive: true, force: true }); mkdirSync(T2, { recursive: true });
   const r2 = initConfig(join(T2, 'openspec'));
   eq(JSON.parse(readFileSync(r2.cfgPath, 'utf8')).checks, undefined, 'sin deteccion => sin checks inventados');
+  // GUARDIA ANTI-DUPLICIDAD: con AGENTS.md presente, el project.md nuevo lo REFERENCIA (cada dato, una casa)
+  const T3 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-initdeep-agents');
+  rmSync(T3, { recursive: true, force: true }); mkdirSync(T3, { recursive: true });
+  writeFileSync(join(T3, 'AGENTS.md'), '# reglas de la casa');
+  const r3 = initConfig(join(T3, 'openspec'));
+  eq(r3.instrucciones, ['AGENTS.md'], 'instrucciones del host detectadas');
+  assert(readFileSync(r3.projectMd, 'utf8').includes('ver AGENTS.md'), 'la regla de oro (referencia, no repitas) visible en el project.md');
+  rmSync(T3, { recursive: true, force: true });
   rmSync(T, { recursive: true, force: true }); rmSync(T2, { recursive: true, force: true });
 });
 

@@ -3473,7 +3473,7 @@ function hashSpecs(changeDir) {
 }
 
 // gates: [{name, findings}]
-function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersion, traceAffectsVerdict = true, specHash = null }) {
+function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersion, traceAffectsVerdict = true, specHash = null, gitTree = null }) {
   // traceAffectsVerdict=true (def): huecos de traza → NOT-GREEN (estándar estricto de `conductor seal`).
   // false: la traza es informativa y el verdict = solo gates (lo usa el driver, cuyo gate trata los
   // huecos como warning → así el sello coincide con el verdict del pipeline).
@@ -3483,6 +3483,7 @@ function seal({ change, gates, trace, cost, at, key, privateKeyPem, engineVersio
     spec_version: 'conductor-provenance/2', engine: engineVersion || null, change, sealed_at: at,
     verdict: allGreen ? 'GREEN' : 'NOT-GREEN', gates: gateSummary,
     spec_sha256: specHash || null, // spec-freeze: fija CONTRA QUÉ spec se logró el verde (mutarla después se detecta)
+    git_tree: gitTree || null, // árbol git EXACTO del working tree en el sellado: «verificado» = este código, no la fe
     traceability: trace ? { requirements: trace.matrix?.length ?? 0, gaps: trace.gaps || [] } : null,
     cost: cost ? { real_usd: cost.cost_usd, naive_usd: cost.naive_all_opus_usd, saved_pct: cost.saved_pct } : null,
   };
@@ -4501,7 +4502,7 @@ const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
   // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
-  _ayuda: 'TODO es opcional (hay default para todo). Copia el mando que quieras de _ejemplos al nivel raíz y ajústalo — el motor ignora _ayuda y _ejemplos. Ejecuta `conductor config` para ver cada mando explicado; el botón 💾 del panel escribe aquí los modelos del equipo.',
+  _ayuda: 'Todo es opcional. Copia un mando de _ejemplos a la raíz y ajústalo (el motor ignora _ayuda/_ejemplos). Doc: `conductor config`.',
   // EJEMPLOS COPIABLES dentro del propio fichero (el motor los ignora): un config que nace mudo obliga a
   // imaginar los mandos; uno con ejemplos realistas se rellena copiando la línea y ajustando el valor.
   _ejemplos: {
@@ -4538,11 +4539,10 @@ const COPILOTIGNORE = [
   '.conductor/',
 ].join('\n') + '\n';
 
-// openspec/config.yaml YA NO SE GENERA . Era un ESPEJO de lo detectado que se reescribía en
-// cada arranque y que NADIE parseaba (su único consumidor era un existsSync de isSdd) — 20 líneas de diff
-// diario en el repo del usuario a cambio de cero información. Un dato derivado no se versiona: se
-// recalcula (detectStack en cada run) y se enseña en el panel. Los repos que ya lo tienen lo conservan y
-// isSdd() lo sigue reconociendo: cero regresión, simplemente deja de nacer y de refrescarse.
+// openspec/config.yaml: el ESPEJO rico de lo detectado murió (se reescribía en cada arranque y nadie
+// lo parseaba — lo derivado se recalcula, no se versiona). Lo que SÍ nace es el MARCADOR MÍNIMO del
+// estándar (`schema: spec-driven`, una línea): el CLI oficial de OpenSpec reconoce el repo por él —
+// conformidad upstream sin espejo que pudra. Idempotente: uno existente jamás se pisa.
 
 // .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
 // MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
@@ -4569,6 +4569,9 @@ function initConfig(openspecDir) {
   // Semilla de `checks` en el config recién nacido + resumen que imprime init — el config no nace mudo.
   // Jamás se escribe como espejo versionado: el motor re-detecta vivo en cada run.
   let deep = null; try { deep = detectStackDeep(root); } catch {}
+  // GUARDIA ANTI-DUPLICIDAD del setup: si el repo ya tiene ficheros de instrucciones del host, el
+  // project.md debe REFERENCIARLOS, no repetirlos (cada dato, UNA casa) — y el init lo dice.
+  const instrucciones = ['AGENTS.md', 'CLAUDE.md', join('.github', 'copilot-instructions.md')].filter((f) => existsSync(join(root, f)));
   let created = false;
   if (!existsSync(cfgPath)) {
     const cfg = { ...DEFAULT_CONFIG, ...(deep?.checks?.length ? { checks: deep.checks } : {}) };
@@ -4578,6 +4581,8 @@ function initConfig(openspecDir) {
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
   mkdirSync(join(openspecDir, 'specs'), { recursive: true });
+  const yamlPath = join(openspecDir, 'config.yaml');
+  if (!existsSync(yamlPath)) writeFileSync(yamlPath, 'schema: spec-driven\n# marcador del estándar OpenSpec — la config del motor vive en conductor.json\n');
   const specsReadme = join(openspecDir, 'specs', 'README.md');
   if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
   const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');
@@ -4614,20 +4619,18 @@ function initConfig(openspecDir) {
       '~200 empleados desde el móvil. Prioridad: fiabilidad sobre features.',
       '',
       '## Convenciones',
+      ...(instrucciones.length ? [`- Reglas de la casa: **ver ${instrucciones.join(' y ')}** — aquí SOLO lo que no esté allí (cero duplicidad).`] : []),
       '_Sustituye estos ejemplos por las reglas de TU casa:_',
-      '- Nombres de componentes en kebab-case; un componente por fichero.',
-      '- Tests junto al código (`x.spec.ts`), un test real por comportamiento — nada de tests vacíos.',
-      '- Prohibido añadir dependencias sin aprobación (el package.json lo revisa una persona).',
+      '- Tests junto al código, un test real por comportamiento — nada de tests vacíos.',
       '- Errores siempre visibles para el usuario: nada de catch silencioso.',
       '',
       '## Decisiones vivas',
-      '_Decisiones de arquitectura que un agente NO debe reabrir sin preguntar. Ejemplos:_',
-      '- El estado global vive en el servidor; el cliente solo cachea (no introducir stores nuevos).',
-      '- La autenticación es del gateway corporativo: las vistas asumen usuario ya autenticado.',
+      '_Lo que un agente NO debe reabrir sin preguntar. Ejemplo:_',
+      '- El estado global vive en el servidor; el cliente solo cachea.',
       '',
       '## Fuera de alcance',
-      '_Lo que este repo NO hace (evita que un agente lo intente):_',
-      '- Nada de pagos ni datos personales sensibles: eso vive en otro servicio.',
+      '_Lo que este repo NO hace. Ejemplo:_',
+      '- Nada de pagos ni datos personales: eso vive en otro servicio.',
       '',
     ].join('\n') + '\n');
     projectMdCreated = true;
@@ -4649,7 +4652,7 @@ function initConfig(openspecDir) {
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
   const gitignore = ensureGitignore(root);
-  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore, deep };
+  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore, deep, instrucciones };
 }
 
 return { initConfig, CONFIG_SCHEMA };
@@ -6154,7 +6157,13 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     tests: 'test coverage: which spec scenarios lack a REAL test (not empty/trivial)? cite the test file:line or its absence',
     contract: 'public contract/API: breaking changes vs the spec (signatures, routes, schemas) — cite the symbol',
   };
-  const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : ['correctness', 'security', 'tests']).filter((l) => LENSES[l] || typeof l === 'string');
+  // LENTES POR RIESGO (token-first): el defecto lo marca el PRESET — un arreglo rápido no paga 3
+  // revisores (1 lente = vía verify simple, la más barata) y una migración las paga todas.
+  // La config explícita (cfg.lenses array | false) SIEMPRE manda sobre el preset.
+  const defaultLenses = (preset?.name === 'quick-fix' || preset?.name === 'visual') ? ['correctness']
+    : preset?.name === 'migration' ? ['correctness', 'security', 'tests', 'contract']
+    : ['correctness', 'security', 'tests'];
+  const lenses = cfg.lenses === false ? [] : (Array.isArray(cfg.lenses) ? cfg.lenses : defaultLenses).filter((l) => LENSES[l] || typeof l === 'string');
   // P1 (developer first): nota del humano para la siguiente fase + override de modelo en caliente
   let userNote = null, hotModel = null, fsNoted = false, redoCount = 0;
   let projectCtx; // cache por-run: contexto de openspec/project.md para fases de planificación (init v2)
@@ -6887,7 +6896,17 @@ ${body || raw}` };
       // de traza ya bloquea el GREEN, así que el sello también es estricto (traceAffectsVerdict:true): la
       // evidencia firmada prueba que NO hubo huecos. En modo laxo (trace = warning) el sello sigue laxo para
       // coincidir con el verdict del pipeline (no degradar a NOT-GREEN un GREEN laxo legítimo).
-      const doc = seal({ change: resolve(changeDir), gates, trace, traceAffectsVerdict: strictGate.trace === true, at: new Date().toISOString(), key: process.env.CONDUCTOR_PROV_KEY, privateKeyPem, engineVersion: 'drive', specHash: hashSpecs(changeDir) });
+      // el sello queda atado al ÁRBOL GIT exacto del working tree en el GREEN (índice propio, cero
+      // impacto en HEAD/staging — misma técnica que los checkpoints): «verificado» = ESTE código.
+      let gitTree = null;
+      try {
+        const idxS = resolve(plumbPath(changeDir, 'seal-index'));
+        const envS = { ...process.env, GIT_INDEX_FILE: idxS };
+        execSync('git add -A', { cwd: projectRoot, stdio: 'ignore', timeout: 30000, windowsHide: true, env: envS });
+        gitTree = execSync('git write-tree', { cwd: projectRoot, encoding: 'utf8', timeout: 15000, windowsHide: true, env: envS }).trim();
+        try { rmSync(idxS, { force: true }); } catch {}
+      } catch { /* sin git no hay árbol — el sello sigue valiendo por sus hashes */ }
+      const doc = seal({ change: resolve(changeDir), gates, trace, traceAffectsVerdict: strictGate.trace === true, at: new Date().toISOString(), key: process.env.CONDUCTOR_PROV_KEY, privateKeyPem, engineVersion: 'drive', specHash: hashSpecs(changeDir), gitTree });
       mkdirSync(plumbPath(changeDir), { recursive: true }); // fase 3: el sello es evidencia, no artefacto del dev
       writeFileSync(plumbPath(changeDir, 'provenance.json'), JSON.stringify(doc, null, 2));
       log(`🔏 provenance: ${doc.verdict} (${doc.signature?.algo || 'sha256'})`);
@@ -10172,7 +10191,8 @@ switch (cmd) {
     const tpl = ensureByokTemplate();
     // lo DETECTADO, a la vista (versiones, gestor, proyectos, checks reales): el init no es una caja de
     // plantillas mudas — enseña lo que ya sabe del repo y qué comandos correrá la fase test.
-    const deepLines = renderStackDeep(r.deep).map((l) => `  · ${l}`).join('\n');
+    const deepLines = renderStackDeep(r.deep).map((l) => `  · ${l}`).join('\n')
+      + (r.instrucciones?.length ? `\n  · instrucciones del host: ${r.instrucciones.join(' y ')} — project.md las REFERENCIA, no las repite (cero duplicidad)` : '');
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)${deepLines ? `\n  DETECTADO en este repo (el motor lo re-detecta vivo en cada run):\n${deepLines}${r.created && r.deep?.checks?.length ? '\n  → esos checks quedan YA escritos en conductor.json (la fase test los ejecuta; ajústalos si quieres)' : ''}` : ''}
   project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
@@ -10904,4 +10924,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: a07789548f17fcf6a54b61c466e5779d46a66b41a733add0479a297362db5c6f
+// build-inputs-sha256: bec78a682b0b5cebb7b1b9737880e4eaad6e478d023666a7f6ea854691b9da8d

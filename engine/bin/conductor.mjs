@@ -613,7 +613,8 @@ switch (cmd) {
     const tpl = ensureByokTemplate();
     // lo DETECTADO, a la vista (versiones, gestor, proyectos, checks reales): el init no es una caja de
     // plantillas mudas — enseña lo que ya sabe del repo y qué comandos correrá la fase test.
-    const deepLines = renderStackDeep(r.deep).map((l) => `  · ${l}`).join('\n');
+    const deepLines = renderStackDeep(r.deep).map((l) => `  · ${l}`).join('\n')
+      + (r.instrucciones?.length ? `\n  · instrucciones del host: ${r.instrucciones.join(' y ')} — project.md las REFERENCIA, no las repite (cero duplicidad)` : '');
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)${deepLines ? `\n  DETECTADO en este repo (el motor lo re-detecta vivo en cada run):\n${deepLines}${r.created && r.deep?.checks?.length ? '\n  → esos checks quedan YA escritos en conductor.json (la fase test los ejecuta; ajústalos si quieres)' : ''}` : ''}
   project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
