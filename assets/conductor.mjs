@@ -2654,13 +2654,58 @@ function detectStack(projectRoot) {
   return { languages: langs, frameworks: fws, testCmd, entrypoints, summary };
 }
 
+// DETECCIÓN PROFUNDA para `init` (determinista, 0 red, 0 tokens): versiones exactas, package manager,
+// monorepo/proyectos, comandos reales de build/test/lint/typecheck y frameworks de test. Es lo que un
+// dev espera ver tras un init — el motor la re-detecta viva en cada run (esto NO se versiona como espejo;
+// solo alimenta los `checks` iniciales de conductor.json y el resumen que imprime init).
+function detectStackDeep(root) {
+  const base = detectStack(root);
+  const pkg = readJson(root, 'package.json');
+  const deps = pkg ? { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) } : {};
+  const v = (n) => (deps[n] ? String(deps[n]).replace(/^[\^~>=]+/, '') : null);
+  const versions = {};
+  for (const [dep, label] of [['@angular/core', 'angular'], ['react', 'react'], ['vue', 'vue'], ['next', 'next'], ['svelte', 'svelte'], ['@nestjs/core', 'nestjs'], ['typescript', 'typescript'], ['jest', 'jest'], ['vitest', 'vitest']]) {
+    const ver = v(dep); if (ver) versions[label] = ver;
+  }
+  const packageManager = pkg?.packageManager ? String(pkg.packageManager).split('@')[0]
+    : has(root, 'pnpm-lock.yaml') ? 'pnpm' : has(root, 'yarn.lock') ? 'yarn' : has(root, 'package-lock.json') ? 'npm' : (pkg ? 'npm' : null);
+  // proyectos de un workspace (angular.json / npm workspaces) — el mapa que un planner agradece
+  const projects = [];
+  const ng = readJson(root, 'angular.json');
+  if (ng?.projects) for (const [name, p] of Object.entries(ng.projects).slice(0, 12)) projects.push({ name, type: p.projectType || '?', root: p.root || '' });
+  const monorepo = !!(ng && Object.keys(ng.projects || {}).length > 1) || Array.isArray(pkg?.workspaces) && pkg.workspaces.length > 0 || has(root, 'pnpm-workspace.yaml') || has(root, 'nx.json');
+  // comandos REALES (solo lo que existe — jamás inventar): la semilla de `checks` en conductor.json
+  const run = (s) => (packageManager === 'yarn' ? `yarn ${s}` : packageManager === 'pnpm' ? `pnpm ${s}` : `npm run ${s}`);
+  const checks = [];
+  if (pkg?.scripts?.test) checks.push(packageManager === 'npm' || !packageManager ? 'npm test' : `${packageManager} test`);
+  else if (base.testCmd && !pkg) checks.push(base.testCmd);
+  if (pkg?.scripts?.build) checks.push(run('build'));
+  if (pkg?.scripts?.lint) checks.push(run('lint'));
+  if (versions.typescript && !pkg?.scripts?.lint?.includes('tsc')) checks.push('npx tsc --noEmit');
+  const strictTs = (() => { const t = readJson(root, 'tsconfig.json'); return t?.compilerOptions?.strict === true; })();
+  const testFramework = versions.jest ? 'jest' : versions.vitest ? 'vitest' : (deps.karma ? 'karma' : null);
+  return { ...base, name: pkg?.name || null, versions, packageManager, monorepo, projects, checks, strictTs, testFramework };
+}
+
+// resumen humano multilínea para la salida de `init` — lo que la detección sabe, a la vista
+function renderStackDeep(d) {
+  if (!d) return [];
+  const L = [];
+  const vs = Object.entries(d.versions || {}).map(([k, ver]) => `${k} ${ver}`).join(' · ');
+  if (d.languages.length || vs) L.push(`stack: ${d.languages.join('/') || '?'}${vs ? ` — ${vs}` : ''}${d.strictTs ? ' · TS strict' : ''}`);
+  if (d.packageManager) L.push(`gestor: ${d.packageManager}${d.monorepo ? ' · monorepo' : ''}${d.testFramework ? ` · tests: ${d.testFramework}` : ''}`);
+  if (d.projects?.length) L.push(`proyectos: ${d.projects.map((p) => `${p.name} (${p.type})`).join(' · ')}`);
+  if (d.checks?.length) L.push(`checks detectados: ${d.checks.join('  ·  ')}`);
+  return L;
+}
+
 // bloque para inyectar en el prompt (apply/verify): orienta sin imponer (DATO, no instrucción arbitraria)
 function renderStackHint(stack) {
   if (!stack || (!stack.languages.length && !stack.frameworks.length)) return '';
   return `\n\nPROJECT STACK (detected, for context): ${stack.summary}. Follow the conventions of this stack; ${stack.testCmd ? `tests run with \`${stack.testCmd}\`` : 'use the project test runner'}.`;
 }
 
-return { detectStack, renderStackHint };
+return { detectStack, detectStackDeep, renderStackDeep, renderStackHint };
 })();
 
 // ===== lib/analysis/archive.mjs =====
@@ -4317,6 +4362,7 @@ __M['scaffold'] = (function(){
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 
 
+const { detectStackDeep } = __M['stack'];
 const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'conductor — configuración de usuario',
@@ -4518,9 +4564,16 @@ function ensureGitignore(root) {
 function initConfig(openspecDir) {
   mkdirSync(openspecDir, { recursive: true });
   const cfgPath = join(openspecDir, 'conductor.json');
-  let created = false;
-  if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
   const root = dirname(resolve(openspecDir));
+  // DETECCIÓN PROFUNDA (determinista, 0 tokens): versiones, package manager, proyectos y comandos REALES.
+  // Semilla de `checks` en el config recién nacido + resumen que imprime init — el config no nace mudo.
+  // Jamás se escribe como espejo versionado: el motor re-detecta vivo en cada run.
+  let deep = null; try { deep = detectStackDeep(root); } catch {}
+  let created = false;
+  if (!existsSync(cfgPath)) {
+    const cfg = { ...DEFAULT_CONFIG, ...(deep?.checks?.length ? { checks: deep.checks } : {}) };
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n'); created = true;
+  }
   // ÁRBOL OpenSpec visible desde el minuto uno (init v2): un dev que conoce el estándar debe
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
@@ -4572,7 +4625,7 @@ function initConfig(openspecDir) {
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
   const gitignore = ensureGitignore(root);
-  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore };
+  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore, deep };
 }
 
 return { initConfig, CONFIG_SCHEMA };
@@ -9484,7 +9537,7 @@ const { buildTrace } = __M['trace'];
 const { computeCost } = __M['cost'];
 const { estimateRun } = __M['estimate'];
 const { loadSkills, buildSkillsIndex } = __M['skills'];
-const { detectStack } = __M['stack'];
+const { detectStack, renderStackDeep } = __M['stack'];
 const { listArchive, searchChanges } = __M['archive'];
 const { buildAtlas } = __M['atlas'];
 const { seal, verifySeal, generateKeypair, signFile, verifyFile, hashSpecs } = __M['provenance'];
@@ -10063,10 +10116,14 @@ switch (cmd) {
     }
     if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
-    console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
+    // lo DETECTADO, a la vista (versiones, gestor, proyectos, checks reales): el init no es una caja de
+    // plantillas mudas — enseña lo que ya sabe del repo y qué comandos correrá la fase test.
+    const deepLines = renderStackDeep(r.deep).map((l) => `  · ${l}`).join('\n');
+    console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)${deepLines ? `\n  DETECTADO en este repo (el motor lo re-detecta vivo en cada run):\n${deepLines}${r.created && r.deep?.checks?.length ? '\n  → esos checks quedan YA escritos en conductor.json (la fase test los ejecuta; ajústalos si quieres)' : ''}` : ''}
   project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
   specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  Relleno semántico con IA (propósito/convenciones/reglas leyendo TU repo): \`conductor init-config . --smart\`
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }
@@ -10793,4 +10850,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 909dcec46f50bf32d03f50f01d3fc0db42e8d3d4ca9a6f9316be4e491b8920fb
+// build-inputs-sha256: f289fee7ff41b296e56e6a16605ee361ce8e406fe8ada0cb1d0a0cbeb5c910a9

@@ -82,6 +82,46 @@ await test('rules: gobierno por fase — "all" + fase, dedup, topes y cero ruido
 
 rmSync(TMP, { recursive: true, force: true });
 
+await test('init profundo: detecta versiones/gestor/proyectos/comandos REALES y siembra checks en conductor.json', async () => {
+  const { detectStackDeep, renderStackDeep } = await import('../lib/analysis/stack.mjs');
+  const { initConfig } = await import('../lib/analysis/scaffold.mjs');
+  const { mkdirSync, writeFileSync, rmSync, readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const T = join(dirname(fileURLToPath(import.meta.url)), '.tmp-initdeep');
+  rmSync(T, { recursive: true, force: true });
+  mkdirSync(T, { recursive: true });
+  writeFileSync(join(T, 'package.json'), JSON.stringify({
+    name: 'mi-lib', scripts: { build: 'ng build', test: 'jest', lint: 'eslint .' },
+    dependencies: { '@angular/core': '^20.0.5' }, devDependencies: { typescript: '~5.8.2', jest: '^29.0.0' },
+  }));
+  writeFileSync(join(T, 'package-lock.json'), '{}');
+  writeFileSync(join(T, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true } }));
+  writeFileSync(join(T, 'angular.json'), JSON.stringify({ projects: { 'mi-lib': { projectType: 'library', root: 'projects/mi-lib' }, demo: { projectType: 'application', root: 'projects/demo' } } }));
+  const d = detectStackDeep(T);
+  eq(d.versions.angular, '20.0.5', 'version EXACTA, no un booleano');
+  eq(d.versions.typescript, '5.8.2');
+  eq(d.packageManager, 'npm');
+  eq(d.monorepo, true, 'dos proyectos de angular.json => monorepo');
+  eq(d.projects.length, 2);
+  assert(d.strictTs, 'tsconfig strict detectado');
+  eq(d.testFramework, 'jest');
+  eq(d.checks, ['npm test', 'npm run build', 'npm run lint', 'npx tsc --noEmit'], 'comandos que EXISTEN en el repo, en orden test→build→lint→tsc');
+  const lines = renderStackDeep(d);
+  assert(lines.some((l) => l.includes('angular 20.0.5')) && lines.some((l) => l.includes('mi-lib (library)')), 'resumen humano con versiones y proyectos');
+  // el conductor.json recién nacido lleva esos checks YA escritos (config accionable, no muda)
+  const r = initConfig(join(T, 'openspec'));
+  const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
+  eq(cfg.checks, d.checks, 'checks sembrados en el config nuevo');
+  assert(Array.isArray(r.deep?.checks), 'la detección viaja al caller (init la imprime)');
+  // y un repo SIN nada detectable no inventa: config sin checks, como siempre
+  const T2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-initdeep-vacio');
+  rmSync(T2, { recursive: true, force: true }); mkdirSync(T2, { recursive: true });
+  const r2 = initConfig(join(T2, 'openspec'));
+  eq(JSON.parse(readFileSync(r2.cfgPath, 'utf8')).checks, undefined, 'sin deteccion => sin checks inventados');
+  rmSync(T, { recursive: true, force: true }); rmSync(T2, { recursive: true, force: true });
+});
+
 await test('aiact (P3): informe de transparencia — modelos, aprobaciones humanas, archivos IA, gate', async () => {
   const { renderAiact } = await import('../lib/serving/aiact.mjs');
   const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');

@@ -3,6 +3,7 @@
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
+import { detectStackDeep } from './stack.mjs';
 
 export const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
@@ -205,9 +206,16 @@ function ensureGitignore(root) {
 export function initConfig(openspecDir) {
   mkdirSync(openspecDir, { recursive: true });
   const cfgPath = join(openspecDir, 'conductor.json');
-  let created = false;
-  if (!existsSync(cfgPath)) { writeFileSync(cfgPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n'); created = true; }
   const root = dirname(resolve(openspecDir));
+  // DETECCIÓN PROFUNDA (determinista, 0 tokens): versiones, package manager, proyectos y comandos REALES.
+  // Semilla de `checks` en el config recién nacido + resumen que imprime init — el config no nace mudo.
+  // Jamás se escribe como espejo versionado: el motor re-detecta vivo en cada run.
+  let deep = null; try { deep = detectStackDeep(root); } catch {}
+  let created = false;
+  if (!existsSync(cfgPath)) {
+    const cfg = { ...DEFAULT_CONFIG, ...(deep?.checks?.length ? { checks: deep.checks } : {}) };
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n'); created = true;
+  }
   // ÁRBOL OpenSpec visible desde el minuto uno (init v2): un dev que conoce el estándar debe
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
@@ -259,5 +267,5 @@ export function initConfig(openspecDir) {
   let copilotignore = false;
   if (!existsSync(ignorePath)) { writeFileSync(ignorePath, COPILOTIGNORE); copilotignore = true; }
   const gitignore = ensureGitignore(root);
-  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore };
+  return { cfgPath, created, projectMd: pmPath, projectMdCreated, ignorePath, copilotignore, gitignore, deep };
 }

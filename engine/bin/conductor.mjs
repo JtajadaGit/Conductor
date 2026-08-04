@@ -30,7 +30,7 @@ import { buildTrace } from '../lib/gates/trace.mjs';
 import { computeCost } from '../lib/core/cost.mjs';
 import { estimateRun } from '../lib/core/estimate.mjs';
 import { loadSkills, buildSkillsIndex } from '../lib/analysis/skills.mjs';
-import { detectStack } from '../lib/analysis/stack.mjs';
+import { detectStack, renderStackDeep } from '../lib/analysis/stack.mjs';
 import { listArchive, searchChanges } from '../lib/analysis/archive.mjs';
 import { buildAtlas } from '../lib/analysis/atlas.mjs';
 import { seal, verifySeal, generateKeypair, signFile, verifyFile, hashSpecs } from '../lib/provenance/provenance.mjs';
@@ -611,10 +611,14 @@ switch (cmd) {
     }
     if (hostLines) hostLines += '\n  (committeables: al clonar el repo, tu equipo hereda /conductor)';
     const tpl = ensureByokTemplate();
-    console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)
+    // lo DETECTADO, a la vista (versiones, gestor, proyectos, checks reales): el init no es una caja de
+    // plantillas mudas — enseña lo que ya sabe del repo y qué comandos correrá la fase test.
+    const deepLines = renderStackDeep(r.deep).map((l) => `  · ${l}`).join('\n');
+    console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)${deepLines ? `\n  DETECTADO en este repo (el motor lo re-detecta vivo en cada run):\n${deepLines}${r.created && r.deep?.checks?.length ? '\n  → esos checks quedan YA escritos en conductor.json (la fase test los ejecuta; ajústalos si quieres)' : ''}` : ''}
   project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
   specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  Relleno semántico con IA (propósito/convenciones/reglas leyendo TU repo): \`conductor init-config . --smart\`
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
   }

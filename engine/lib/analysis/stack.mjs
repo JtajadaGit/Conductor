@@ -65,6 +65,51 @@ export function detectStack(projectRoot) {
   return { languages: langs, frameworks: fws, testCmd, entrypoints, summary };
 }
 
+// DETECCIÓN PROFUNDA para `init` (determinista, 0 red, 0 tokens): versiones exactas, package manager,
+// monorepo/proyectos, comandos reales de build/test/lint/typecheck y frameworks de test. Es lo que un
+// dev espera ver tras un init — el motor la re-detecta viva en cada run (esto NO se versiona como espejo;
+// solo alimenta los `checks` iniciales de conductor.json y el resumen que imprime init).
+export function detectStackDeep(root) {
+  const base = detectStack(root);
+  const pkg = readJson(root, 'package.json');
+  const deps = pkg ? { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) } : {};
+  const v = (n) => (deps[n] ? String(deps[n]).replace(/^[\^~>=]+/, '') : null);
+  const versions = {};
+  for (const [dep, label] of [['@angular/core', 'angular'], ['react', 'react'], ['vue', 'vue'], ['next', 'next'], ['svelte', 'svelte'], ['@nestjs/core', 'nestjs'], ['typescript', 'typescript'], ['jest', 'jest'], ['vitest', 'vitest']]) {
+    const ver = v(dep); if (ver) versions[label] = ver;
+  }
+  const packageManager = pkg?.packageManager ? String(pkg.packageManager).split('@')[0]
+    : has(root, 'pnpm-lock.yaml') ? 'pnpm' : has(root, 'yarn.lock') ? 'yarn' : has(root, 'package-lock.json') ? 'npm' : (pkg ? 'npm' : null);
+  // proyectos de un workspace (angular.json / npm workspaces) — el mapa que un planner agradece
+  const projects = [];
+  const ng = readJson(root, 'angular.json');
+  if (ng?.projects) for (const [name, p] of Object.entries(ng.projects).slice(0, 12)) projects.push({ name, type: p.projectType || '?', root: p.root || '' });
+  const monorepo = !!(ng && Object.keys(ng.projects || {}).length > 1) || Array.isArray(pkg?.workspaces) && pkg.workspaces.length > 0 || has(root, 'pnpm-workspace.yaml') || has(root, 'nx.json');
+  // comandos REALES (solo lo que existe — jamás inventar): la semilla de `checks` en conductor.json
+  const run = (s) => (packageManager === 'yarn' ? `yarn ${s}` : packageManager === 'pnpm' ? `pnpm ${s}` : `npm run ${s}`);
+  const checks = [];
+  if (pkg?.scripts?.test) checks.push(packageManager === 'npm' || !packageManager ? 'npm test' : `${packageManager} test`);
+  else if (base.testCmd && !pkg) checks.push(base.testCmd);
+  if (pkg?.scripts?.build) checks.push(run('build'));
+  if (pkg?.scripts?.lint) checks.push(run('lint'));
+  if (versions.typescript && !pkg?.scripts?.lint?.includes('tsc')) checks.push('npx tsc --noEmit');
+  const strictTs = (() => { const t = readJson(root, 'tsconfig.json'); return t?.compilerOptions?.strict === true; })();
+  const testFramework = versions.jest ? 'jest' : versions.vitest ? 'vitest' : (deps.karma ? 'karma' : null);
+  return { ...base, name: pkg?.name || null, versions, packageManager, monorepo, projects, checks, strictTs, testFramework };
+}
+
+// resumen humano multilínea para la salida de `init` — lo que la detección sabe, a la vista
+export function renderStackDeep(d) {
+  if (!d) return [];
+  const L = [];
+  const vs = Object.entries(d.versions || {}).map(([k, ver]) => `${k} ${ver}`).join(' · ');
+  if (d.languages.length || vs) L.push(`stack: ${d.languages.join('/') || '?'}${vs ? ` — ${vs}` : ''}${d.strictTs ? ' · TS strict' : ''}`);
+  if (d.packageManager) L.push(`gestor: ${d.packageManager}${d.monorepo ? ' · monorepo' : ''}${d.testFramework ? ` · tests: ${d.testFramework}` : ''}`);
+  if (d.projects?.length) L.push(`proyectos: ${d.projects.map((p) => `${p.name} (${p.type})`).join(' · ')}`);
+  if (d.checks?.length) L.push(`checks detectados: ${d.checks.join('  ·  ')}`);
+  return L;
+}
+
 // bloque para inyectar en el prompt (apply/verify): orienta sin imponer (DATO, no instrucción arbitraria)
 export function renderStackHint(stack) {
   if (!stack || (!stack.languages.length && !stack.frameworks.length)) return '';
