@@ -57,6 +57,17 @@ await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectado
   assert(ex(join(proj, '.opencode', 'command', 'conductor.md')), 'comando de proyecto de OpenCode escrito (detectado, dir SINGULAR)');
   assert(!ex(join(proj, '.github', 'skills', 'conductor', 'SKILL.md')), 'Copilot NO detectado => no se escribe su skill');
   assert(/open:false/.test(rf(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md'), 'utf8')), 'la skill ensena el /conductor vacio educado (open:false)');
+  // FRONTMATTER YAML VALIDO (caso real: la description sin comillas llevaba «: » dentro y el host
+  // descartaba la skill ENTERA con «mapping values are not allowed» — /conductor muerto en VS Code).
+  // Regla del parser: un escalar con «: » exige comillas. Se valida en TODOS los ficheros generados.
+  for (const f of [join(proj, '.claude', 'skills', 'conductor', 'SKILL.md'), join(proj, '.opencode', 'command', 'conductor.md')]) {
+    const fm = rf(f, 'utf8').split(/^---$/m)[1];
+    assert(fm && fm.trim(), `${f} lleva frontmatter`);
+    for (const ln of fm.split('\n').filter((l) => l.trim())) {
+      const v = ln.slice(ln.indexOf(':') + 1).trim();
+      assert(!v.includes(': ') || (v.startsWith('"') && v.endsWith('"')), `frontmatter YAML invalido (escalar con «: » sin comillas): ${ln}`);
+    }
+  }
   // TTY guionizado con "n": ninguno
   const proj2 = join(HERE, '.tmp-initmenu-proj2');
   rmSync(proj2, { recursive: true, force: true });

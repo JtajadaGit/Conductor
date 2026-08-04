@@ -564,7 +564,9 @@ switch (cmd) {
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
       '',
     ];
-    const DESC = 'Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)';
+    // OJO frontmatter: la descripción lleva «:» — en YAML un escalar sin comillas con «: » rompe el
+    // mapping («mapping values are not allowed») y el host DESCARTA la skill entera. Siempre citada.
+    const DESC = JSON.stringify('Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)');
     const homeH = process.env.CONDUCTOR_USERHOME || homedir();
     const HOSTS_PROJ = [
       { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
@@ -1075,7 +1077,7 @@ switch (cmd) {
     // comando global /conductor + el servidor MCP (fusión no destructiva). Solo se ofrece lo que hay.
     const CMD_MD = [
       '---',
-      'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
+      'description: "Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)"',
       '---',
       '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
       '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
@@ -1165,7 +1167,7 @@ switch (cmd) {
       const fC = join(dC, 'conductor.md');
       writeFileSync(fC, [
         '---',
-        'description: Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)',
+        'description: "Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: abre el panel web)"',
         '---',
         '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
         '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
