@@ -51,13 +51,22 @@ await test('serve-flujos: la PAUSA del driver aparece en el estado y `continue` 
   assert(s.pending, 'el estado publica la pausa para que la web la pinte');
   eq(s.pending.before, 'apply'); eq(s.pending.role, 'coder');
   eq(s.pending.findings.length, 1, 'y los hallazgos que el humano debe marcar');
-  const c = await (await post('api/run/contador/continue', { note: 'usa camelCase', model: 'copilot:otro', selected: [0] })).json();
+  // IDENTIDAD DE LA PAUSA: una decisión que declara OTRA fase (llegó tarde: su pausa ya se resolvió
+  // p.ej. desde la web) es 409 stalePause y JAMÁS toca la pausa viva — el gesto que el usuario no vio no se aprueba.
+  const stale = await post('api/run/contador/continue', { expectPhase: 'spec', note: 'tarde' });
+  eq(stale.status, 409, 'decisión para otra pausa => rechazada');
+  const sj = await stale.json();
+  eq(sj.stalePause, true, 'y dice POR QUÉ (stalePause)');
+  eq(sj.pausedNow, 'apply', 'con la pausa que sí está viva');
+  assert((await get('api/run/contador/state')).pending, 'la pausa viva sigue intacta tras el intento tardío');
+  const c = await (await post('api/run/contador/continue', { expectPhase: 'apply', note: 'usa camelCase', model: 'copilot:otro', selected: [0] })).json();
   eq(c.ok, true);
   const enviado = hijos[0].enviados.at(-1);
   eq(enviado.t, 'continue', 'se manda por IPC, no se reinventa el run');
   eq(enviado.payload.note, 'usa camelCase', 'la nota del humano llega ÍNTEGRA al driver');
   eq(enviado.payload.model, 'copilot:otro', 'y el cambio de modelo en caliente');
   eq(enviado.payload.selected, [0], 'y qué hallazgos quiere que se arreglen');
+  eq(enviado.payload.expectPhase, undefined, 'expectPhase es del guard HTTP — al driver no le llega');
   const s2 = await get('api/run/contador/state');
   eq(s2.pending, null, 'la pausa se limpia tras responderla (la card desaparece)');
 });

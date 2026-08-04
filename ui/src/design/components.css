@@ -501,8 +501,9 @@ details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; l
    con prefers-reduced-motion (el anillo gira muy lento, los puntos se quedan quietos). */
 /* el cargador ÚNICO de la app es la tira de ticks del velo (.veil-ticks en app.css — la firma de carga);
    aquí solo el layout y la talla inline (los ticks del velo a pantalla completa son mayores) */
-.ldr { display: flex; align-items: center; gap: .7rem; padding: 1.5rem .15rem; color: var(--tx2); }
-.ldr-center { justify-content: center; min-height: 58vh; }
+/* texto ARRIBA y la tira de ticks justo DEBAJO, ambos centrados (no lado a lado) */
+.ldr { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .55rem; padding: 1.5rem .15rem; color: var(--tx2); }
+.ldr-center { min-height: 58vh; }
 .ldr-ticks { flex: none; }
 .ldr-ticks i { width: 11px; height: 4px; }
 .ldr-lbl { font-size: .88rem; font-weight: 500; letter-spacing: .005em; color: var(--tx2); }
@@ -542,7 +543,11 @@ details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; l
    info): el ancla es tipográfica — borde IZQUIERDO de 3px del color semántico + la palabra clave en bold. */
 .alert.info { border-color: color-mix(in srgb, var(--accent) 30%, var(--bd)); border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--bg2)); }
 .alert.warn { border-color: color-mix(in srgb, var(--warn) 38%, var(--bd)); border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg2)); color: var(--tx); }
+.alert.ok { border-color: color-mix(in srgb, var(--ok) 36%, var(--bd)); border-left: 3px solid var(--ok); background: color-mix(in srgb, var(--ok) 7%, var(--bg2)); color: var(--tx); }
 .alert b { color: var(--tx); }
+/* huecos del veredicto dentro del banner (lista corta, el detalle completo vive en el Informe) */
+.why-lst { margin: .35rem 0 .3rem 1.1rem; padding: 0; }
+.why-lst li { margin: .15rem 0; }
 
 /* chip de rama git (voz de dato: mono, como los ctx-chip) */
 .chip-branch { display: inline-block; font: 600 .68rem/1.4 var(--mono); color: var(--tx2); background: var(--bg2); border: 1px solid var(--bd2); border-radius: 5px; padding: .06rem .4rem; vertical-align: baseline; }

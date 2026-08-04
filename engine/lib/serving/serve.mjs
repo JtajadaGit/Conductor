@@ -330,6 +330,17 @@ export function runState(changeDir, srcDir, { alive = null } = {}) {
     plan: st?.phases ?? [],
     current: cur,
     estimate: tl?.estimate ?? null, // T3: preflight persistido — la UI compara est vs real por fase
+    // pausas YA RESUELTAS y por qué vía: el chat re-enganchado narra lo decidido mientras no miraba (web↔chat)
+    approvals: (tl?.approvals ?? []).map((a) => ({ phase: a.phase, at: a.at, via: a.via })),
+    // resumen del gate para el BANNER del veredicto: el PORQUÉ va ARRIBA de la pantalla, no enterrado en el registro
+    gate: (() => {
+      const rj = readJson(plumbPath(changeDir, 'report.json'));
+      if (!rj || !Array.isArray(rj.gates)) return null;
+      const sev = (f) => String(f?.severity || '').toLowerCase().trim();
+      const blocking = rj.gates.filter((f) => ['breaking', 'error'].includes(sev(f)));
+      const warnings = rj.gates.filter((f) => sev(f) === 'warning');
+      return { blocking: blocking.length, warnings: warnings.length, top: blocking.slice(0, 3).map((f) => String(f.message || '').slice(0, 220)) };
+    })(),
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
     hasDashboard: existsSync(evidencePath(changeDir, 'dashboard.html')), // fase 3: informe en la evidencia (fallback legado)
@@ -358,7 +369,10 @@ export function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         let payload = {}; try { payload = JSON.parse(body || '{}'); } catch {}
-        if (resolver) { const r = resolver; pending = null; resolver = null; r(payload); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); }
+        // misma identidad de pausa que la app (expectPhase): jamás aplicar una decisión a una pausa distinta
+        const { expectPhase, ...fwd } = payload;
+        if (expectPhase && pending?.before && pending.before !== expectPhase) { res.writeHead(409, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: false, stalePause: true, pausedNow: pending.before })); }
+        if (resolver) { const r = resolver; pending = null; resolver = null; r(fwd); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); }
         else { res.writeHead(409, { 'content-type': 'application/json' }); res.end('{"ok":false}'); }
       });
     } else if (req.method === 'POST' && req.url?.startsWith('/api/stop')) {
@@ -1356,9 +1370,14 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           const payload = await readBody(req);
           if (!payload) return json(400, { ok: false, error: 'body JSON inválido' });
           if (!reg || reg.exited || !reg.pending) return json(409, { ok: false });
+          // IDENTIDAD DE LA PAUSA (carrera chat↔web): una decisión tardía del chat, con su pausa ya aprobada
+          // desde la web, aterrizaba en la SIGUIENTE pausa — un gesto que el usuario jamás vio. Si el cliente
+          // declara a qué fase responde (expectPhase) y no coincide con la pausa viva, 409 honesto con la actual.
+          const { expectPhase, ...fwd } = payload;
+          if (expectPhase && reg.pending.before !== expectPhase) return json(409, { ok: false, stalePause: true, pausedNow: reg.pending.before, error: `esa decisión era para la pausa «${expectPhase}», que ya se decidió — ahora está pausado en «${reg.pending.before}»` });
           // enviar PRIMERO, limpiar pending solo si el canal respondió: antes un send fallido dejaba la pausa
           // irrecuperable (pending ya borrado, driver esperando) y aun así respondía ok.
-          let sent = false; try { sent = reg.child.send({ t: 'continue', payload }) !== false; } catch { sent = false; }
+          let sent = false; try { sent = reg.child.send({ t: 'continue', payload: fwd }) !== false; } catch { sent = false; }
           if (!sent) return json(502, { ok: false, error: 'canal IPC caído — reanuda o detén el run' });
           reg.pending = null;
           return json(200, { ok: true });

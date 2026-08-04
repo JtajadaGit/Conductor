@@ -88,6 +88,8 @@ export interface RunState {
   alive?: boolean;
   pending: PendingDecision | null;
   approvals?: Approval[];
+  /** resumen del gate para el banner del veredicto: el porqué arriba, no enterrado en el registro */
+  gate?: { blocking: number; warnings: number; top: string[] } | null;
   usage: Usage | null;
   ghUsage: GhUsage | null;
   stopRequested: boolean;

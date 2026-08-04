@@ -1325,28 +1325,48 @@ function walk(dir, acc = []) {
 }
 function scanSrc(root) {
   const files = [];
-  if (isUnsafeRoot(resolve(root))) return files; // nunca escanear la raíz del FS / de una unidad
+  // tests SIN etiqueta @conductor: se recogen aparte para la COBERTURA POR REFERENCIA (un coder escribe
+  // el test perfecto y olvida la etiqueta — eso no puede ser un falso «sin test»). Cabecera acotada.
+  const testsSinTag = [];
+  if (isUnsafeRoot(resolve(root))) return { files, testsSinTag }; // nunca escanear la raíz del FS / de una unidad
   for (const f of walk(root)) {
     const txt = readHead(f); // solo la cabecera (el tag @conductor va arriba) → coste acotado aunque el fichero sea grande
     if (!txt) continue;
     const ids = [...txt.matchAll(/@conductor\s+(REQ-[A-Z0-9-]+)/gi)].map((x) => x[1].toUpperCase());
     if (ids.length) files.push({ path: relative(root, f).replace(/\\/g, '/'), reqIds: [...new Set(ids)], test: isTestFile(f) });
+    // jamás documentos ni artefactos del pipeline: un spec.md contiene el id del requisito por definición
+    // (isTestFile pica con el stem "spec") y daría cobertura FALSA — solo código de test cuenta por referencia
+    else if (isTestFile(f) && !/\.(md|txt|rst|adoc|json|ya?ml)$/i.test(f) && !/(^|[\\/])(openspec|\.conductor)([\\/]|$)/.test(relative(root, f)) && testsSinTag.length < 800) testsSinTag.push({ path: relative(root, f).replace(/\\/g, '/'), head: txt.slice(0, 16384) });
   }
-  return files;
+  return { files, testsSinTag };
 }
+
+// stems demasiado genéricos para servir de referencia (un test que dice «index» no prueba nada concreto)
+const STEM_GENERIC = new Set(['index', 'main', 'app', 'test', 'spec', 'setup', 'utils', 'util', 'types', 'const']);
+const stemOf = (p) => (String(p).replace(/\\/g, '/').split('/').pop() || '').replace(/\.[^.]+$/, '').replace(/\.(spec|test)$/i, '');
 
 function buildTrace(changeDir, srcDir) {
   const specRaw = readSpec(changeDir) || '';
   const tasksRaw = existsSync(join(changeDir, 'tasks.md')) ? readFileSync(join(changeDir, 'tasks.md'), 'utf8') : '';
   const reqs = parseSpecIds(specRaw);
   const tasks = parseTasks(tasksRaw).map((t) => ({ ...t, reqIds: [...(t.desc.matchAll(/\[(REQ-[A-Z0-9-]+)\]/gi))].map((x) => x[1].toUpperCase()) }));
-  const files = srcDir && existsSync(srcDir) ? scanSrc(srcDir) : [];
+  const scan = srcDir && existsSync(srcDir) ? scanSrc(srcDir) : { files: [], testsSinTag: [] };
+  const files = scan.files;
+
+  // COBERTURA POR REFERENCIA: si un requisito tiene código etiquetado pero ningún test CON etiqueta, un test
+  // sin etiqueta que menciona su id o el nombre de su fichero de código (import/ruta) CUENTA como cobertura.
+  // La etiqueta pasa de muro a sugerencia (finding info) — el falso «sin test» suspendía runs buenos.
+  const refTestFor = (r, code) => scan.testsSinTag.find((t) => {
+    if (t.head.includes(r.id)) return true;
+    return code.some((c) => { const s = stemOf(c.path); return s.length >= 4 && !STEM_GENERIC.has(s.toLowerCase()) && t.head.includes(s); });
+  }) || null;
 
   const matrix = reqs.map((r) => {
     const rTasks = tasks.filter((t) => t.reqIds.includes(r.id));
     const code = files.filter((f) => f.reqIds.includes(r.id) && !f.test);
     const tests = files.filter((f) => f.reqIds.includes(r.id) && f.test);
-    return { id: r.id, name: r.name, scenarios: r.scenarios, tasks: rTasks, code, tests, cov: { task: rTasks.length > 0, code: code.length > 0, test: tests.length > 0 } };
+    const ref = (!tests.length && code.length) ? refTestFor(r, code) : null;
+    return { id: r.id, name: r.name, scenarios: r.scenarios, tasks: rTasks, code, tests, testRef: ref ? ref.path : null, cov: { task: rTasks.length > 0, code: code.length > 0, test: tests.length > 0 || !!ref } };
   });
   const orphanTasks = tasks.filter((t) => !t.reqIds.length);
   // cobertura real = código + test. La "task" es informativa (no existe en complejidad simple).
@@ -1357,9 +1377,12 @@ function buildTrace(changeDir, srcDir) {
     // Dos reglas SEPARADAS (incidente real: el coder agotó el timeout dejando código sin su
     // test y el run cerró GREEN):
     //  · trace.coverage-gap — falta CÓDIGO (o todo): señal (warning); solo strictTrace la eleva.
-    //  · trace.test-gap    — hay código pero NINGÚN test lo cubre: la mitad peligrosa; el llamador
-    //    (runGate) la eleva a error POR DEFECTO (strictTests, opt-out) — "hecho sin test" no es hecho.
+    //  · trace.test-gap    — hay código y NINGÚN test lo cubre (ni etiquetado ni por referencia): warning
+    //    visible; los presets estrictos (strictTests) la elevan a error — GREEN alcanzable por defecto.
+    //  · trace.test-untagged (info) — hay test POR REFERENCIA sin etiqueta: cuenta como cobertura y solo
+    //    sugiere la etiqueta. La etiqueta es el mecanismo de trazabilidad, no un muro burocrático.
     // La "task" sigue siendo informativa (no existe en complejidad simple).
+    if (m.testRef) F.push({ rule: 'trace.test-untagged', severity: 'info', message: `${m.id}: cubierto por ${m.testRef} (por referencia) — añade "@conductor ${m.id}" a ese test para trazabilidad exacta`, file: m.testRef });
     if (m.cov.code && !m.cov.test) F.push({ rule: 'trace.test-gap', severity: 'warning', message: `${m.id} tiene código pero NINGÚN test lo cubre (marca @conductor ${m.id} en su test)`, file: 'spec.md' });
     else {
       const missing = [!m.cov.code && 'code', !m.cov.test && 'test'].filter(Boolean);
@@ -3579,8 +3602,9 @@ __M['presets'] = (function(){
 // experto manda (cualquier knob explícito en conductor.json gana sobre el del preset). Sin dependencias.
 
 const PRESETS = {
-  // strict.tests = ¿"código sin test" bloquea? DEFAULT ON del motor; los presets laxos (arreglo/retoque) lo
-  // apagan a propósito — un typo o un ajuste de CSS no exigen test nuevo.
+  // strict.tests = ¿"código sin test" bloquea? OPT-IN: el motor por defecto lo deja en aviso visible
+  // (GREEN alcanzable) y son feature/migración quienes lo elevan a error — dureza donde se ha elegido.
+  // Un test sin etiqueta @conductor cuenta por referencia (trace.mjs): la etiqueta sugiere, no suspende.
   'quick-fix': { label: 'Arreglo rápido', complexity: 'simple', strict: { trace: false, tests: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
   'visual': { label: 'Retoque visual', complexity: 'simple', strict: { trace: false, tests: false, id: false, clarify: false }, specFreeze: false, pauseAt: [], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
   'feature': { label: 'Funcionalidad', complexity: 'medium', strict: { trace: true, tests: true, id: true, clarify: false }, specFreeze: false, pauseAt: ['apply'], reviewTimeoutMs: 0, onReviewTimeout: 'wait' },
@@ -3932,11 +3956,12 @@ function runGate(dir, srcDir, strict = {}) {
   const F = [...checkCoherence(dir, cohOpts), ...checkArtifacts(dir)];
   if (trace) {
     for (const f of trace.findings) {
-      // strict.trace (contractual) eleva AMBOS huecos; strict.tests (DEFAULT ON, opt-out strictTests:false)
-      // eleva SOLO el "código sin test" — cura del incidente real (GREEN con el test sin escribir
-      // porque el coder agotó el timeout). "Hecho sin test" no es hecho, salvo que el preset laxo lo permita.
+      // strict.trace (contractual) eleva AMBOS huecos; strict.tests (OPT-IN: presets feature/migración o
+      // cfg.strictTests) eleva SOLO el "código sin test". Por defecto el hueco es WARNING VISIBLE, no muro:
+      // un gate que suspende todos los runs reales deja de medir calidad — GREEN tiene que ser alcanzable.
+      // El incidente "GREEN con el test sin escribir" queda cubierto por el aviso + presets estrictos + fase test.
       if (strict.trace && (f.rule === 'trace.coverage-gap' || f.rule === 'trace.test-gap')) f.severity = 'error';
-      else if (strict.tests !== false && f.rule === 'trace.test-gap') f.severity = 'error';
+      else if (strict.tests === true && f.rule === 'trace.test-gap') f.severity = 'error';
       F.push(f);
     }
   }
@@ -4339,7 +4364,7 @@ const CONFIG_SCHEMA = {
       ],
     },
     strictTrace: { type: 'boolean', description: 'Trazabilidad REQ↔código↔test BLOQUEANTE (un hueco tumba el GREEN). Lo activan los presets feature/migration; aquí lo fuerzas fuera de preset.' },
-    strictTests: { type: 'boolean', description: 'Código sin test = BLOQUEA (default true). false para relajar (presets arreglo/retoque lo relajan solos).' },
+    strictTests: { type: 'boolean', description: 'true = código sin test BLOQUEA (los presets feature/migración lo activan solos). Default false: aviso visible sin bloquear — y un test sin etiqueta @conductor cuenta por referencia.' },
     strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },
@@ -4591,7 +4616,7 @@ function aiactData(changeDir) {
     verdict: tl.verdict || null,
     generatedAt: new Date().toISOString(),
     spec: specPath ? { path: specPath.replace(/\\/g, '/').split('/').slice(-3).join('/'), sha256: sha(specPath) } : null,
-    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null, fallback: p.fallback || null })),
+    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, role: p.role || null, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null, fallback: p.fallback || null })),
     approvals: tl.approvals ?? [],
     aiGeneratedFiles: aiFiles,
     verification: {
@@ -4609,7 +4634,7 @@ function aiactData(changeDir) {
 function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
-  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td style="color:var(--tx2)">${E(m.role || '—')}</td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
     ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
@@ -4628,22 +4653,22 @@ function renderAiact(changeDir) {
 </style>
 ${THEME_TOGGLE}
 <script>(function(){var r=document.documentElement,k='conductorTheme';document.getElementById('thm').addEventListener('click',function(){var n=r.dataset.theme==='dark'?'light':'dark';r.dataset.theme=n;try{localStorage.setItem(k,n);}catch(e){}});})()</script>
-<div class=head><span class=logo>C</span><h1>Informe de transparencia de IA</h1><span class="pill ${vc}">${E(d.verdict || '—')}</span></div>
-<p class=sub>Qué generó la IA, con qué modelos, quién lo aprobó y qué verificación pasó — evidencia técnica alineada con el EU AI Act (transparencia de contenido IA, en vigor el 2-ago-2026).</p>
+<div class=head><span class=logo>C</span><h1>Informe de transparencia de IA</h1><span style="color:var(--tx3);font-size:.7rem;letter-spacing:.05em;text-transform:uppercase">veredicto del run (SDD)</span><span class="pill ${vc}">${E(d.verdict || '—')}</span></div>
+<p class=sub>El acta de «quién hizo qué» de este cambio: modelos y papel por fase, aprobaciones humanas, inventario de ficheros de la IA, verificación y sello. Anexo: mapeo al EU AI Act (transparencia de contenido IA). La guía completa, en /help del panel.</p>
 <div class=box><dl class=kv>
 <dt>Cambio</dt><dd><b>${E(d.change)}</b></dd>
 <dt>Petición</dt><dd>${E(d.request)}</dd>
 <dt>Generado</dt><dd>${E(d.generatedAt)} · por <b>conductor</b></dd>
 ${d.spec ? `<dt>Especificación</dt><dd><code>${E(d.spec.path)}</code><br><small style="color:var(--tx3)">sha256 ${E((d.spec.sha256 || '').slice(0, 16))}…</small></dd>` : ''}
 </dl></div>
-<h2 class=sect>1 · Modelos de IA empleados <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué modelo generó cada fase (base de la trazabilidad)</span></h2>
-${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin fases de agente registradas todavía (el informe se completa según avanza el run)</p>'}
-<h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— cada pausa aprobada por una persona (control humano exigido)</span></h2><ul>${apps}</ul>
-<h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— inventario exacto, marcados con @conductor REQ-&lt;id&gt;</span></h2><ul>${files}</ul>
+<h2 class=sect>1 · Modelos de IA empleados <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la UE pide poder decir qué IA intervino: modelo, papel y consumo por fase</span></h2>
+${models ? `<table><tr><th>fase</th><th>papel</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin fases de agente registradas todavía (el informe se completa según avanza el run)</p>'}
+<h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la UE pide control humano: cada pausa la aprobó una persona, y consta qué aprobó</span></h2><ul>${apps}</ul>
+<h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la UE pide poder identificar el contenido hecho por IA: inventario exacto, marcado en el propio código</span></h2><ul>${files}</ul>
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>
 <div class=box>${E(d.verification.gate)}${Array.isArray(d.verification.lenses) && d.verification.lenses.length ? `<br><small style="color:var(--tx2)">Review multi-lente: ${d.verification.lenses.map((l) => `<code>${E(l)}</code>`).join(' ')}</small>` : ''}<br><small style="color:var(--tx3)">Los tests/build del proyecto se ejecutan en el CI del repositorio.</small></div>
-<h2 class=sect>5 · Procedencia firmada y registro <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— integridad criptográfica verificable</span></h2>
-<div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'SHA-256 (integridad, sin firma)')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.${/ed25519/i.test(d.provenance.algo || '') ? '' : ' <small style="color:var(--tx3)">Para firma criptográfica real configura <code>CONDUCTOR_PRIV_KEY</code> (Ed25519).</small>'}` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
+<h2 class=sect>5 · Sello e historial <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la evidencia no se puede alterar sin que se note</span></h2>
+<div class=box>${d.provenance ? `Este informe y su evidencia quedan <b>sellados</b>: si alguien los modificara después, el sello dejaría de cuadrar — <code>conductor verify</code> lo comprueba en segundos.${d.provenance.sealedAt ? ` <small style="color:var(--tx3)">Sellado el ${E(d.provenance.sealedAt)}.</small>` : ''}` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar el run en GREEN).</span>'}${d.marking.logging ? `<br>Cada run verificado se anota además en el <b>historial encadenado</b> del proyecto — como una cadena de recibos: alterar uno rompe todos los siguientes; <code>conductor ledger verify</code> lo comprueba.` : ''}<br><small style="color:var(--tx3)">Detalle técnico: ${d.provenance && /ed25519/i.test(d.provenance.algo || '') ? `firma ${E(d.provenance.algo)}` : `sello ${E(d.provenance?.algo || 'SHA-256')}; con una clave privada configurada (CONDUCTOR_PRIV_KEY) pasa a firma Ed25519`}.</small></div>
 <footer>Evidencia técnica generada por conductor como subproducto del pipeline. El mapeo a las obligaciones del EU AI Act se basa en el <b>draft</b> Code of Practice (en finalización) y <b>no constituye asesoramiento legal</b>.</footer>
 </html>`;
 }
@@ -5863,8 +5888,9 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     const base = (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : resolvePhases(complexity, null);
     effPipeline = base.includes('test') ? base : [...base, 'test'];
   }
- // tests: DEFAULT ON (código sin test = error; cura del incidente — opt-out cfg.strictTests:false o preset laxo
-  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, tests: cfg.strictTests ?? preset?.strict?.tests ?? true, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
+ // tests: OPT-IN (código sin test = warning visible por defecto; los presets feature/migración o
+  // cfg.strictTests:true lo elevan a error) — GREEN alcanzable por defecto, dureza donde se ha ELEGIDO
+  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, tests: cfg.strictTests ?? preset?.strict?.tests ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
   // RunState robusto (auditoría P2-9): persistimos los modelos del LANZAMIENTO (env CONDUCTOR_MODEL_* o
@@ -6808,7 +6834,7 @@ const specFor = (slug) => [
 // `.captured` (array {phase, prompt}) para asertar QUÉ recibió el modelo (p.ej. la nota humana).
 //   strong      — artefactos completos y trazados → GREEN
 //   weak        — sin tag @conductor → hueco de trazabilidad (preset estricto lo tumba)
-//   no-test     — código SIN su test → trace.test-gap (strictTests default ON) lo bloquea
+//   no-test     — código SIN su test → trace.test-gap (los presets estrictos lo bloquean; default = aviso)
 //   secret      — el código incluye una key hardcodeada → secretScan tumba el GREEN
 //   hollow      — test sin aserciones → hollow-tests gate (con cfg.hollowTests) lo tumba
 //   sql         — además escribe una migración SQL segura (para dataGate del preset migration)
@@ -7693,6 +7719,17 @@ function runState(changeDir, srcDir, { alive = null } = {}) {
     plan: st?.phases ?? [],
     current: cur,
     estimate: tl?.estimate ?? null, // T3: preflight persistido — la UI compara est vs real por fase
+    // pausas YA RESUELTAS y por qué vía: el chat re-enganchado narra lo decidido mientras no miraba (web↔chat)
+    approvals: (tl?.approvals ?? []).map((a) => ({ phase: a.phase, at: a.at, via: a.via })),
+    // resumen del gate para el BANNER del veredicto: el PORQUÉ va ARRIBA de la pantalla, no enterrado en el registro
+    gate: (() => {
+      const rj = readJson(plumbPath(changeDir, 'report.json'));
+      if (!rj || !Array.isArray(rj.gates)) return null;
+      const sev = (f) => String(f?.severity || '').toLowerCase().trim();
+      const blocking = rj.gates.filter((f) => ['breaking', 'error'].includes(sev(f)));
+      const warnings = rj.gates.filter((f) => sev(f) === 'warning');
+      return { blocking: blocking.length, warnings: warnings.length, top: blocking.slice(0, 3).map((f) => String(f.message || '').slice(0, 220)) };
+    })(),
     now: Date.now(), // referencia de reloj del server (la página calcula elapsed sin depender de su reloj)
     done: !!(tl?.verdict && tl.verdict !== 'running') || st?.status === 'done',
     hasDashboard: existsSync(evidencePath(changeDir, 'dashboard.html')), // fase 3: informe en la evidencia (fallback legado)
@@ -7721,7 +7758,10 @@ function createRunServer({ changeDir, srcDir, port = 0, host = '127.0.0.1' }) {
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         let payload = {}; try { payload = JSON.parse(body || '{}'); } catch {}
-        if (resolver) { const r = resolver; pending = null; resolver = null; r(payload); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); }
+        // misma identidad de pausa que la app (expectPhase): jamás aplicar una decisión a una pausa distinta
+        const { expectPhase, ...fwd } = payload;
+        if (expectPhase && pending?.before && pending.before !== expectPhase) { res.writeHead(409, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: false, stalePause: true, pausedNow: pending.before })); }
+        if (resolver) { const r = resolver; pending = null; resolver = null; r(fwd); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); }
         else { res.writeHead(409, { 'content-type': 'application/json' }); res.end('{"ok":false}'); }
       });
     } else if (req.method === 'POST' && req.url?.startsWith('/api/stop')) {
@@ -8719,9 +8759,14 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           const payload = await readBody(req);
           if (!payload) return json(400, { ok: false, error: 'body JSON inválido' });
           if (!reg || reg.exited || !reg.pending) return json(409, { ok: false });
+          // IDENTIDAD DE LA PAUSA (carrera chat↔web): una decisión tardía del chat, con su pausa ya aprobada
+          // desde la web, aterrizaba en la SIGUIENTE pausa — un gesto que el usuario jamás vio. Si el cliente
+          // declara a qué fase responde (expectPhase) y no coincide con la pausa viva, 409 honesto con la actual.
+          const { expectPhase, ...fwd } = payload;
+          if (expectPhase && reg.pending.before !== expectPhase) return json(409, { ok: false, stalePause: true, pausedNow: reg.pending.before, error: `esa decisión era para la pausa «${expectPhase}», que ya se decidió — ahora está pausado en «${reg.pending.before}»` });
           // enviar PRIMERO, limpiar pending solo si el canal respondió: antes un send fallido dejaba la pausa
           // irrecuperable (pending ya borrado, driver esperando) y aun así respondía ok.
-          let sent = false; try { sent = reg.child.send({ t: 'continue', payload }) !== false; } catch { sent = false; }
+          let sent = false; try { sent = reg.child.send({ t: 'continue', payload: fwd }) !== false; } catch { sent = false; }
           if (!sent) return json(502, { ok: false, error: 'canal IPC caído — reanuda o detén el run' });
           reg.pending = null;
           return json(200, { ok: true });
@@ -9085,10 +9130,52 @@ function runProgress(st) {
     hecho: total ? `${done.length}/${total} fases` : `${done.length} fases`,
     ...(tok.in + tok.out > 0 ? { tokens: `↓${kTok(tok.in)} ↑${kTok(tok.out)}` } : {}),
     ...(modelos.length ? { modelos } : {}),
+    // pausas YA RESUELTAS y por qué vía — el chat re-enganchado narra lo decidido mientras no miraba
+    ...(Array.isArray(st.approvals) && st.approvals.length ? { decisiones: st.approvals.map((a) => `${a.phase} ✓ ${String(a.via || '').includes('web') ? 'web' : 'chat'}`).join(' · ') } : {}),
     ...(Array.isArray(st.logTail) && st.logTail.length ? { registro: st.logTail.slice(-2) } : {}),
   };
 }
-async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
+
+// PRESENTACIÓN DETERMINISTA DE LA PAUSA — lo que el chat imprime TAL CUAL. Pegar los artefactos en bruto
+// era un muro ilegible (la spec entera con GIVEN/WHEN/THEN) y cada agente lo «arreglaba» a su manera.
+// Aquí decide el motor qué se ve: fase, progreso, decisiones previas, hallazgos topados y la spec en
+// TITULARES (Requirement + SHALL + nº de escenarios). La spec completa queda en la web y en `artifacts`
+// (contexto del agente, no para pegar). Exportada para testearla determinista.
+function renderPause(changeDir, pending, st, web) {
+  const L = [];
+  const ph = pending?.before || '?';
+  L.push(`⏸ PAUSA antes de «${ph}» — tu decisión continúa el run`);
+  const pr = runProgress(st);
+  if (pr) L.push(`${pr.hecho}${pr.tokens ? ` · ${pr.tokens}` : ''}`);
+  const aps = Array.isArray(st?.approvals) ? st.approvals : [];
+  if (aps.length) L.push(`Decidido antes: ` + aps.map((a) => `${a.phase} ✓ (${String(a.via || '').includes('web') ? 'web' : 'chat'})`).join(' · '));
+  const F = Array.isArray(pending?.findings) ? pending.findings : [];
+  if (F.length) {
+    L.push('', `Hallazgos del gate (${F.length}):`);
+    for (const f of F.slice(0, 8)) L.push(`- [${f.severity || '?'}] ${String(f.message || '').slice(0, 240)}`);
+    if (F.length > 8) L.push(`- …y ${F.length - 8} más (completos en la web)`);
+  }
+  let specTxt = null;
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) { specTxt = readFileSync(join(changeDir, 'specs', d, 'spec.md'), 'utf8'); break; } } catch {}
+  if (specTxt) {
+    const reqs = []; let cur = null;
+    for (const ln of specTxt.split(/\r?\n/)) {
+      const r = ln.match(/^###\s+Requirement:\s*(.+)$/i);
+      if (r) { cur = { name: r[1].trim(), shall: null, scn: 0 }; reqs.push(cur); continue; }
+      if (cur && !cur.shall && /\bSHALL\b/.test(ln)) cur.shall = ln.trim();
+      if (cur && /^####\s+Scenario:/i.test(ln)) cur.scn++;
+    }
+    if (reqs.length) {
+      L.push('', `Spec — ${reqs.length} requisito(s) (completa en la web):`);
+      for (const q of reqs.slice(0, 12)) L.push(`- ${q.name}${q.shall ? ` — ${q.shall.slice(0, 160)}` : ''}${q.scn ? ` · ${q.scn} escenario(s)` : ''}`);
+      if (reqs.length > 12) L.push(`- …y ${reqs.length - 12} más`);
+    }
+  }
+  L.push('', `Responde: «aprobar» · «nota: <instrucción>» · «modelo: litellm:<m> | copilot:<m>» · «parar»${web ? ` — o decide en la web: ${web}` : ''}`);
+  L.push('(si decides en la web, escríbeme cualquier cosa aquí y me reengancho al run)');
+  return L.join('\n');
+}
+async function pollRun(url, apiBase, changeDir, { timeoutMs, web } = {}) {
   const budget = Number(timeoutMs) || Number(process.env.CONDUCTOR_MCP_WAIT_MS) || 50000;
   const t0 = Date.now();
   let last = null; // último /state bueno → el retorno "working" lleva progreso real, no una caja negra
@@ -9101,8 +9188,9 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
         return {
           status: 'paused', phase: st.pending.before || '?', findings: st.pending.findings || undefined,
           progress: runProgress(st) || undefined,
+          render: renderPause(changeDir, st.pending, st, web),
           artifacts: pauseBundle(changeDir, st.pending),
-          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Dile que también puede decidir desde la web (enlace `web`) — si lo hace, cualquier mensaje suyo aquí te re-engancha con conductor_continue {action:"wait"}. Con su decisión: sin note = aprobar; note = instrucción; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
+          next: 'Imprime `render` TAL CUAL (presentación determinista: no la resumas, no la amplíes, no pegues los `artifacts` — esos son para TU contexto si el usuario pregunta). Espera su decisión y llama conductor_continue incluyendo phase (el campo `phase` de ESTA pausa): sin note = aprobar; note = instrucción; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
         };
       }
       const verdict = st.verdict || st.timeline?.verdict || null;
@@ -9119,7 +9207,7 @@ async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
   // el contrato completo vive en la description de la tool — aquí solo el dato y un imperativo corto.
   return {
     status: 'working', progress: runProgress(last) || undefined,
-    next: 'Narra el avance en 1 línea si cambió; luego conductor_continue {action:"wait"}.',
+    next: 'Narra en 1 línea avance y `decisiones` nuevas (las resueltas por web); luego conductor_continue {action:"wait"}.',
   };
 }
 
@@ -9246,11 +9334,12 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       // ARRANQUE RÁPIDO: la PRIMERA respuesta vuelve en
       // ~3s (una lectura de estado) con el enlace y la fase inicial — el spinner del host no se come 50s.
       // El ritmo largo lo llevan los conductor_continue {action:"wait"} posteriores.
-      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000 });
-      return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
+      const webF = app.url.replace(/\/$/, '') + lj.url;
+      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000, web: webF });
+      return { ...res, changeName: name, web: webF };
     } },
-  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
-    run: async ({ projectRoot, changeName, note, model, action }) => {
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
+    run: async ({ projectRoot, changeName, note, model, phase, action }) => {
       const root = resolve(projectRoot || process.cwd());
       const name = slug(changeName);
       const app = await appUp(root);
@@ -9258,16 +9347,25 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       // ruta 2-seg si el proyecto está en el registro (multi-proyecto); si no, forma 1-seg (default)
       let pid = null; try { pid = (app.ping?.projects || []).find((p) => resolve(p.root) === root)?.id || null; } catch {}
       const base = 'api/run/' + (pid ? pid + '/' : '') + name;
+      const webC = app.url.replace(/\/$/, '') + '/run/' + (pid ? pid + '/' : '') + name;
+      let stale = null; // decisión que llegó TARDE a una pausa ya resuelta (p.ej. desde la web)
       if (action === 'stop') { try { await fetch(app.url + base + '/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); } catch {} }
       else if (action !== 'wait') {
-        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}) };
-        try { await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }); } catch {}
-        // (un 409 aquí = ya no había pausa — p.ej. terminó mientras el usuario respondía; el poll de abajo lo cuenta)
+        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
+        try {
+          const r = await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+          if (r.status === 409) { const j = await r.json().catch(() => ({})); if (j.stalePause) stale = j; }
+          // (un 409 sin stalePause = ya no había pausa — p.ej. terminó mientras el usuario respondía; el poll de abajo lo cuenta)
+        } catch {}
       }
       // tras una DECISIÓN (aprobar/nota/stop) el usuario quiere confirmación YA (~8s: el run arranca la fase
       // y se ve el estado); el wait puro sí agota el presupuesto largo — es el que marca el ritmo del bucle.
-      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name), action === 'wait' ? {} : { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 8000 });
-      return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + '/run/' + (pid ? pid + '/' : '') + name };
+      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name), action === 'wait' ? { web: webC } : { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 8000, web: webC });
+      return {
+        ...res,
+        ...(stale ? { aviso: `tu decisión respondía a la pausa «${phase}», pero esa ya estaba resuelta (p.ej. desde la web) — el run NO se ha tocado; arriba va el estado ACTUAL: preséntalo (di al usuario qué se decidió sin él mirar) y sigue desde ahí` } : {}),
+        changeName: name, web: webC,
+      };
     } },
 };
 
@@ -9305,7 +9403,7 @@ function serve() {
   rl.on('line', (line) => { const s = line.trim(); if (!s) return; let m; try { m = JSON.parse(s); } catch { return send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); } handle(m).catch((e) => log('err', e.message)); });
 }
 
-return { specClip, pauseBundle, runProgress, pollRun, serve };
+return { specClip, pauseBundle, runProgress, renderPause, pollRun, serve };
 })();
 
 // ===== lib/sysops/upgrade.mjs =====
@@ -9902,9 +10000,10 @@ switch (cmd) {
       '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
-      '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
-      '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
-      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle.',
+      '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
+      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle; si la respuesta trae `decisiones` nuevas (pausas resueltas desde la web), cuéntalas en 1 línea.',
+      '  · si la respuesta trae `aviso`: léelo y obedécelo (tu decisión llegó a una pausa ya resuelta — presenta el estado ACTUAL, no insistas).',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
@@ -10428,8 +10527,8 @@ switch (cmd) {
       '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
       '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
       '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
-      '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
-      '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · status:"paused" → imprime el campo `render` TAL CUAL (presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
+      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
@@ -10518,8 +10617,8 @@ switch (cmd) {
         '$ARGUMENTS es la petición del usuario (puede llevar @rutas y /skills del equipo).',
         '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
         '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
-        '  · status:"paused" → presenta al usuario la fase y los artifacts TAL CUAL (no resumas la spec) y ESPERA su respuesta;',
-        '    después llama `conductor_continue` con su decisión (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+        '  · status:"paused" → imprime el campo `render` TAL CUAL (presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
+        '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
         '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
         '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
@@ -10681,4 +10780,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: c07fb130e532c4262aad4f3bfd6f65ca4aea364f0f09e5534531dd1b6ccc245d
+// build-inputs-sha256: bbf4b6546b550ed9d65119ded8fb253420310707ed705fa9d1c55204f81d9d9e

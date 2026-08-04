@@ -59,7 +59,7 @@ export const CONFIG_SCHEMA = {
       ],
     },
     strictTrace: { type: 'boolean', description: 'Trazabilidad REQ↔código↔test BLOQUEANTE (un hueco tumba el GREEN). Lo activan los presets feature/migration; aquí lo fuerzas fuera de preset.' },
-    strictTests: { type: 'boolean', description: 'Código sin test = BLOQUEA (default true). false para relajar (presets arreglo/retoque lo relajan solos).' },
+    strictTests: { type: 'boolean', description: 'true = código sin test BLOQUEA (los presets feature/migración lo activan solos). Default false: aviso visible sin bloquear — y un test sin etiqueta @conductor cuenta por referencia.' },
     strictId: { type: 'boolean', description: 'Exigir id <!-- id: REQ-X --> en cada requisito como ERROR (no warning).' },
     strictClarify: { type: 'boolean', description: 'CLARIFY-GATE: preguntas abiertas sin responder ([ ]) BLOQUEAN el avance.' },
     semanticDelta: { type: 'boolean', description: 'Validación semántica del delta de spec (MODIFIED/REMOVED coherentes). La activa el preset migration.' },

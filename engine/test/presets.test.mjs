@@ -112,12 +112,39 @@ await test('presets(P0): el preset llega como OPCIÓN de drive() y GANA sobre co
   } finally { restoreEnv(saved); }
 });
 
-// ── strictTests (DEFAULT ON, incidente real "hecho sin test" no es hecho ──
-await test('strictTests(default): código trazado SIN test que lo cubra → BLOQUEA aunque no haya preset', async () => {
+// ── strictTests OPT-IN: GREEN alcanzable por defecto; la dureza la ELIGEN presets/config ──
+await test('strictTests(default): código trazado SIN test → GREEN con AVISO (el gate señala, no suspende)', async () => {
   const saved = clearEnv();
   try {
     const r = await runWith({}, mkAgent({ testTag: false })); // sin preset, sin strictTests → default del motor
-    eq(r.verdict, 'BLOCKED', 'trace.test-gap es error por defecto: 2 fix sin test → escalar a humano');
+    eq(r.verdict, 'GREEN', 'test-gap por defecto es warning visible — un gate que suspende todos los runs deja de medir');
+  } finally { restoreEnv(saved); }
+});
+
+await test('strictTests:true explícito → el mismo hueco BLOQUEA (la dureza es elegida, no impuesta)', async () => {
+  const saved = clearEnv();
+  try {
+    const r = await runWith({ strictTests: true }, mkAgent({ testTag: false }));
+    eq(r.verdict, 'BLOCKED', 'quien pide dureza la tiene: 2 fix sin test → escalar a humano');
+  } finally { restoreEnv(saved); }
+});
+
+await test('strictTests(referencia): test SIN etiqueta que referencia el código CUENTA — la etiqueta sugiere, no suspende', async () => {
+  const saved = clearEnv();
+  try {
+    // el caso real que suspendía runs buenos: el coder escribe el test perfecto y olvida el @conductor
+    const agent = (a) => {
+      const { phase, writeTo, cwd } = a;
+      if (phase === 'apply' || phase === 'fix') {
+        w(join(cwd, 'src', 'calculo.js'), '// @conductor REQ-C\nexport const x=1;');
+        w(join(cwd, 'src', 'calculo.test.js'), 'import { x } from "./calculo";\ntest("x",()=>{});');
+        return Promise.resolve({ code: 0 });
+      }
+      w(writeTo, { propose: '## Why\nx\n## What Changes\n- a\n## Impact\nx', spec: SPEC_ID }[phase] || 'x');
+      return Promise.resolve({ code: 0 });
+    };
+    const r = await runWith({ strictTests: true }, agent);
+    eq(r.verdict, 'GREEN', 'cobertura por referencia: el test existe y ejercita el código — GREEN aun en modo estricto');
   } finally { restoreEnv(saved); }
 });
 

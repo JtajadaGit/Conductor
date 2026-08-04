@@ -105,6 +105,11 @@ await test('aiact (P3): informe de transparencia — modelos, aprobaciones human
   const html = renderAiact(T);
   for (const frag of ['qwen36-msc1', 'claude-haiku-4.5', 'aprobada por <b>una persona</b>', 'src/c.js', 'PASS (deterministic gate', 'ed25519', 'sha256', 'no constituye asesoramiento legal'])
     assert(html.includes(frag), 'el informe debe incluir: ' + frag);
+  // SDD-first: la pastilla dice DE QUIÉN es el veredicto (del run, no del AI Act), la tabla enseña el
+  // papel de cada agente, y el documento NO se autoexplica (la didáctica vive en /help del panel)
+  assert(html.includes('veredicto del run (SDD)'), 'la pastilla GREEN queda atribuida al run SDD, no al AI Act');
+  assert(html.includes('<th>papel</th>'), 'columna papel: el equipo de agentes es visible por fase');
+  assert(!html.includes('En corto'), 'el entregable abre con datos — la guía está en /help, no dentro del documento');
   rmSync(T, { recursive: true, force: true });
 });
 

@@ -242,11 +242,12 @@ function runGate(dir, srcDir, strict = {}) {
   const F = [...checkCoherence(dir, cohOpts), ...checkArtifacts(dir)];
   if (trace) {
     for (const f of trace.findings) {
-      // strict.trace (contractual) eleva AMBOS huecos; strict.tests (DEFAULT ON, opt-out strictTests:false)
-      // eleva SOLO el "código sin test" — cura del incidente real (GREEN con el test sin escribir
-      // porque el coder agotó el timeout). "Hecho sin test" no es hecho, salvo que el preset laxo lo permita.
+      // strict.trace (contractual) eleva AMBOS huecos; strict.tests (OPT-IN: presets feature/migración o
+      // cfg.strictTests) eleva SOLO el "código sin test". Por defecto el hueco es WARNING VISIBLE, no muro:
+      // un gate que suspende todos los runs reales deja de medir calidad — GREEN tiene que ser alcanzable.
+      // El incidente "GREEN con el test sin escribir" queda cubierto por el aviso + presets estrictos + fase test.
       if (strict.trace && (f.rule === 'trace.coverage-gap' || f.rule === 'trace.test-gap')) f.severity = 'error';
-      else if (strict.tests !== false && f.rule === 'trace.test-gap') f.severity = 'error';
+      else if (strict.tests === true && f.rule === 'trace.test-gap') f.severity = 'error';
       F.push(f);
     }
   }

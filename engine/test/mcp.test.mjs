@@ -88,10 +88,24 @@ await test('mcp(poll anti-timeout): pollRun devuelve paused/done al instante y "
   const url = `http://127.0.0.1:${srv.address().port}/`;
   try {
     // 1) PAUSA → retorna al primer poll con los artefactos recortados y la instrucción del bucle
-    state = { pending: { before: 'apply' } };
-    const p = await pollRun(url, 'api/run/x', CH);
+    mkdirSync(join(CH, 'specs', 'util'), { recursive: true });
+    writeFileSync(join(CH, 'specs', 'util', 'spec.md'), [
+      '## ADDED Requirements', '### Requirement: Mitad', 'The system SHALL divide by two.',
+      '#### Scenario: par', '- **GIVEN** un número par', '- **WHEN** se divide', '- **THEN** exacto',
+      '#### Scenario: impar', '- **GIVEN** impar', '- **WHEN** se divide', '- **THEN** redondea',
+    ].join('\n'));
+    state = { pending: { before: 'apply', findings: [{ severity: 'error', message: 'REQ-MITAD sin test' }] }, approvals: [{ phase: 'spec', via: 'human-web' }] };
+    const p = await pollRun(url, 'api/run/x', CH, { web: 'http://127.0.0.1:4750/run/x' });
     eq(p.status, 'paused'); eq(p.phase, 'apply');
     assert(p.artifacts['proposal.md']?.includes('porque sí'), 'artefacto de la pausa incluido');
+    // RENDER determinista (lo que el chat imprime): titulares, no el muro GIVEN/WHEN/THEN
+    assert(p.render.includes('⏸ PAUSA antes de «apply»'), 'cabecera de la pausa');
+    assert(p.render.includes('Mitad — The system SHALL divide by two.') && p.render.includes('2 escenario(s)'), 'spec en TITULARES: Requirement + SHALL + nº de escenarios');
+    assert(!p.render.includes('GIVEN'), 'el GIVEN/WHEN/THEN JAMÁS va al chat (eso era el muro ilegible)');
+    assert(p.render.includes('[error] REQ-MITAD sin test'), 'los hallazgos del gate, topados y legibles');
+    assert(p.render.includes('spec ✓ (web)'), 'las decisiones previas se cuentan (catch-up del chat)');
+    assert(p.render.includes('http://127.0.0.1:4750/run/x') && /aprobar/.test(p.render), 'opciones + enlace web al final');
+    assert(/`render` TAL CUAL/.test(p.next) && /phase/.test(p.next), 'la instrucción manda imprimir render e incluir phase en la decisión');
     // 2) SIN FIN → retorna "working" dentro del presupuesto (no 30 min): el bucle lo lleva el agente,
  // y CON PROGRESO narrable (caja negra de OpenCode el chat no tenía nada que contar)
     state = {

@@ -43,7 +43,7 @@ export function aiactData(changeDir) {
     verdict: tl.verdict || null,
     generatedAt: new Date().toISOString(),
     spec: specPath ? { path: specPath.replace(/\\/g, '/').split('/').slice(-3).join('/'), sha256: sha(specPath) } : null,
-    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null, fallback: p.fallback || null })),
+    models: phases.filter((p) => p.role || p.model).map((p) => ({ phase: p.phase, role: p.role || null, model: p.model || p.modelReported || null, provider: p.provider || null, tokens: p.tokens || null, fallback: p.fallback || null })),
     approvals: tl.approvals ?? [],
     aiGeneratedFiles: aiFiles,
     verification: {
@@ -61,7 +61,7 @@ export function aiactData(changeDir) {
 export function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
-  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td style="color:var(--tx2)">${E(m.role || '—')}</td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
   const apps = d.approvals.length
     ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
@@ -80,22 +80,22 @@ export function renderAiact(changeDir) {
 </style>
 ${THEME_TOGGLE}
 <script>(function(){var r=document.documentElement,k='conductorTheme';document.getElementById('thm').addEventListener('click',function(){var n=r.dataset.theme==='dark'?'light':'dark';r.dataset.theme=n;try{localStorage.setItem(k,n);}catch(e){}});})()</script>
-<div class=head><span class=logo>C</span><h1>Informe de transparencia de IA</h1><span class="pill ${vc}">${E(d.verdict || '—')}</span></div>
-<p class=sub>Qué generó la IA, con qué modelos, quién lo aprobó y qué verificación pasó — evidencia técnica alineada con el EU AI Act (transparencia de contenido IA, en vigor el 2-ago-2026).</p>
+<div class=head><span class=logo>C</span><h1>Informe de transparencia de IA</h1><span style="color:var(--tx3);font-size:.7rem;letter-spacing:.05em;text-transform:uppercase">veredicto del run (SDD)</span><span class="pill ${vc}">${E(d.verdict || '—')}</span></div>
+<p class=sub>El acta de «quién hizo qué» de este cambio: modelos y papel por fase, aprobaciones humanas, inventario de ficheros de la IA, verificación y sello. Anexo: mapeo al EU AI Act (transparencia de contenido IA). La guía completa, en /help del panel.</p>
 <div class=box><dl class=kv>
 <dt>Cambio</dt><dd><b>${E(d.change)}</b></dd>
 <dt>Petición</dt><dd>${E(d.request)}</dd>
 <dt>Generado</dt><dd>${E(d.generatedAt)} · por <b>conductor</b></dd>
 ${d.spec ? `<dt>Especificación</dt><dd><code>${E(d.spec.path)}</code><br><small style="color:var(--tx3)">sha256 ${E((d.spec.sha256 || '').slice(0, 16))}…</small></dd>` : ''}
 </dl></div>
-<h2 class=sect>1 · Modelos de IA empleados <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— qué modelo generó cada fase (base de la trazabilidad)</span></h2>
-${models ? `<table><tr><th>fase</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin fases de agente registradas todavía (el informe se completa según avanza el run)</p>'}
-<h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— cada pausa aprobada por una persona (control humano exigido)</span></h2><ul>${apps}</ul>
-<h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— inventario exacto, marcados con @conductor REQ-&lt;id&gt;</span></h2><ul>${files}</ul>
+<h2 class=sect>1 · Modelos de IA empleados <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la UE pide poder decir qué IA intervino: modelo, papel y consumo por fase</span></h2>
+${models ? `<table><tr><th>fase</th><th>papel</th><th>modelo</th><th>proveedor</th><th>tokens</th></tr>${models}</table>` : '<p style="color:var(--tx3)">sin fases de agente registradas todavía (el informe se completa según avanza el run)</p>'}
+<h2 class=sect>2 · Supervisión humana <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la UE pide control humano: cada pausa la aprobó una persona, y consta qué aprobó</span></h2><ul>${apps}</ul>
+<h2 class=sect>3 · Archivos generados por IA <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la UE pide poder identificar el contenido hecho por IA: inventario exacto, marcado en el propio código</span></h2><ul>${files}</ul>
 <h2 class=sect>4 · Verificación <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— gate determinista, sin LLM</span></h2>
 <div class=box>${E(d.verification.gate)}${Array.isArray(d.verification.lenses) && d.verification.lenses.length ? `<br><small style="color:var(--tx2)">Review multi-lente: ${d.verification.lenses.map((l) => `<code>${E(l)}</code>`).join(' ')}</small>` : ''}<br><small style="color:var(--tx3)">Los tests/build del proyecto se ejecutan en el CI del repositorio.</small></div>
-<h2 class=sect>5 · Procedencia firmada y registro <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— integridad criptográfica verificable</span></h2>
-<div class=box>${d.provenance ? `Sello <b>${E(d.provenance.algo || 'SHA-256 (integridad, sin firma)')}</b>${d.provenance.sealedAt ? ` · ${E(d.provenance.sealedAt)}` : ''} — verificable con <code>conductor verify</code>.${/ed25519/i.test(d.provenance.algo || '') ? '' : ' <small style="color:var(--tx3)">Para firma criptográfica real configura <code>CONDUCTOR_PRIV_KEY</code> (Ed25519).</small>'}` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar GREEN).</span>'}${d.marking.logging ? `<br>Registro encadenado: <b>${E(d.marking.logging)}</b> — <code>conductor ledger verify</code>.` : ''}</div>
+<h2 class=sect>5 · Sello e historial <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--tx3)">— la evidencia no se puede alterar sin que se note</span></h2>
+<div class=box>${d.provenance ? `Este informe y su evidencia quedan <b>sellados</b>: si alguien los modificara después, el sello dejaría de cuadrar — <code>conductor verify</code> lo comprueba en segundos.${d.provenance.sealedAt ? ` <small style="color:var(--tx3)">Sellado el ${E(d.provenance.sealedAt)}.</small>` : ''}` : '<span style="color:var(--warn)">Sin sello todavía (se genera al cerrar el run en GREEN).</span>'}${d.marking.logging ? `<br>Cada run verificado se anota además en el <b>historial encadenado</b> del proyecto — como una cadena de recibos: alterar uno rompe todos los siguientes; <code>conductor ledger verify</code> lo comprueba.` : ''}<br><small style="color:var(--tx3)">Detalle técnico: ${d.provenance && /ed25519/i.test(d.provenance.algo || '') ? `firma ${E(d.provenance.algo)}` : `sello ${E(d.provenance?.algo || 'SHA-256')}; con una clave privada configurada (CONDUCTOR_PRIV_KEY) pasa a firma Ed25519`}.</small></div>
 <footer>Evidencia técnica generada por conductor como subproducto del pipeline. El mapeo a las obligaciones del EU AI Act se basa en el <b>draft</b> Code of Practice (en finalización) y <b>no constituye asesoramiento legal</b>.</footer>
 </html>`;
 }

@@ -60,28 +60,48 @@ function walk(dir, acc = []) {
 }
 function scanSrc(root) {
   const files = [];
-  if (isUnsafeRoot(resolve(root))) return files; // nunca escanear la raíz del FS / de una unidad
+  // tests SIN etiqueta @conductor: se recogen aparte para la COBERTURA POR REFERENCIA (un coder escribe
+  // el test perfecto y olvida la etiqueta — eso no puede ser un falso «sin test»). Cabecera acotada.
+  const testsSinTag = [];
+  if (isUnsafeRoot(resolve(root))) return { files, testsSinTag }; // nunca escanear la raíz del FS / de una unidad
   for (const f of walk(root)) {
     const txt = readHead(f); // solo la cabecera (el tag @conductor va arriba) → coste acotado aunque el fichero sea grande
     if (!txt) continue;
     const ids = [...txt.matchAll(/@conductor\s+(REQ-[A-Z0-9-]+)/gi)].map((x) => x[1].toUpperCase());
     if (ids.length) files.push({ path: relative(root, f).replace(/\\/g, '/'), reqIds: [...new Set(ids)], test: isTestFile(f) });
+    // jamás documentos ni artefactos del pipeline: un spec.md contiene el id del requisito por definición
+    // (isTestFile pica con el stem "spec") y daría cobertura FALSA — solo código de test cuenta por referencia
+    else if (isTestFile(f) && !/\.(md|txt|rst|adoc|json|ya?ml)$/i.test(f) && !/(^|[\\/])(openspec|\.conductor)([\\/]|$)/.test(relative(root, f)) && testsSinTag.length < 800) testsSinTag.push({ path: relative(root, f).replace(/\\/g, '/'), head: txt.slice(0, 16384) });
   }
-  return files;
+  return { files, testsSinTag };
 }
+
+// stems demasiado genéricos para servir de referencia (un test que dice «index» no prueba nada concreto)
+const STEM_GENERIC = new Set(['index', 'main', 'app', 'test', 'spec', 'setup', 'utils', 'util', 'types', 'const']);
+const stemOf = (p) => (String(p).replace(/\\/g, '/').split('/').pop() || '').replace(/\.[^.]+$/, '').replace(/\.(spec|test)$/i, '');
 
 export function buildTrace(changeDir, srcDir) {
   const specRaw = readSpec(changeDir) || '';
   const tasksRaw = existsSync(join(changeDir, 'tasks.md')) ? readFileSync(join(changeDir, 'tasks.md'), 'utf8') : '';
   const reqs = parseSpecIds(specRaw);
   const tasks = parseTasks(tasksRaw).map((t) => ({ ...t, reqIds: [...(t.desc.matchAll(/\[(REQ-[A-Z0-9-]+)\]/gi))].map((x) => x[1].toUpperCase()) }));
-  const files = srcDir && existsSync(srcDir) ? scanSrc(srcDir) : [];
+  const scan = srcDir && existsSync(srcDir) ? scanSrc(srcDir) : { files: [], testsSinTag: [] };
+  const files = scan.files;
+
+  // COBERTURA POR REFERENCIA: si un requisito tiene código etiquetado pero ningún test CON etiqueta, un test
+  // sin etiqueta que menciona su id o el nombre de su fichero de código (import/ruta) CUENTA como cobertura.
+  // La etiqueta pasa de muro a sugerencia (finding info) — el falso «sin test» suspendía runs buenos.
+  const refTestFor = (r, code) => scan.testsSinTag.find((t) => {
+    if (t.head.includes(r.id)) return true;
+    return code.some((c) => { const s = stemOf(c.path); return s.length >= 4 && !STEM_GENERIC.has(s.toLowerCase()) && t.head.includes(s); });
+  }) || null;
 
   const matrix = reqs.map((r) => {
     const rTasks = tasks.filter((t) => t.reqIds.includes(r.id));
     const code = files.filter((f) => f.reqIds.includes(r.id) && !f.test);
     const tests = files.filter((f) => f.reqIds.includes(r.id) && f.test);
-    return { id: r.id, name: r.name, scenarios: r.scenarios, tasks: rTasks, code, tests, cov: { task: rTasks.length > 0, code: code.length > 0, test: tests.length > 0 } };
+    const ref = (!tests.length && code.length) ? refTestFor(r, code) : null;
+    return { id: r.id, name: r.name, scenarios: r.scenarios, tasks: rTasks, code, tests, testRef: ref ? ref.path : null, cov: { task: rTasks.length > 0, code: code.length > 0, test: tests.length > 0 || !!ref } };
   });
   const orphanTasks = tasks.filter((t) => !t.reqIds.length);
   // cobertura real = código + test. La "task" es informativa (no existe en complejidad simple).
@@ -92,9 +112,12 @@ export function buildTrace(changeDir, srcDir) {
     // Dos reglas SEPARADAS (incidente real: el coder agotó el timeout dejando código sin su
     // test y el run cerró GREEN):
     //  · trace.coverage-gap — falta CÓDIGO (o todo): señal (warning); solo strictTrace la eleva.
-    //  · trace.test-gap    — hay código pero NINGÚN test lo cubre: la mitad peligrosa; el llamador
-    //    (runGate) la eleva a error POR DEFECTO (strictTests, opt-out) — "hecho sin test" no es hecho.
+    //  · trace.test-gap    — hay código y NINGÚN test lo cubre (ni etiquetado ni por referencia): warning
+    //    visible; los presets estrictos (strictTests) la elevan a error — GREEN alcanzable por defecto.
+    //  · trace.test-untagged (info) — hay test POR REFERENCIA sin etiqueta: cuenta como cobertura y solo
+    //    sugiere la etiqueta. La etiqueta es el mecanismo de trazabilidad, no un muro burocrático.
     // La "task" sigue siendo informativa (no existe en complejidad simple).
+    if (m.testRef) F.push({ rule: 'trace.test-untagged', severity: 'info', message: `${m.id}: cubierto por ${m.testRef} (por referencia) — añade "@conductor ${m.id}" a ese test para trazabilidad exacta`, file: m.testRef });
     if (m.cov.code && !m.cov.test) F.push({ rule: 'trace.test-gap', severity: 'warning', message: `${m.id} tiene código pero NINGÚN test lo cubre (marca @conductor ${m.id} en su test)`, file: 'spec.md' });
     else {
       const missing = [!m.cov.code && 'code', !m.cov.test && 'test'].filter(Boolean);

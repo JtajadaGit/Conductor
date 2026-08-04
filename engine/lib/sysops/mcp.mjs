@@ -130,10 +130,52 @@ export function runProgress(st) {
     hecho: total ? `${done.length}/${total} fases` : `${done.length} fases`,
     ...(tok.in + tok.out > 0 ? { tokens: `↓${kTok(tok.in)} ↑${kTok(tok.out)}` } : {}),
     ...(modelos.length ? { modelos } : {}),
+    // pausas YA RESUELTAS y por qué vía — el chat re-enganchado narra lo decidido mientras no miraba
+    ...(Array.isArray(st.approvals) && st.approvals.length ? { decisiones: st.approvals.map((a) => `${a.phase} ✓ ${String(a.via || '').includes('web') ? 'web' : 'chat'}`).join(' · ') } : {}),
     ...(Array.isArray(st.logTail) && st.logTail.length ? { registro: st.logTail.slice(-2) } : {}),
   };
 }
-export async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
+
+// PRESENTACIÓN DETERMINISTA DE LA PAUSA — lo que el chat imprime TAL CUAL. Pegar los artefactos en bruto
+// era un muro ilegible (la spec entera con GIVEN/WHEN/THEN) y cada agente lo «arreglaba» a su manera.
+// Aquí decide el motor qué se ve: fase, progreso, decisiones previas, hallazgos topados y la spec en
+// TITULARES (Requirement + SHALL + nº de escenarios). La spec completa queda en la web y en `artifacts`
+// (contexto del agente, no para pegar). Exportada para testearla determinista.
+export function renderPause(changeDir, pending, st, web) {
+  const L = [];
+  const ph = pending?.before || '?';
+  L.push(`⏸ PAUSA antes de «${ph}» — tu decisión continúa el run`);
+  const pr = runProgress(st);
+  if (pr) L.push(`${pr.hecho}${pr.tokens ? ` · ${pr.tokens}` : ''}`);
+  const aps = Array.isArray(st?.approvals) ? st.approvals : [];
+  if (aps.length) L.push(`Decidido antes: ` + aps.map((a) => `${a.phase} ✓ (${String(a.via || '').includes('web') ? 'web' : 'chat'})`).join(' · '));
+  const F = Array.isArray(pending?.findings) ? pending.findings : [];
+  if (F.length) {
+    L.push('', `Hallazgos del gate (${F.length}):`);
+    for (const f of F.slice(0, 8)) L.push(`- [${f.severity || '?'}] ${String(f.message || '').slice(0, 240)}`);
+    if (F.length > 8) L.push(`- …y ${F.length - 8} más (completos en la web)`);
+  }
+  let specTxt = null;
+  try { for (const d of readdirSync(join(changeDir, 'specs'))) { specTxt = readFileSync(join(changeDir, 'specs', d, 'spec.md'), 'utf8'); break; } } catch {}
+  if (specTxt) {
+    const reqs = []; let cur = null;
+    for (const ln of specTxt.split(/\r?\n/)) {
+      const r = ln.match(/^###\s+Requirement:\s*(.+)$/i);
+      if (r) { cur = { name: r[1].trim(), shall: null, scn: 0 }; reqs.push(cur); continue; }
+      if (cur && !cur.shall && /\bSHALL\b/.test(ln)) cur.shall = ln.trim();
+      if (cur && /^####\s+Scenario:/i.test(ln)) cur.scn++;
+    }
+    if (reqs.length) {
+      L.push('', `Spec — ${reqs.length} requisito(s) (completa en la web):`);
+      for (const q of reqs.slice(0, 12)) L.push(`- ${q.name}${q.shall ? ` — ${q.shall.slice(0, 160)}` : ''}${q.scn ? ` · ${q.scn} escenario(s)` : ''}`);
+      if (reqs.length > 12) L.push(`- …y ${reqs.length - 12} más`);
+    }
+  }
+  L.push('', `Responde: «aprobar» · «nota: <instrucción>» · «modelo: litellm:<m> | copilot:<m>» · «parar»${web ? ` — o decide en la web: ${web}` : ''}`);
+  L.push('(si decides en la web, escríbeme cualquier cosa aquí y me reengancho al run)');
+  return L.join('\n');
+}
+export async function pollRun(url, apiBase, changeDir, { timeoutMs, web } = {}) {
   const budget = Number(timeoutMs) || Number(process.env.CONDUCTOR_MCP_WAIT_MS) || 50000;
   const t0 = Date.now();
   let last = null; // último /state bueno → el retorno "working" lleva progreso real, no una caja negra
@@ -146,8 +188,9 @@ export async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
         return {
           status: 'paused', phase: st.pending.before || '?', findings: st.pending.findings || undefined,
           progress: runProgress(st) || undefined,
+          render: renderPause(changeDir, st.pending, st, web),
           artifacts: pauseBundle(changeDir, st.pending),
-          next: 'PAUSA de revisión: presenta los artefactos al usuario TAL CUAL y espera su decisión. Dile que también puede decidir desde la web (enlace `web`) — si lo hace, cualquier mensaje suyo aquí te re-engancha con conductor_continue {action:"wait"}. Con su decisión: sin note = aprobar; note = instrucción; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
+          next: 'Imprime `render` TAL CUAL (presentación determinista: no la resumas, no la amplíes, no pegues los `artifacts` — esos son para TU contexto si el usuario pregunta). Espera su decisión y llama conductor_continue incluyendo phase (el campo `phase` de ESTA pausa): sin note = aprobar; note = instrucción; model = cambio en caliente (litellm:<m> | copilot:<m>); action:"stop" detiene.',
         };
       }
       const verdict = st.verdict || st.timeline?.verdict || null;
@@ -164,7 +207,7 @@ export async function pollRun(url, apiBase, changeDir, { timeoutMs } = {}) {
   // el contrato completo vive en la description de la tool — aquí solo el dato y un imperativo corto.
   return {
     status: 'working', progress: runProgress(last) || undefined,
-    next: 'Narra el avance en 1 línea si cambió; luego conductor_continue {action:"wait"}.',
+    next: 'Narra en 1 línea avance y `decisiones` nuevas (las resueltas por web); luego conductor_continue {action:"wait"}.',
   };
 }
 
@@ -291,11 +334,12 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       // ARRANQUE RÁPIDO: la PRIMERA respuesta vuelve en
       // ~3s (una lectura de estado) con el enlace y la fase inicial — el spinner del host no se come 50s.
       // El ritmo largo lo llevan los conductor_continue {action:"wait"} posteriores.
-      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000 });
-      return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + lj.url };
+      const webF = app.url.replace(/\/$/, '') + lj.url;
+      const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000, web: webF });
+      return { ...res, changeName: name, web: webF };
     } },
-  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ show artifacts, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
-    run: async ({ projectRoot, changeName, note, model, action }) => {
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
+    run: async ({ projectRoot, changeName, note, model, phase, action }) => {
       const root = resolve(projectRoot || process.cwd());
       const name = slug(changeName);
       const app = await appUp(root);
@@ -303,16 +347,25 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       // ruta 2-seg si el proyecto está en el registro (multi-proyecto); si no, forma 1-seg (default)
       let pid = null; try { pid = (app.ping?.projects || []).find((p) => resolve(p.root) === root)?.id || null; } catch {}
       const base = 'api/run/' + (pid ? pid + '/' : '') + name;
+      const webC = app.url.replace(/\/$/, '') + '/run/' + (pid ? pid + '/' : '') + name;
+      let stale = null; // decisión que llegó TARDE a una pausa ya resuelta (p.ej. desde la web)
       if (action === 'stop') { try { await fetch(app.url + base + '/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); } catch {} }
       else if (action !== 'wait') {
-        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}) };
-        try { await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }); } catch {}
-        // (un 409 aquí = ya no había pausa — p.ej. terminó mientras el usuario respondía; el poll de abajo lo cuenta)
+        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
+        try {
+          const r = await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+          if (r.status === 409) { const j = await r.json().catch(() => ({})); if (j.stalePause) stale = j; }
+          // (un 409 sin stalePause = ya no había pausa — p.ej. terminó mientras el usuario respondía; el poll de abajo lo cuenta)
+        } catch {}
       }
       // tras una DECISIÓN (aprobar/nota/stop) el usuario quiere confirmación YA (~8s: el run arranca la fase
       // y se ve el estado); el wait puro sí agota el presupuesto largo — es el que marca el ritmo del bucle.
-      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name), action === 'wait' ? {} : { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 8000 });
-      return { ...res, changeName: name, web: app.url.replace(/\/$/, '') + '/run/' + (pid ? pid + '/' : '') + name };
+      const res = await pollRun(app.url, base, join(root, 'openspec', 'changes', name), action === 'wait' ? { web: webC } : { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 8000, web: webC });
+      return {
+        ...res,
+        ...(stale ? { aviso: `tu decisión respondía a la pausa «${phase}», pero esa ya estaba resuelta (p.ej. desde la web) — el run NO se ha tocado; arriba va el estado ACTUAL: preséntalo (di al usuario qué se decidió sin él mirar) y sigue desde ahí` } : {}),
+        changeName: name, web: webC,
+      };
     } },
 };
 

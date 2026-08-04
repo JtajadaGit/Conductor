@@ -29,7 +29,7 @@ const specFor = (slug) => [
 // `.captured` (array {phase, prompt}) para asertar QUÉ recibió el modelo (p.ej. la nota humana).
 //   strong      — artefactos completos y trazados → GREEN
 //   weak        — sin tag @conductor → hueco de trazabilidad (preset estricto lo tumba)
-//   no-test     — código SIN su test → trace.test-gap (strictTests default ON) lo bloquea
+//   no-test     — código SIN su test → trace.test-gap (los presets estrictos lo bloquean; default = aviso)
 //   secret      — el código incluye una key hardcodeada → secretScan tumba el GREEN
 //   hollow      — test sin aserciones → hollow-tests gate (con cfg.hollowTests) lo tumba
 //   sql         — además escribe una migración SQL segura (para dataGate del preset migration)

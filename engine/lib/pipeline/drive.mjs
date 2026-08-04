@@ -1006,8 +1006,9 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     const base = (Array.isArray(effPipeline) && effPipeline.length) ? effPipeline : resolvePhases(complexity, null);
     effPipeline = base.includes('test') ? base : [...base, 'test'];
   }
- // tests: DEFAULT ON (código sin test = error; cura del incidente — opt-out cfg.strictTests:false o preset laxo
-  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, tests: cfg.strictTests ?? preset?.strict?.tests ?? true, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
+ // tests: OPT-IN (código sin test = warning visible por defecto; los presets feature/migración o
+  // cfg.strictTests:true lo elevan a error) — GREEN alcanzable por defecto, dureza donde se ha ELEGIDO
+  const strictGate = { trace: cfg.strictTrace ?? preset?.strict?.trace ?? false, tests: cfg.strictTests ?? preset?.strict?.tests ?? false, id: cfg.strictId ?? preset?.strict?.id ?? false, clarify: cfg.strictClarify ?? preset?.strict?.clarify ?? false, semanticDelta: (cfg.semanticDelta ?? preset?.strict?.semanticDelta ?? (preset?.name === 'migration')) === true };
   const specFreezeOn = (cfg.specFreeze ?? preset?.specFreeze ?? false) === true;
   if (preset) log(`🎚 preset "${preset.name}" (${preset.label}) — strictTrace=${strictGate.trace} strictId=${strictGate.id} specFreeze=${specFreezeOn}`);
   // RunState robusto (auditoría P2-9): persistimos los modelos del LANZAMIENTO (env CONDUCTOR_MODEL_* o

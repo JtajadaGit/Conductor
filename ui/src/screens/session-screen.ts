@@ -103,6 +103,7 @@ export class SessionScreen extends CElement {
           ${s.reconstructed ? html`<span class="zero-tok" title="Reconstruida desde la telemetría OTel del run (los modelos LiteLLM no emiten la traza nativa del CLI)">Reconstruida desde telemetría</span>` : nothing}
         </div>
         ${s.models.length ? html`<p class="se-models" style="margin:0"><span class="se-mlbl">Modelos usados</span>${[...s.models.reduce((acc, m) => acc.set(m, (acc.get(m) ?? 0) + 1), new Map<string, number>())].map(([m, n]) => html`<code class="ctx-chip">${m}${n > 1 ? ` ×${n}` : ''}</code>`)}</p>` : nothing}
+        <p class="se-models" style="margin:0"><span class="se-mlbl">Papeles</span><span class="muted" style="font-size:.78rem">planner planifica (no toca código) · coder edita src/ (apply/fix) · reviewer verifica con lentes (sin escritura) — orquesta el driver determinista, no un LLM</span></p>
       </header>
       <div class="se-filters">
         <button class="chip ${this.cats.size === 0 ? 'on' : ''}" @click=${() => { this.cats = new Set(); void this.load(); }}>Todo · ${s.total}</button>

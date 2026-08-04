@@ -247,14 +247,14 @@ export class RunScreen extends CElement {
         ${s.done && verdictClass(s.verdict) === 'GREEN' && !this.archivedMsg ? html`<button class="btn sm arch" ?disabled=${this.busy === 'archive'} @click=${() => void this.archiveRun()}>${this.busy === 'archive' ? 'Archivando…' : html`${icon('archive')} Archivar`}</button>` : nothing}
         ${s.done && verdictClass(s.verdict) === 'GREEN' ? html`<button class="btn sm sec" ?disabled=${this.busy === 'receipt'} aria-live="polite" @click=${() => void this.copyReceipt()}>${this.copiedReceipt ? 'Copiado ✓' : this.busy === 'receipt' ? 'Copiando…' : html`${icon('copy')} Copiar descripción de PR`}</button>` : nothing}
         ${s.hasDashboard ? html`<a class="btn sm sec" href=${this.dashboardHref()} target="_blank" title="Informe del run para compartir: fases con modelo, tiempos, intentos y tokens reales vs estimados, el gate y el linaje requisito→código→test. Se archiva con el cambio como evidencia.">${icon('report')} Informe</a>` : nothing}
-        <a class="btn sm sec" href=${this.apiBase + 'aiact'} target="_blank" title="Expediente de transparencia (Reglamento europeo de IA): qué modelos intervinieron en qué fases, qué aprobó un humano y cómo se verificó. Para enseñar a compliance/auditoría.">${icon('shield')} AI Act</a>
+        <a class="btn sm sec" href=${this.apiBase + 'aiact'} target="_blank" title="El acta de «quién hizo qué» que pide el reglamento europeo de IA: ficheros escritos por la IA, modelo y papel de cada agente, aprobaciones humanas y sello. No es el sello de calidad (eso es GREEN, el veredicto SDD del run). Cuándo aplica y cuándo no: en Ayuda.">${icon('shield')} AI Act</a>
         ${!s.done ? html`<button class="btn sm stop" ?disabled=${s.stopRequested || this.stopping} @click=${() => void this.stopRun()}>${s.stopRequested || this.stopping ? 'Deteniendo…' : html`${icon('stop')} Detener`}</button>` : nothing}
       </div>
       <!-- FUERA de .actbar: dentro era un item flex más y partía la barra de botones en dos filas -->
       ${s.verdict === 'INTERRUMPIDO' ? html`<p class="alert warn" role="status"><span>Run <b>interrumpido</b>: el proceso murió sin cerrar (¿equipo suspendido?). Nada se ha perdido — <b>↻ Reanudar</b> continúa desde la última fase completada.</span></p>` : nothing}
       ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
-      ${s.done && s.reason && verdictClass(s.verdict) !== 'GREEN' ? html`<div class="whybox" role="alert"><svg class="why-ic" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.3v4.4M8 11.0v.05" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span><b>Por qué:</b> ${s.reason}</span></div>` : nothing}
+      ${s.done && s.verdict ? this.verdictBanner(s) : nothing}
       ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (antes de verify): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
       ${s.done ? (() => { const arts = this.reviewArtifacts(s); return arts.length ? html`<div class="decision-arts" style="margin:0 0 .9rem"><span class="ctx-lbl">Artefactos</span>${arts.map((a) => html`<button type="button" class="lnk" title="abrir ${a.path} (editable)" @click=${() => this.viewArtifact(a.path)}>${icon('doc')} ${a.label}</button>`)}<button type="button" class="lnk" title="abrir verify-report.md" @click=${() => this.viewArtifact('verify-report.md')}>${icon('doc')} verify-report.md</button>${this.specDomain(s) ? html`<button type="button" class="lnk" title="diff del delta contra la spec viva promovida" @click=${() => this.viewSpecDiff(this.specDomain(s)!)}>± vs spec viva</button>` : nothing}</div>` : nothing; })() : nothing}
       ${this.requestBox(s)}
@@ -266,6 +266,21 @@ export class RunScreen extends CElement {
       ${s.cost ? html`<model-breakdown .cost=${s.cost}></model-breakdown>` : nothing}
       ${this.logBox(s)}
     `;
+  }
+
+  /** Banner del veredicto: el resultado y su PORQUÉ arriba de la pantalla — nadie baja al registro para
+   *  saber si esto está bien. GREEN dice qué garantiza; NOT-GREEN/BLOCKED lista los huecos exactos y el
+   *  gesto siguiente. Es la respuesta a «la gente no entiende qué es green o qué no». */
+  private verdictBanner(s: RunState): TemplateResult {
+    const g = s.gate ?? null;
+    if (verdictClass(s.verdict) === 'GREEN') {
+      return html`<p class="alert ok" role="status"><span><b>GREEN</b> — verificado: la spec, el código y los tests son coherentes y la revisión pasó.
+        ${g?.warnings ? html` <b>${g.warnings} aviso(s)</b> sin bloqueo — el detalle, en el gate del Informe.` : nothing}
+        Listo para que revises el diff y hagas commit.</span></p>`;
+    }
+    return html`<div class="alert warn" role="alert"><span><b>${s.verdict}</b> — ${s.reason || 'terminó con huecos concretos sin resolver.'}
+      ${g?.top?.length ? html`<ul class="why-lst">${g.top.map((m) => html`<li>${m}</li>`)}${g.blocking > g.top.length ? html`<li>…y ${g.blocking - g.top.length} más (gate del Informe)</li>` : nothing}</ul>` : nothing}
+      <span class="muted">No se ha perdido nada: corrige lo de arriba (o pide otro intento con una nota) y <b>↻ Reanudar</b> continúa donde quedó.</span></span></div>`;
   }
 
   private requestBox(s: RunState): TemplateResult {
