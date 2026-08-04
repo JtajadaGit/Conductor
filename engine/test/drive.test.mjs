@@ -434,6 +434,31 @@ await test('drive(Path X): captura aunque el agente escriba con RETARDO (settle 
 
 rmSync(TMP, { recursive: true, force: true });
 
+await test('drive(anti-dup): el bloque «detectado» de project.md JAMÁS viaja al prompt — la detección va VIVA a todas las fases', async () => {
+  fresh();
+  mkdirSync(join(TMP, 'openspec'), { recursive: true });
+  writeFileSync(join(TMP, 'package.json'), '{"name":"demo","scripts":{"test":"node t"}}');
+  writeFileSync(join(TMP, 'openspec', 'project.md'), [
+    '# demo — contexto', '',
+    '## Stack y comandos (detectado)',
+    '<!-- conductor:detected (no lo edites: cada `conductor init` lo refresca) -->',
+    '- stack: fortran 77 (FOTO VIEJA DEL INIT)',
+    '<!-- /conductor:detected -->', '',
+    '## Propósito', 'App de contadores para la demo.', '',
+    '## Convenciones', '- Convención humana real.',
+  ].join('\n'));
+  const seen = [];
+  const r = await drive({
+    changeDir: join(TMP, 'openspec', 'changes', 'dup'), request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP,
+    runAgent: (a) => { seen.push({ phase: a.phase, prompt: a.prompt }); return goodAgent(a); },
+  });
+  eq(r.verdict, 'GREEN');
+  const plan = seen.find((s2) => s2.phase === 'propose' || s2.phase === 'spec');
+  assert(plan.prompt.includes('App de contadores') && plan.prompt.includes('Convención humana real'), 'lo HUMANO de project.md sí viaja a la planificación');
+  assert(!plan.prompt.includes('conductor:detected') && !plan.prompt.includes('FOTO VIEJA'), 'la foto del init jamás viaja — cada dato, UNA casa');
+  for (const s2 of seen) assert(s2.prompt.includes('PROJECT STACK (detected'), `la detección VIVA va en TODAS las fases (faltó en ${s2.phase})`);
+});
+
 await test('drive(v3-P1): nota del humano y MODELO EN CALIENTE — solo para la fase aprobada', async () => {
   fresh();
   const changeDir = join(TMP, 'openspec', 'changes', 'p1');

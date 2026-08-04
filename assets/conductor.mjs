@@ -4362,7 +4362,7 @@ __M['scaffold'] = (function(){
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 
 
-const { detectStackDeep } = __M['stack'];
+const { detectStackDeep, renderStackDeep } = __M['stack'];
 const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'conductor — configuración de usuario',
@@ -4590,12 +4590,24 @@ function initConfig(openspecDir) {
   //  jamás. Ahora es independiente e idempotente.)
   const pmPath = join(openspecDir, 'project.md');
   let projectMdCreated = false;
+  // BLOQUE DETECTADO dentro de project.md (la riqueza de la detección aterriza EN el fichero, no solo en
+  // el terminal) — entre marcadores para que cada `conductor init` lo REFRESQUE sin tocar lo humano.
+  // Así no se pudre (la lección del espejo config.yaml): el bloque es regenerable, el resto es tuyo.
+  const detBlock = (d) => {
+    const L = renderStackDeep(d);
+    return ['<!-- conductor:detected (no lo edites: cada `conductor init` lo refresca) -->',
+      ...(L.length ? L.map((l) => `- ${l}`) : ['- (nada detectable todavía — repo sin manifiestos de stack)']),
+      '<!-- /conductor:detected -->'].join('\n');
+  };
   if (!existsSync(pmPath)) {
     writeFileSync(pmPath, [
       `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
       '',
       '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
-      '> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.',
+      '> El bloque «detectado» se refresca solo en cada `conductor init`; el resto es tuyo.',
+      '',
+      '## Stack y comandos (detectado)',
+      detBlock(deep),
       '',
       '## Propósito',
       '_Sustituye este ejemplo:_ App interna de reservas de salas para los equipos de la oficina; la usan',
@@ -4619,6 +4631,18 @@ function initConfig(openspecDir) {
       '',
     ].join('\n') + '\n');
     projectMdCreated = true;
+  } else {
+    // project.md EXISTENTE: refrescar el bloque detectado si tiene marcadores; si es nuestra plantilla
+    // sin editar (_Sustituye) y aún no lo lleva, se le AÑADE (mismo consentimiento que --smart). Un
+    // project.md humano sin marcadores jamás se toca.
+    try {
+      let txt = readFileSync(pmPath, 'utf8');
+      // la nota antigua de cabecera contradice al bloque — en plantillas se actualiza junto a él
+      if (txt.includes('_Sustituye')) txt = txt.replace('> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.', '> El bloque «detectado» se refresca solo en cada `conductor init`; el resto es tuyo.');
+      const RE = /<!-- conductor:detected[\s\S]*?<!-- \/conductor:detected -->/;
+      if (RE.test(txt)) writeFileSync(pmPath, txt.replace(RE, detBlock(deep)));
+      else if (txt.includes('_Sustituye') && txt.includes('## Propósito')) writeFileSync(pmPath, txt.replace('## Propósito', `## Stack y comandos (detectado)\n${detBlock(deep)}\n\n## Propósito`));
+    } catch {}
   }
   // .copilotignore al root del proyecto (token-first determinista) + .gitignore (la fontanería fuera del repo)
   const ignorePath = join(root, '.copilotignore');
@@ -4983,7 +5007,7 @@ const { budgetContextFiles, summarizeArtifact, estimateRun } = __M['estimate'];
 const { minifyText, minifySaved } = __M['minify'];
 const { renderDashboard } = __M['dashboard'];
 const { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } = __M['secret'];
-const { plumbPath } = __M['plumb'];
+const { plumbPath, runPhases } = __M['plumb'];
 const { validate } = __M['jsonschema'];
 const { CONFIG_SCHEMA } = __M['scaffold'];
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
@@ -6038,6 +6062,18 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
     } catch (e) { step = null; log(`⚠ no pude leer/avanzar el estado previo (${stateF}): ${e.message} — empiezo de cero`); }
   }
   if (!step) step = start({ changeDir, request, complexity, domain, pipeline: effPipeline });
+  // BANNER del run (la voz de terminal que se perdió): el run se presenta ENTERO antes de arrancar —
+  // pipeline, complejidad, fases programadas y las saltadas. La miniweb ya lo enseña; el CLI no es menos.
+  {
+    const planned = runPhases(changeDir) || [];
+    if (planned.length) {
+      log(`🚀 Pipeline: ${String(changeDir).replace(/\\/g, '/').split('/').pop()}`);
+      log(`📋 Complejidad: ${complexity} · Fases: ${planned.join(' → ')}`);
+      const ALL = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'];
+      const skipped = ALL.filter((p) => !planned.includes(p));
+      if (skipped.length) log(`⊘ no programadas en este run: ${skipped.join(', ')}`);
+    }
+  }
   const trail = [];
   if (preserveTimeline(changeDir)) log('🗃 timeline del run anterior preservado en timeline-prev.json (relanzamiento sobre un run terminado)');
   const timeline = []; // observabilidad por fase (rol, modelo, ficheros, duración) — telemetría
@@ -6236,7 +6272,11 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       try {
         const pmF = join(projectRoot, 'openspec', 'project.md');
         if (existsSync(pmF)) {
-          const txt = readFileSync(pmF, 'utf8').slice(0, 1800).trim();
+          // ANTI-DUPLICIDAD: el bloque «detectado» de project.md es para HUMANOS (foto del init) — al
+          // prompt jamás viaja: el run inyecta la detección VIVA (renderStackHint), siempre más fresca.
+          // Cada dato, UNA casa: lo derivable se deriva; el fichero conserva lo que sabe una persona.
+          const raw = readFileSync(pmF, 'utf8').replace(/## Stack y comandos \(detectado\)\s*\n<!-- conductor:detected[\s\S]*?<!-- \/conductor:detected -->\n?/, '');
+          const txt = raw.slice(0, 1800).trim();
           // "sin rellenar" SEMÁNTICO, no por longitud: la plantilla nueva trae ejemplos guiados marcados
           // con «_Sustituye» — si el marcador sigue ahí, el dev no la tocó y sería contexto FALSO inyectado.
           // (Se conserva el detector de la plantilla vieja para repos ya inicializados.)
@@ -6264,7 +6304,9 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       const blk = renderSkillsBlock(matched);
       if (blk) { prompt += blk; if (!skillsLogged) { skillsLogged = true; log(`📐 patrones de equipo inyectados (${matched.length}): ${matched.map((s) => s.name).join(', ')}`); } }
     }
-    if (isCode) { const sh = renderStackHint(stack); if (sh) prompt += sh; }
+    // la detección VIVA viaja a TODAS las fases (antes solo coder): el planner decidía sin saber el
+    // stack salvo que alguien lo escribiera a mano — justo la duplicidad que no queremos. Una línea.
+    { const sh = renderStackHint(stack); if (sh) prompt += sh; }
     let model = hotModel || modelForPhase(phase, role, process.env, cfg.models || {});
     let tierUsed = null;
     // routing por tier de coste (economy/balanced/premium) si no hay modelo explícito y hay tiers configurados
@@ -6634,7 +6676,12 @@ ${body || raw}` };
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
     writeTimeline('running'); // incremental: la mini-web en vivo (serve) lee esto tras cada fase
     if (!ok) { const why = `la fase "${phase}" no produjo su artefacto tras ${maxRetries + 1} intentos — la secuencia no se salta; revisa el modelo elegido o el registro del run`; log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED', why); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, reason: why, trail, timeline }; }
-    log(`✅ ${phase}`);
+    // cierre de fase con la chicha a la vista (duración · tokens · modelo) — la voz V1 del terminal
+    {
+      const fin = timeline[timeline.length - 1];
+      const tokTxt = fin?.tokens ? ` · ↓${fin.tokens.in} ↑${fin.tokens.out}` : '';
+      log(`✅ ${phase} · ${((fin?.ms || 0) / 1000).toFixed(1)}s${tokTxt}${fin?.model ? ` · ${fin.model}` : ''}`);
+    }
     trail.push(phase);
 
     // SPEC-FREEZE (R-S3, opt-in cfg.specFreeze): al completar la fase spec, congela el hash de la spec en un
@@ -9397,7 +9444,14 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       // El ritmo largo lo llevan los conductor_continue {action:"wait"} posteriores.
       const webF = app.url.replace(/\/$/, '') + lj.url;
       const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000, web: webF });
-      return { ...res, changeName: name, web: webF };
+      // BANNER de arranque (la voz V1 en el chat): pipeline + complejidad + fases del plan, listo para
+      // imprimir tal cual. Best-effort: si el driver aún no fijó su plan, se omite sin drama.
+      let banner = null;
+      try {
+        const st = await (await fetch(app.url + 'api' + lj.url + '/state', { signal: AbortSignal.timeout(3000) })).json();
+        if (Array.isArray(st.plan) && st.plan.length) banner = `🚀 Pipeline: ${name}\n📋 ${st.complexity || 'medium'} · Fases: ${st.plan.join(' → ')}`;
+      } catch {}
+      return { ...res, ...(banner ? { banner, next: 'Imprime `banner` TAL CUAL y sigue: ' + (res.next || '') } : {}), changeName: name, web: webF };
     } },
   conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
     run: async ({ projectRoot, changeName, note, model, phase, action }) => {
@@ -10850,4 +10904,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: f289fee7ff41b296e56e6a16605ee361ce8e406fe8ada0cb1d0a0cbeb5c910a9
+// build-inputs-sha256: a07789548f17fcf6a54b61c466e5779d46a66b41a733add0479a297362db5c6f

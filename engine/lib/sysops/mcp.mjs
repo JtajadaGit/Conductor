@@ -336,7 +336,14 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       // El ritmo largo lo llevan los conductor_continue {action:"wait"} posteriores.
       const webF = app.url.replace(/\/$/, '') + lj.url;
       const res = await pollRun(app.url, 'api' + lj.url, join(root, 'openspec', 'changes', name), { timeoutMs: Number(process.env.CONDUCTOR_MCP_FIRST_MS) || 3000, web: webF });
-      return { ...res, changeName: name, web: webF };
+      // BANNER de arranque (la voz V1 en el chat): pipeline + complejidad + fases del plan, listo para
+      // imprimir tal cual. Best-effort: si el driver aún no fijó su plan, se omite sin drama.
+      let banner = null;
+      try {
+        const st = await (await fetch(app.url + 'api' + lj.url + '/state', { signal: AbortSignal.timeout(3000) })).json();
+        if (Array.isArray(st.plan) && st.plan.length) banner = `🚀 Pipeline: ${name}\n📋 ${st.complexity || 'medium'} · Fases: ${st.plan.join(' → ')}`;
+      } catch {}
+      return { ...res, ...(banner ? { banner, next: 'Imprime `banner` TAL CUAL y sigue: ' + (res.next || '') } : {}), changeName: name, web: webF };
     } },
   conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
     run: async ({ projectRoot, changeName, note, model, phase, action }) => {

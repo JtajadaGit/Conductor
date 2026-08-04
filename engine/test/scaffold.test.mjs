@@ -114,6 +114,19 @@ await test('init profundo: detecta versiones/gestor/proyectos/comandos REALES y 
   const cfg = JSON.parse(readFileSync(r.cfgPath, 'utf8'));
   eq(cfg.checks, d.checks, 'checks sembrados en el config nuevo');
   assert(Array.isArray(r.deep?.checks), 'la detección viaja al caller (init la imprime)');
+  // el project.md NUEVO lleva el bloque detectado (la riqueza aterriza en el FICHERO, no solo en el terminal)
+  let pm = readFileSync(r.projectMd, 'utf8');
+  assert(pm.includes('## Stack y comandos (detectado)') && pm.includes('angular 20.0.5'), 'bloque detectado con versiones en project.md');
+  // y se REFRESCA en el siguiente init (el bloque no se pudre — la lección del espejo config.yaml)
+  writeFileSync(join(T, 'package.json'), JSON.stringify({ name: 'mi-lib', scripts: { test: 'jest' }, dependencies: { '@angular/core': '^21.0.0' } }));
+  initConfig(join(T, 'openspec'));
+  pm = readFileSync(r.projectMd, 'utf8');
+  assert(pm.includes('angular 21.0.0') && !pm.includes('angular 20.0.5'), 'el bloque se regenera con la detección actual');
+  eq((pm.match(/## Stack y comandos \(detectado\)/g) || []).length, 1, 'refresco = sustitución, jamás duplicado');
+  // un project.md HUMANO (sin _Sustituye ni marcadores) es intocable
+  writeFileSync(r.projectMd, '# mi proyecto\n\n## Propósito\nlo que yo diga\n');
+  initConfig(join(T, 'openspec'));
+  eq(readFileSync(r.projectMd, 'utf8'), '# mi proyecto\n\n## Propósito\nlo que yo diga\n', 'lo humano jamás se toca');
   // y un repo SIN nada detectable no inventa: config sin checks, como siempre
   const T2 = join(dirname(fileURLToPath(import.meta.url)), '.tmp-initdeep-vacio');
   rmSync(T2, { recursive: true, force: true }); mkdirSync(T2, { recursive: true });

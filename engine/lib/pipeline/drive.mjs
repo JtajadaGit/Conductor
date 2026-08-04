@@ -40,7 +40,7 @@ import { budgetContextFiles, summarizeArtifact, estimateRun } from '../core/esti
 import { minifyText, minifySaved } from '../core/minify.mjs';
 import { renderDashboard } from '../serving/dashboard.mjs';
 import { decryptSecret, sealByokFile, byokFile, isTemplateCreds, normalizeByokShape } from '../provenance/secret.mjs';
-import { plumbPath } from '../core/plumb.mjs';
+import { plumbPath, runPhases } from '../core/plumb.mjs';
 import { validate } from '../core/jsonschema.mjs';
 import { CONFIG_SCHEMA } from '../analysis/scaffold.mjs';
 let _byokSealedD = false; // sellado del byok.json en claro: una vez por proceso (hábito-de-fichero sin plaintext)
@@ -1095,6 +1095,18 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
     } catch (e) { step = null; log(`⚠ no pude leer/avanzar el estado previo (${stateF}): ${e.message} — empiezo de cero`); }
   }
   if (!step) step = start({ changeDir, request, complexity, domain, pipeline: effPipeline });
+  // BANNER del run (la voz de terminal que se perdió): el run se presenta ENTERO antes de arrancar —
+  // pipeline, complejidad, fases programadas y las saltadas. La miniweb ya lo enseña; el CLI no es menos.
+  {
+    const planned = runPhases(changeDir) || [];
+    if (planned.length) {
+      log(`🚀 Pipeline: ${String(changeDir).replace(/\\/g, '/').split('/').pop()}`);
+      log(`📋 Complejidad: ${complexity} · Fases: ${planned.join(' → ')}`);
+      const ALL = ['explore', 'propose', 'clarify', 'spec', 'design', 'tasks', 'apply', 'test', 'verify'];
+      const skipped = ALL.filter((p) => !planned.includes(p));
+      if (skipped.length) log(`⊘ no programadas en este run: ${skipped.join(', ')}`);
+    }
+  }
   const trail = [];
   if (preserveTimeline(changeDir)) log('🗃 timeline del run anterior preservado en timeline-prev.json (relanzamiento sobre un run terminado)');
   const timeline = []; // observabilidad por fase (rol, modelo, ficheros, duración) — telemetría
@@ -1293,7 +1305,11 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       try {
         const pmF = join(projectRoot, 'openspec', 'project.md');
         if (existsSync(pmF)) {
-          const txt = readFileSync(pmF, 'utf8').slice(0, 1800).trim();
+          // ANTI-DUPLICIDAD: el bloque «detectado» de project.md es para HUMANOS (foto del init) — al
+          // prompt jamás viaja: el run inyecta la detección VIVA (renderStackHint), siempre más fresca.
+          // Cada dato, UNA casa: lo derivable se deriva; el fichero conserva lo que sabe una persona.
+          const raw = readFileSync(pmF, 'utf8').replace(/## Stack y comandos \(detectado\)\s*\n<!-- conductor:detected[\s\S]*?<!-- \/conductor:detected -->\n?/, '');
+          const txt = raw.slice(0, 1800).trim();
           // "sin rellenar" SEMÁNTICO, no por longitud: la plantilla nueva trae ejemplos guiados marcados
           // con «_Sustituye» — si el marcador sigue ahí, el dev no la tocó y sería contexto FALSO inyectado.
           // (Se conserva el detector de la plantilla vieja para repos ya inicializados.)
@@ -1321,7 +1337,9 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       const blk = renderSkillsBlock(matched);
       if (blk) { prompt += blk; if (!skillsLogged) { skillsLogged = true; log(`📐 patrones de equipo inyectados (${matched.length}): ${matched.map((s) => s.name).join(', ')}`); } }
     }
-    if (isCode) { const sh = renderStackHint(stack); if (sh) prompt += sh; }
+    // la detección VIVA viaja a TODAS las fases (antes solo coder): el planner decidía sin saber el
+    // stack salvo que alguien lo escribiera a mano — justo la duplicidad que no queremos. Una línea.
+    { const sh = renderStackHint(stack); if (sh) prompt += sh; }
     let model = hotModel || modelForPhase(phase, role, process.env, cfg.models || {});
     let tierUsed = null;
     // routing por tier de coste (economy/balanced/premium) si no hay modelo explícito y hay tiers configurados
@@ -1691,7 +1709,12 @@ ${body || raw}` };
     currentInfo = null; // la fase terminó: que su lastError NO se filtre a la siguiente (y la web no la pinte "en curso")
     writeTimeline('running'); // incremental: la mini-web en vivo (serve) lee esto tras cada fase
     if (!ok) { const why = `la fase "${phase}" no produjo su artefacto tras ${maxRetries + 1} intentos — la secuencia no se salta; revisa el modelo elegido o el registro del run`; log(`❌ ${phase}: el agente no produjo el artefacto tras ${maxRetries + 1} intentos. ABORTO — la fase NO se salta.`); writeTimeline('ABORTED', why); writeDashboard('ABORTED'); await runAgent.close?.(); releaseLock(); return { done: false, verdict: 'ABORTED', phase, reason: why, trail, timeline }; }
-    log(`✅ ${phase}`);
+    // cierre de fase con la chicha a la vista (duración · tokens · modelo) — la voz V1 del terminal
+    {
+      const fin = timeline[timeline.length - 1];
+      const tokTxt = fin?.tokens ? ` · ↓${fin.tokens.in} ↑${fin.tokens.out}` : '';
+      log(`✅ ${phase} · ${((fin?.ms || 0) / 1000).toFixed(1)}s${tokTxt}${fin?.model ? ` · ${fin.model}` : ''}`);
+    }
     trail.push(phase);
 
     // SPEC-FREEZE (R-S3, opt-in cfg.specFreeze): al completar la fase spec, congela el hash de la spec en un

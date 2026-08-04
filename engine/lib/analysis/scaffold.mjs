@@ -3,7 +3,7 @@
 // y la tool MCP `conductor_init_config` (así /sdd-init lo crea por NOMBRE de tool, sin rutas del plugin).
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve, basename } from 'node:path';
-import { detectStackDeep } from './stack.mjs';
+import { detectStackDeep, renderStackDeep } from './stack.mjs';
 
 export const CONFIG_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
@@ -232,12 +232,24 @@ export function initConfig(openspecDir) {
   //  jamás. Ahora es independiente e idempotente.)
   const pmPath = join(openspecDir, 'project.md');
   let projectMdCreated = false;
+  // BLOQUE DETECTADO dentro de project.md (la riqueza de la detección aterriza EN el fichero, no solo en
+  // el terminal) — entre marcadores para que cada `conductor init` lo REFRESQUE sin tocar lo humano.
+  // Así no se pudre (la lección del espejo config.yaml): el bloque es regenerable, el resto es tuyo.
+  const detBlock = (d) => {
+    const L = renderStackDeep(d);
+    return ['<!-- conductor:detected (no lo edites: cada `conductor init` lo refresca) -->',
+      ...(L.length ? L.map((l) => `- ${l}`) : ['- (nada detectable todavía — repo sin manifiestos de stack)']),
+      '<!-- /conductor:detected -->'].join('\n');
+  };
   if (!existsSync(pmPath)) {
     writeFileSync(pmPath, [
       `# ${basename(root) || 'proyecto'} — contexto del proyecto`,
       '',
       '> Lo leen las fases de planificación de conductor Y cualquier dev nuevo. Manténlo corto y cierto.',
-      '> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.',
+      '> El bloque «detectado» se refresca solo en cada `conductor init`; el resto es tuyo.',
+      '',
+      '## Stack y comandos (detectado)',
+      detBlock(deep),
       '',
       '## Propósito',
       '_Sustituye este ejemplo:_ App interna de reservas de salas para los equipos de la oficina; la usan',
@@ -261,6 +273,18 @@ export function initConfig(openspecDir) {
       '',
     ].join('\n') + '\n');
     projectMdCreated = true;
+  } else {
+    // project.md EXISTENTE: refrescar el bloque detectado si tiene marcadores; si es nuestra plantilla
+    // sin editar (_Sustituye) y aún no lo lleva, se le AÑADE (mismo consentimiento que --smart). Un
+    // project.md humano sin marcadores jamás se toca.
+    try {
+      let txt = readFileSync(pmPath, 'utf8');
+      // la nota antigua de cabecera contradice al bloque — en plantillas se actualiza junto a él
+      if (txt.includes('_Sustituye')) txt = txt.replace('> El stack NO se escribe aquí: el motor lo detecta en cada run y lo enseña en el panel.', '> El bloque «detectado» se refresca solo en cada `conductor init`; el resto es tuyo.');
+      const RE = /<!-- conductor:detected[\s\S]*?<!-- \/conductor:detected -->/;
+      if (RE.test(txt)) writeFileSync(pmPath, txt.replace(RE, detBlock(deep)));
+      else if (txt.includes('_Sustituye') && txt.includes('## Propósito')) writeFileSync(pmPath, txt.replace('## Propósito', `## Stack y comandos (detectado)\n${detBlock(deep)}\n\n## Propósito`));
+    } catch {}
   }
   // .copilotignore al root del proyecto (token-first determinista) + .gitignore (la fontanería fuera del repo)
   const ignorePath = join(root, '.copilotignore');
