@@ -13,7 +13,7 @@ const ENG = 'C:/motor/conductor.mjs';
 await test('connect: fichero vacío → crea la clave estándar mcpServers con la entrada de conductor', () => {
   const r = mergeMcpEntry('', ENG);
   eq(r.changed, true); eq(r.key, 'mcpServers');
-  eq(JSON.parse(r.text).mcpServers.conductor, { command: 'node', args: [ENG, 'mcp'] });
+  eq(JSON.parse(r.text).mcpServers.conductor, { command: 'node', args: [ENG, 'mcp'], tools: ['*'] });
 });
 
 await test('connect: detecta el formato del host por la clave existente (servers / mcp-array) y RESPETA lo demás', () => {
@@ -27,6 +27,10 @@ await test('connect: detecta el formato del host por la clave existente (servers
   const j2 = JSON.parse(arr.text);
   eq(j2.mcp.conductor, { type: 'local', command: ['node', ENG, 'mcp'], enabled: true }, 'formato command-en-ARRAY');
   eq(j2.logLevel, 'DEBUG', 'el resto de la config sobrevive');
+  // PRE-AUTORIZACIÓN al conectar (conectar es el consentimiento): OpenCode permite tools por patrón
+  eq(j2.permission['conductor*'], 'allow', 'tools de conductor pre-autorizadas — sin muro de permisos');
+  const suyo = mergeMcpEntry(JSON.stringify({ mcp: {}, permission: { 'conductor*': 'deny' } }), ENG, { key: 'mcp' });
+  eq(JSON.parse(suyo.text).permission['conductor*'], 'deny', 'la política explícita del usuario JAMÁS se pisa');
 });
 
 await test('connect: idempotente (2ª pasada changed:false) y clave explícita gana a la detección', () => {
@@ -73,7 +77,7 @@ await test('connect: config REAL de un host corporativo (provider+modelos+permis
 
 await test('connect: modo PORTABLE (instalación npm) — config sin rutas en los 3 formatos (sobrevive a updates)', () => {
   const r = mergeMcpEntry('', ENG, { portable: true });
-  eq(JSON.parse(r.text).mcpServers.conductor, { command: 'conductor', args: ['mcp'] });
+  eq(JSON.parse(r.text).mcpServers.conductor, { command: 'conductor', args: ['mcp'], tools: ['*'] });
   const rv = mergeMcpEntry(JSON.stringify({ servers: {} }), ENG, { portable: true });
   eq(JSON.parse(rv.text).servers.conductor, { type: 'stdio', command: 'conductor', args: ['mcp'] });
   const ra = mergeMcpEntry(JSON.stringify({ mcp: {} }), ENG, { portable: true });

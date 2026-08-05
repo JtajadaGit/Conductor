@@ -54,6 +54,9 @@ await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectado
   // pipe (sin TTY): conecta los DETECTADOS sin preguntar (CI/scripts jamas se cuelgan)
   execFileSync(process.execPath, [BIN, 'init', proj], { encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 30000, env });
   assert(ex(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md')), 'skill de proyecto de Claude escrita (estándar Agent Skills; OpenCode también la descubre)');
+  // PRE-AUTORIZACIÓN committeable (conectar es el consentimiento): las tools de conductor sin muro de permisos
+  const sj = JSON.parse(rf(join(proj, '.claude', 'settings.json'), 'utf8'));
+  assert(sj.permissions.allow.includes('mcp__conductor__*'), 'settings.json del proyecto pre-autoriza las tools MCP de conductor');
   assert(ex(join(proj, '.opencode', 'command', 'conductor.md')), 'comando de proyecto de OpenCode escrito (detectado, dir SINGULAR)');
   assert(!ex(join(proj, '.github', 'skills', 'conductor', 'SKILL.md')), 'Copilot NO detectado => no se escribe su skill');
   assert(/open:false/.test(rf(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md'), 'utf8')), 'la skill ensena el /conductor vacio educado (open:false)');

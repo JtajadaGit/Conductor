@@ -12,14 +12,17 @@ const KEYS = ['servers', 'mcpServers', 'mcp'];
 function entryFor(key, engineAbs, portable) {
   // portable = instalación npm (shim `conductor` en PATH global): config SIN rutas — sobrevive a
   // actualizaciones del paquete y es idéntica en todas las máquinas. Fallback: node + ruta absoluta.
+  // forma mcpServers (Copilot CLI): `tools: ["*"]` lista TODAS las tools del servidor de serie
+  // (contrato documentado del host) — el usuario aprueba una vez («don't ask again» persiste en su
+  // permissions-config.json) en vez de chocar con un muro por tool. Conectar ES el consentimiento.
   if (portable) {
     if (key === 'servers') return { type: 'stdio', command: 'conductor', args: ['mcp'] };
     if (key === 'mcp') return { type: 'local', command: ['conductor', 'mcp'], enabled: true };
-    return { command: 'conductor', args: ['mcp'] };
+    return { command: 'conductor', args: ['mcp'], tools: ['*'] };
   }
   if (key === 'servers') return { type: 'stdio', command: 'node', args: [engineAbs, 'mcp'] };
   if (key === 'mcp') return { type: 'local', command: ['node', engineAbs, 'mcp'], enabled: true };
-  return { command: 'node', args: [engineAbs, 'mcp'] };
+  return { command: 'node', args: [engineAbs, 'mcp'], tools: ['*'] };
 }
 
 // fusiona la entrada "conductor" en el TEXTO de una config JSON. Devuelve { text, changed, key, error }.
@@ -37,7 +40,14 @@ export function mergeMcpEntry(cfgText, engineAbs, { key = 'auto', portable = fal
   const effKey = KEYS.includes(key) ? key : (KEYS.find((k) => cfg[k] && typeof cfg[k] === 'object') || 'mcpServers');
   const entry = entryFor(effKey, engine, portable);
   const cur = cfg[effKey] && typeof cfg[effKey] === 'object' ? cfg[effKey] : {};
-  if (JSON.stringify(cur.conductor) === JSON.stringify(entry)) return { text: cfgText, changed: false, key: effKey };
+  // OpenCode (clave `mcp`): sus tools MCP se permiten por PATRÓN en `permission` — pre-autorizadas al
+  // conectar (conectar ES el consentimiento). Si el usuario ya fijó su política para conductor*, se respeta.
+  let permChanged = false;
+  if (effKey === 'mcp' && !(cfg.permission && Object.prototype.hasOwnProperty.call(cfg.permission, 'conductor*'))) {
+    cfg.permission = { ...(cfg.permission || {}), 'conductor*': 'allow' };
+    permChanged = true;
+  }
+  if (!permChanged && JSON.stringify(cur.conductor) === JSON.stringify(entry)) return { text: cfgText, changed: false, key: effKey };
   cfg[effKey] = { ...cur, conductor: entry }; // fusión: las demás entradas del usuario quedan INTACTAS
   return { text: JSON.stringify(cfg, null, 2) + '\n', changed: true, key: effKey };
 }

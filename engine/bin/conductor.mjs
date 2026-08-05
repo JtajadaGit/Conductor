@@ -556,6 +556,7 @@ switch (cmd) {
       '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
       '- PERMISOS DEL HOST: la primera vez el chat pedirá permiso por CADA tool de conductor — dile al usuario que elija «Always allow»; sin permiso para `conductor_continue` el run no se puede seguir desde el chat.',
       '- Si una tool es DENEGADA por permisos: NO reintentes en bucle (máximo 1 reintento). Da el enlace `web` («síguelo y aprueba ahí»), pide conceder el permiso, y recuerda que CUALQUIER mensaje suyo aquí te reengancha con conductor_continue {action:"wait"}.',
+      '- Si el error dice «could not request permission» (el host NI PREGUNTA): la sesión corre sin diálogo de permisos — dile que salga y relance su CLI con `copilot --allow-all-tools` (o apruebe las tools conductor-* cuando su host lo permita) y vuelva a pedir /conductor.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
@@ -575,7 +576,7 @@ switch (cmd) {
       { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
       // Claude: SKILLS es el estándar recomendado (crea /conductor); OpenCode además DESCUBRE .claude/skills
       // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
-      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md (skill estándar; OpenCode también la descubre)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md + settings.json (tools pre-autorizadas)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), claudeSettings: join(rootI2, '.claude', 'settings.json') },
       { n: '3', key: 'opencode', label: 'OpenCode', det: existsSync(join(homeH, '.config', 'opencode')), file: join(rootI2, '.opencode', 'command', 'conductor.md'), rel: '.opencode/command/conductor.md', content: ['---', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
       // VS Code Copilot Chat: LEE .github/skills (misma skill que Copilot CLI) pero necesita SU puente MCP
       // en .vscode/mcp.json (fusión no destructiva) — sin él, el agente se queda con guion y sin tools.
@@ -601,6 +602,16 @@ switch (cmd) {
     for (const h of chosenH) {
       try {
         mkdirSync(dirname(h.file), { recursive: true }); writeFileSync(h.file, h.content); hostLines += `\n  /conductor (${h.label}) → ${h.rel}`;
+        // PRE-AUTORIZACIÓN por proyecto (committeable — conectar ES el consentimiento): Claude Code
+        // acepta allowlist de tools MCP en settings; el equipo hereda /conductor SIN muro de permisos.
+        if (h.claudeSettings) {
+          try {
+            let sj = {}; try { sj = JSON.parse(readFileSync(h.claudeSettings, 'utf8')); } catch {}
+            const allowSet = new Set([...(sj.permissions?.allow || []), 'mcp__conductor__*']);
+            const nextSj = { ...sj, permissions: { ...(sj.permissions || {}), allow: [...allowSet] } };
+            if (JSON.stringify(nextSj) !== JSON.stringify(sj)) { mkdirSync(dirname(h.claudeSettings), { recursive: true }); writeFileSync(h.claudeSettings, JSON.stringify(nextSj, null, 2) + '\n'); }
+          } catch { /* settings ilegible del usuario: jamás se pisa */ }
+        }
         if (h.mcpJson) {
           // el puente MCP del chat de VS Code: fusión NO destructiva (mergeMcpEntry conserva otros servers; backup si había fichero)
           const prevM = existsSync(h.mcpJson) ? readFileSync(h.mcpJson, 'utf8') : '';
@@ -1095,7 +1106,7 @@ switch (cmd) {
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
-      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}.',
+      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}. Si el host NI PREGUNTA («could not request permission»): que relance su CLI con `copilot --allow-all-tools`.',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
