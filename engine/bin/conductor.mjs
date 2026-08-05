@@ -556,7 +556,7 @@ switch (cmd) {
       '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
       '- PERMISOS DEL HOST: la primera vez el chat pedirá permiso por CADA tool de conductor — dile al usuario que elija «Always allow»; sin permiso para `conductor_continue` el run no se puede seguir desde el chat.',
       '- Si una tool es DENEGADA por permisos: NO reintentes en bucle (máximo 1 reintento). Da el enlace `web` («síguelo y aprueba ahí»), pide conceder el permiso, y recuerda que CUALQUIER mensaje suyo aquí te reengancha con conductor_continue {action:"wait"}.',
-      '- Si el error dice «could not request permission» (el host NI PREGUNTA): la sesión corre sin diálogo de permisos — dile que salga y relance su CLI con `copilot --allow-all-tools` (o apruebe las tools conductor-* cuando su host lo permita) y vuelva a pedir /conductor.',
+      '- Si el error dice «could not request permission» (el host NI PREGUNTA): dile que escriba `/allow-all` EN ESTE MISMO CHAT y repita /conductor (gesto ligero); plan B: salir y relanzar con `copilot --allow-all-tools`.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
@@ -1107,7 +1107,7 @@ switch (cmd) {
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
-      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}. Si el host NI PREGUNTA («could not request permission»): que relance su CLI con `copilot --allow-all-tools`.',
+      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}. Si el host NI PREGUNTA («could not request permission»): que escriba `/allow-all` en este chat y repita (plan B: relanzar con `copilot --allow-all-tools`).',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)

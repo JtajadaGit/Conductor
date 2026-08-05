@@ -4512,20 +4512,22 @@ const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
   // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
-  _ayuda: 'Todo es opcional. Copia un mando de _ejemplos a la raíz y ajústalo (el motor ignora _ayuda/_ejemplos). Doc: `conductor config`.',
-  // EJEMPLOS COPIABLES dentro del propio fichero (el motor los ignora): un config que nace mudo obliga a
-  // imaginar los mandos; uno con ejemplos realistas se rellena copiando la línea y ajustando el valor.
+  _ayuda: 'Todo es opcional (hay default para todo). Copia un mando de _ejemplos a la raíz y ajústalo; las claves _x son notas para ti y el motor las ignora. Doc completa en cristiano: `conductor config`.',
+  // EJEMPLOS AUTOEXPLICADOS (feedback real: «ni yo lo entiendo»): cada ejemplo lleva su nota _x al
+  // lado — el fichero se entiende A LA VISTA, sin traductor. Solo los 5 mandos del día a día; lo
+  // avanzado se repliega a un puntero (dieta: un config que abruma es tan malo como uno mudo).
   _ejemplos: {
-    models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-haiku-4.5', reviewer: 'copilot:claude-sonnet-4.5', verify: 'copilot:claude-sonnet-4.5' },
-    rules: { spec: ['Un requisito por comportamiento observable'], apply: ['Componentes standalone; signals para estado local'] },
+    _models: 'quién ejecuta cada papel — litellm:<m> = tu proxy (0 créditos premium) · copilot:<m> = tu licencia · también por FASE (models.spec) y la fase gana al rol',
+    models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-sonnet-4.5' },
+    _preset: 'el dial de gobierno: quick-fix/visual (laxo, 1 lente de review) · feature (estricto: trazabilidad+tests) · migration (máximo: spec congelada, gate de datos)',
     preset: 'feature',
+    _pauseAt: 'antes de qué fases se PARA a pedirte revisión (la pausa de fix existe siempre)',
     pauseAt: ['apply', 'verify'],
+    _checks: 'TUS comandos de test/build para la fase test — `conductor init` los detecta y los siembra solo',
     checks: ['npm test --silent'],
-    budget: { maxTokens: 300000, onExceed: 'pause' },
-    tiers: { economy: 'litellm:deepseek-v4-flash', premium: 'copilot:claude-sonnet-4.5' },
-    fallback: { coder: 'copilot:claude-sonnet-4.5' },
-    verifyCache: true,
-    toolFilter: false,
+    _rules: 'instrucciones de TU equipo inyectadas al prompt de una fase (solo texto: jamás ejecutan nada)',
+    rules: { apply: ['Componentes standalone; signals para estado local'] },
+    _avanzado: 'budget (techo de tokens) · tiers (ruteo por coste) · fallback (modelo de reserva) · verifyCache · toolFilter · pipeline · lenses — cada mando explicado: `conductor config`',
   },
   models: {},
   rules: {},
@@ -10150,7 +10152,7 @@ switch (cmd) {
       '- REGLA DURA: si las tools `conductor_app`/`conductor_feature` NO están disponibles en esta sesión, NO uses la terminal ni improvises comandos de conductor. Responde EXACTAMENTE: «El puente MCP de conductor no está conectado en este host — ejecuta `conductor connect --vscode` (VS Code) o `conductor setup` en tu terminal y reabre el chat» y PARA.',
       '- PERMISOS DEL HOST: la primera vez el chat pedirá permiso por CADA tool de conductor — dile al usuario que elija «Always allow»; sin permiso para `conductor_continue` el run no se puede seguir desde el chat.',
       '- Si una tool es DENEGADA por permisos: NO reintentes en bucle (máximo 1 reintento). Da el enlace `web` («síguelo y aprueba ahí»), pide conceder el permiso, y recuerda que CUALQUIER mensaje suyo aquí te reengancha con conductor_continue {action:"wait"}.',
-      '- Si el error dice «could not request permission» (el host NI PREGUNTA): la sesión corre sin diálogo de permisos — dile que salga y relance su CLI con `copilot --allow-all-tools` (o apruebe las tools conductor-* cuando su host lo permita) y vuelva a pedir /conductor.',
+      '- Si el error dice «could not request permission» (el host NI PREGUNTA): dile que escriba `/allow-all` EN ESTE MISMO CHAT y repita /conductor (gesto ligero); plan B: salir y relanzar con `copilot --allow-all-tools`.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
@@ -10701,7 +10703,7 @@ switch (cmd) {
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
-      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}. Si el host NI PREGUNTA («could not request permission»): que relance su CLI con `copilot --allow-all-tools`.',
+      '  · si una tool de conductor es DENEGADA por permisos del host: no insistas — da la URL del panel, pide el permiso («Always allow») y cualquier mensaje del usuario te reengancha con {action:"wait"}. Si el host NI PREGUNTA («could not request permission»): que escriba `/allow-all` en este chat y repita (plan B: relanzar con `copilot --allow-all-tools`).',
       '',
     ].join('\n');
     // CONDUCTOR_USERHOME = override para TESTS (jamás tocar los CLIs reales de la máquina desde una suite)
@@ -10964,4 +10966,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 1659cc31fa8ea340e93735f1665f4d0acda52b67d8f767d41499bb21f8f7c99e
+// build-inputs-sha256: fdd8e6aed073998cad1a853ba2edf1742b8a746a49435af67db4046877f3a3ca

@@ -35,8 +35,12 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   assert(!cfg.$schema, 'config SIN $schema colgante (no hay fichero al lado)');
   assert(typeof cfg._ayuda === 'string' && cfg._ayuda.includes('conductor config'), 'el config que NACE se explica solo: UNA linea _ayuda que apunta a `conductor config` (el fichero mudo obligaba a imaginar los mandos)');
   // el config nace con EJEMPLOS COPIABLES (el motor los ignora): mezcla de modelos, budget, rules, checks…
-  assert(cfg._ejemplos && cfg._ejemplos.models && cfg._ejemplos.budget && Array.isArray(cfg._ejemplos.checks), 'nace con _ejemplos realistas de los mandos principales (copiar y ajustar, no imaginar)');
+  assert(cfg._ejemplos && cfg._ejemplos.models && Array.isArray(cfg._ejemplos.checks), 'nace con _ejemplos de los mandos del día a día (copiar y ajustar, no imaginar)');
   assert(String(cfg._ejemplos.models.coder || '').includes(':'), 'los ejemplos de modelo llevan el prefijo de proveedor (litellm:/copilot:)');
+  // AUTOEXPLICADO a la vista (feedback real: «ni yo lo entiendo»): cada ejemplo con su nota _x al lado,
+  // y lo avanzado replegado a un puntero — el fichero se entiende sin traductor ni doc externa
+  for (const k of ['_models', '_preset', '_pauseAt', '_checks', '_rules']) assert(typeof cfg._ejemplos[k] === 'string' && cfg._ejemplos[k].length > 20, `nota ${k} presente y con chicha`);
+  assert(String(cfg._ejemplos._avanzado || '').includes('conductor config'), 'lo avanzado (budget/tiers/fallback…) se repliega a `conductor config`, no abruma');
   assert(cfg.rules && typeof cfg.rules === 'object', 'config nace con rules (gobierno por fase, descubrible y vacío)');
   // el usuario edita su config y su .copilotignore → re-init NO los pisa (el schema sí se refresca)
   writeFileSync(r.cfgPath, JSON.stringify({ serve: false }));

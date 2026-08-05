@@ -143,20 +143,22 @@ const DEFAULT_CONFIG = {
   // una sola línea de ayuda (el motor la ignora): sin ella el fichero mínimo no daba NINGUNA pista de qué
   // se puede configurar (un fichero mudo obliga a imaginar los mandos). La doc completa, en
   // `conductor config` (imprime el schema explicado) — aquí solo la puerta.
-  _ayuda: 'Todo es opcional. Copia un mando de _ejemplos a la raíz y ajústalo (el motor ignora _ayuda/_ejemplos). Doc: `conductor config`.',
-  // EJEMPLOS COPIABLES dentro del propio fichero (el motor los ignora): un config que nace mudo obliga a
-  // imaginar los mandos; uno con ejemplos realistas se rellena copiando la línea y ajustando el valor.
+  _ayuda: 'Todo es opcional (hay default para todo). Copia un mando de _ejemplos a la raíz y ajústalo; las claves _x son notas para ti y el motor las ignora. Doc completa en cristiano: `conductor config`.',
+  // EJEMPLOS AUTOEXPLICADOS (feedback real: «ni yo lo entiendo»): cada ejemplo lleva su nota _x al
+  // lado — el fichero se entiende A LA VISTA, sin traductor. Solo los 5 mandos del día a día; lo
+  // avanzado se repliega a un puntero (dieta: un config que abruma es tan malo como uno mudo).
   _ejemplos: {
-    models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-haiku-4.5', reviewer: 'copilot:claude-sonnet-4.5', verify: 'copilot:claude-sonnet-4.5' },
-    rules: { spec: ['Un requisito por comportamiento observable'], apply: ['Componentes standalone; signals para estado local'] },
+    _models: 'quién ejecuta cada papel — litellm:<m> = tu proxy (0 créditos premium) · copilot:<m> = tu licencia · también por FASE (models.spec) y la fase gana al rol',
+    models: { planner: 'litellm:deepseek-v4-flash', coder: 'copilot:claude-sonnet-4.5' },
+    _preset: 'el dial de gobierno: quick-fix/visual (laxo, 1 lente de review) · feature (estricto: trazabilidad+tests) · migration (máximo: spec congelada, gate de datos)',
     preset: 'feature',
+    _pauseAt: 'antes de qué fases se PARA a pedirte revisión (la pausa de fix existe siempre)',
     pauseAt: ['apply', 'verify'],
+    _checks: 'TUS comandos de test/build para la fase test — `conductor init` los detecta y los siembra solo',
     checks: ['npm test --silent'],
-    budget: { maxTokens: 300000, onExceed: 'pause' },
-    tiers: { economy: 'litellm:deepseek-v4-flash', premium: 'copilot:claude-sonnet-4.5' },
-    fallback: { coder: 'copilot:claude-sonnet-4.5' },
-    verifyCache: true,
-    toolFilter: false,
+    _rules: 'instrucciones de TU equipo inyectadas al prompt de una fase (solo texto: jamás ejecutan nada)',
+    rules: { apply: ['Componentes standalone; signals para estado local'] },
+    _avanzado: 'budget (techo de tokens) · tiers (ruteo por coste) · fallback (modelo de reserva) · verifyCache · toolFilter · pipeline · lenses — cada mando explicado: `conductor config`',
   },
   models: {},
   rules: {},
