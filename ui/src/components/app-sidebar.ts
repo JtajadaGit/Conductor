@@ -6,9 +6,9 @@ import type { ProjectSummary, ChangeSummary } from '../api/types';
 import { verdictClass, sanitizeProjects } from '../lib/format';
 import { icon } from '../lib/svg-icons';
 
-/** Sidebar EN FOCO: solo los cambios del proyecto activo + una sección «Tu atención» (pausas esperando
- *  decisión, de CUALQUIER proyecto — lo único que justifica cruzar el foco). El inventario multi-proyecto
- *  vive detrás del conmutador del panel, no aquí. Refresco 5s; resalta el run activo. */
+/** Sidebar con TODAS las runs de TODOS los proyectos (decisión de producto: las archivadas fuera —
+ *  ya tienen su sección en el panel). El proyecto en foco va primero; cada grupo lleva su cabecera.
+ *  Arriba, «Tu atención»: pausas esperando decisión, de cualquier proyecto. Refresco 5s. */
 @customElement('app-sidebar')
 export class AppSidebar extends CElement {
   @property() activeChange = '';
@@ -71,10 +71,12 @@ export class AppSidebar extends CElement {
 
   override render(): TemplateResult {
     const focus = this.focusedProject();
-    const changes = focus?.changes ?? [];
+    const ordered = focus ? [focus, ...this.projects.filter((p) => p.id !== focus.id)] : this.projects;
     const att = this.attention();
-    const nGreen = changes.filter((c) => verdictClass(c.verdict) === 'GREEN').length;
-    const nActive = changes.filter((c) => verdictClass(c.verdict) === 'CURSO').length;
+    // resumen del pie sobre TODO lo visible (todas las runs no archivadas, de todos los proyectos)
+    const all = ordered.flatMap((p) => p.changes ?? []);
+    const nGreen = all.filter((c) => verdictClass(c.verdict) === 'GREEN').length;
+    const nActive = all.filter((c) => verdictClass(c.verdict) === 'CURSO').length;
     return html`
       <div class="sb-logo" role="img" aria-label="conductor"><span class="logo" aria-hidden="true">C</span> conductor</div>
       <nav class="sb-nav" aria-label="Navegación principal">
@@ -89,19 +91,20 @@ export class AppSidebar extends CElement {
             <span class="nm">${icon('pause')} ${c.name}</span>
           </a>`)}
       </nav>` : nothing}
-      <nav class="sb-runs" aria-label="Runs del proyecto en foco">
-        <h2 class="sb-h">${focus?.name ?? 'Runs'}${changes.length ? html`<span class="sb-cnt">${changes.length}</span>` : nothing}</h2>
-        ${changes.slice(0, 12).map((c) => html`
-          <a class="sb-run" href="/run/${focus?.id}/${c.name}" title=${c.request} aria-current=${this.activeChange === c.name ? 'page' : nothing}>
+      ${ordered.filter((p) => (p.changes ?? []).length > 0 || p.id === focus?.id).map((p) => html`
+      <nav class="sb-runs" aria-label="Runs de ${p.name}">
+        <h2 class="sb-h">${p.name}${(p.changes ?? []).length ? html`<span class="sb-cnt">${(p.changes ?? []).length}</span>` : nothing}</h2>
+        ${(p.changes ?? []).slice(0, 12).map((c) => html`
+          <a class="sb-run" href="/run/${p.id}/${c.name}" title=${c.request} aria-current=${this.activeChange === c.name && this.activeProj === p.id ? 'page' : nothing}>
             <span class="dot ${this.dotClass(c)}" role="img" aria-label=${this.dotLabel(c)}></span>
             <span class="nm">${c.name}</span>
           </a>`)}
-        ${changes.length === 0 ? html`<div class="sb-empty">Sin runs todavía</div>` : nothing}
-      </nav>
+        ${(p.changes ?? []).length === 0 ? html`<div class="sb-empty">Sin runs todavía</div>` : nothing}
+      </nav>`)}
       <div class="sb-bottom">
-        ${changes.length > 0 ? html`
-        <div class="sb-foot" role="status" aria-label="resumen de runs del proyecto">
-          <span>${changes.length} run${changes.length !== 1 ? 's' : ''}</span>
+        ${all.length > 0 ? html`
+        <div class="sb-foot" role="status" aria-label="resumen de runs">
+          <span>${all.length} run${all.length !== 1 ? 's' : ''}</span>
           ${nGreen > 0 ? html`<span class="g" title="GREEN">${nGreen} ✓</span>` : nothing}
           ${nActive > 0 ? html`<span class="w" title="en curso">${nActive} ◉</span>` : nothing}
         </div>` : nothing}

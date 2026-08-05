@@ -566,8 +566,10 @@ export class PanelScreen extends CElement {
     const scope = this.scopeProjects();
     const m = this.metrics(scope);
     const opts = this.modelOptions();
-    // Separa runs activos de completados para jerarquía visual clara (sobre el scope activo/global)
-    const activeItems = scope.flatMap((p) =>
+    // Lo VIVO cruza el foco SIEMPRE (mismo principio que «Tu atención»): con dos proyectos corriendo a
+    // la vez, el panel per-repo escondía el run del otro — un run en curso jamás puede ser invisible.
+    // La tarjeta ya lleva el chip del proyecto, y el historial sí respeta el scope (la home es tu repo).
+    const activeItems = this.projects.flatMap((p) =>
       (p.changes ?? []).filter((c) => verdictClass(c.verdict) === 'CURSO').map((c) => ({ p, c }))
     );
     const doneItems = scope.flatMap((p) =>
