@@ -81,7 +81,7 @@ export class SessionScreen extends CElement {
         <p style="margin-top:.8rem"><a class="btn sm sec" href=${this.runPath()}>Volver al run</a></p>`;
     }
     const d = this.data;
-    if (!d) return loader('Cargando sesión');
+    if (!d) return loader('Cargando sesión', true);
     // "sin traza" ahora llega como 200 vacío (noTrace) en vez de 404 — mismo estado vacío, sin ruido de consola.
     // AUSENCIA REAL = summary.total (total del run, SIN filtrar). Antes se usaba d.total (conteo FILTRADO): buscar/
     // filtrar a 0 resultados disparaba el dead-end "sin traza" y OCULTABA la barra de filtro → usuario atrapado.

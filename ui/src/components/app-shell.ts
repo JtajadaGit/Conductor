@@ -2,6 +2,11 @@ import { html, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { router, type Route } from '../router';
+
+// chunks YA cargados por nombre de pantalla: la navegación entre pantallas conocidas es INSTANTÁNEA
+// (cero desmontaje). Antes, ready=false en CADA cambio de ruta desmontaba la pantalla un frame —
+// parpadeo, pérdida del estado del panel y re-fetch completo en cada clic (el «medio bug» reportado).
+const loadedScreens = new Set<string>();
 import { loader } from '../lib/loader';
 import './app-sidebar';
 import './artifact-viewer';
@@ -93,8 +98,9 @@ export class ConductorApp extends CElement {
   };
 
   private async preload(): Promise<void> {
-    this.ready = false; this.loadFailed = false;
     const n = this.route.name;
+    if (loadedScreens.has(n === 'demo' ? 'run' : n)) { this.ready = true; return; }
+    this.ready = false; this.loadFailed = false;
     try {
       if (n === 'panel') await import('../screens/panel-screen');
       else if (n === 'run' || n === 'demo') await import('../screens/run-screen');
@@ -115,6 +121,7 @@ export class ConductorApp extends CElement {
       return;
     }
     try { sessionStorage.removeItem(RELOAD_KEY); } catch { /* nada que limpiar */ }
+    loadedScreens.add(n === 'demo' ? 'run' : n);
     this.ready = true;
   }
 
@@ -148,7 +155,7 @@ export class ConductorApp extends CElement {
     }
     if (!this.ready) return loader('Cargando conductor', true);
     const r = this.route;
-    if (r.name === 'panel') return html`<panel-screen></panel-screen>`;
+    if (r.name === 'panel') return html`<panel-screen .routeProj=${r.projId ?? r.query.get('project') ?? ''}></panel-screen>`;
     if (r.name === 'run' || r.name === 'demo') return html`<run-screen .apiBase=${r.apiBase} .change=${r.change ?? ''} .projId=${r.projId ?? ''} .phaseId=${r.query.get('phase') ?? ''}></run-screen>`;
     if (r.name === 'help') return html`<help-screen></help-screen>`;
     if (r.name === 'flow') return html`<flow-screen></flow-screen>`;

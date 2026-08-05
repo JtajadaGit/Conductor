@@ -8108,6 +8108,30 @@ function loadRegistry() {
     return j.filter((p) => p && p.root && existsSync(p.root));
   } catch { return []; }
 }
+// ALTA PERSISTENTE sin app viva (P0: `conductor init` registra): un proyecto inicializado es un
+// proyecto de conductor y la sidebar debe verlo desde el minuto uno — corra o no un run después.
+// Dedup por id; el saneo de rutas muertas lo hace loadRegistry al leer. La app en marcha lo recoge
+// vía /api/register (mismo id); apagada, se lo encuentra aquí al arrancar.
+// rama git de un proyecto SIN ejecutar git (lee .git/HEAD; soporta worktrees con .git-fichero):
+// coste de fichero, apto para el poll de 5s del panel. Detached → sha corto; sin git → null.
+function gitBranchOf(root) {
+  try {
+    let gd = join(root, '.git');
+    try { if (statSync(gd).isFile()) { const m = readFileSync(gd, 'utf8').match(/gitdir:\s*(.+)/); if (m) gd = resolve(root, m[1].trim()); } } catch {}
+    const h = readFileSync(join(gd, 'HEAD'), 'utf8').trim();
+    const m = h.match(/^ref: refs\/heads\/(.+)$/);
+    return m ? m[1] : (h ? h.slice(0, 7) : null);
+  } catch { return null; }
+}
+
+function registerProjectPersistent(root) {
+  const abs = resolve(root);
+  const id = projId(abs);
+  const list = loadRegistry();
+  if (!list.some((p) => p.id === id)) saveRegistry([...list, { id, root: abs, name: abs.split(/[\\/]/).pop() }]);
+  return id;
+}
+
 // escritura ATÓMICA (tmp + rename) + dedup por id: un crash a media escritura no corrompe el registro
 // global (rompía la entrada única a la app para TODOS los proyectos). Ola 1 (projects-registry-recovery).
 function saveRegistry(list) {
@@ -8699,7 +8723,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         // pending=true ⇔ ese run espera una DECISIÓN humana ahora mismo → el panel/sidebar lo señalan (un run
         // pausado era invisible fuera de su propia pantalla, justo en la herramienta cuyo corazón es la pausa).
-        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
+        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, branch: gitBranchOf(p.root), openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
         const def = projects.find((p) => p.id === focusId) || projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —
@@ -9074,7 +9098,7 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
   });
 }
 
-return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, saveRegistry, byokDeclaredModels, readModelsCache, writeModelsCache, fetchByokPrices, isCopilotFamily, checkByokModels, mergeModelsDefault, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
+return { runState, createRunServer, listChanges, createProjectServer, loadRegistry, gitBranchOf, registerProjectPersistent, saveRegistry, byokDeclaredModels, readModelsCache, writeModelsCache, fetchByokPrices, isCopilotFamily, checkByokModels, mergeModelsDefault, aggregateArchive, aggregateSearch, byokChildEnv, createAppServer };
 })();
 
 // ===== lib/sysops/ci.mjs =====
@@ -9651,7 +9675,7 @@ const { mergeMcpEntry } = __M['connect'];
 const { initConfig, CONFIG_SCHEMA } = __M['scaffold'];
 const { writeAiact } = __M['aiact'];
 const { createSdkRunner } = __M['sdk-runner'];
-const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry } = __M['serve'];
+const { createRunServer, createAppServer, writeModelsCache, fetchByokPrices, loadRegistry, registerProjectPersistent } = __M['serve'];
 const { aggregateStats } = __M['stats'];
 const { plumbPath } = __M['plumb'];
 const { encryptSecret, decryptSecret, sealByokFile, byokFile, isPortableBlob, isTemplateCreds, LITELLM_TEMPLATE, ensureByokTemplate, normalizeByokShape } = __M['secret'];
@@ -10086,6 +10110,11 @@ switch (cmd) {
   case 'init-config': {
     const rootI2 = pos[0] ? resolve(pos[0]) : process.cwd();
     const r = initConfig(join(rootI2, 'openspec'));
+    // P0: init REGISTRA el proyecto — visible en la sidebar desde el minuto uno, corra o no un run.
+    // Persistente siempre; si la app está viva, el alta llega también en caliente vía /api/register.
+    let regId = null;
+    try { regId = registerProjectPersistent(rootI2); } catch {}
+    try { await fetch('http://127.0.0.1:4750/api/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: rootI2, persist: true }), signal: AbortSignal.timeout(1500) }); } catch { /* app apagada: el registro persistente basta */ }
     // INIT INTELIGENTE (--smart; el flag ES el consentimiento: gasta tokens): UN one-shot del agente analiza
     // ESTE repo y rellena project.md + propone checks/rules en conductor.json. REGLA DE ORO anti-duplicación:
     // lo que AGENTS.md/CLAUDE.md/copilot-instructions ya documenten se REFERENCIA, no se repite. Jamás pisa
@@ -10226,7 +10255,7 @@ switch (cmd) {
     console.log(`✓ proyecto inicializado (openspec/ — árbol OpenSpec completo)${deepLines ? `\n  DETECTADO en este repo (el motor lo re-detecta vivo en cada run):\n${deepLines}${r.created && r.deep?.checks?.length ? '\n  → esos checks quedan YA escritos en conductor.json (la fase test los ejecuta; ajústalos si quieres)' : ''}` : ''}
   project.md → ${r.projectMd} (propósito/convenciones: RELLÉNALO, las fases de planificación lo leen)
   conductor.json → ${r.cfgPath}${r.created ? ' (creada)' : ' (ya existía — intacta)'} (gobierno del equipo: modelos, reglas por fase, preset, gates)
-  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
+  specs/ · changes/archive/ → fuente de verdad viva e histórico (los llena el ciclo)${regId ? `\n  panel → proyecto REGISTRADO: aparece ya en la sidebar, y su URL directa es /${regId}` : ''}${hostLines}${tpl ? '\n  credenciales → ~/.conductor/litellm.json (PLANTILLA creada — rellena baseUrl y apiKey)' : ''}
   Relleno semántico con IA (propósito/convenciones/reglas leyendo TU repo): \`conductor init-config . --smart\`
   Siguiente: \`conductor\` abre la miniweb aquí · /conductor en el chat de tu CLI`);
     process.exit(0);
@@ -10608,21 +10637,29 @@ switch (cmd) {
     // ARRANQUE PER-REPO (Opción A): fija el FOCO en el repo desde el que lanzaste `conductor` (server-side) → el
     // panel lo sigue en su poll aunque la pestaña ya estuviera abierta en OTRO repo. En arranque fresco el
     // `serve rootArg` ya enfoca ahí; este POST cubre el caso "app YA viva en otro repo".
+    // LA URL ES EL FOCO: el gesto abre /<id> (la página del proyecto, con su formulario) — la home «/»
+    // es el panel GLOBAL y ya no la teledirige nadie. El POST a focus se mantiene (default razonable
+    // para el chat/conductor_app), pero la navegación viaja por la URL, no por estado del servidor.
+    let projUrl = url, projName = '';
     try {
       const fr = await fetch(url + 'api/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project: rootArg }), signal: AbortSignal.timeout(3000) });
+      if (fr.ok) { const fj = await fr.json().catch(() => ({})); if (fj.id) { projUrl = url + fj.id; projName = fj.name || ''; } }
       // usuario inexperto: `conductor` en un dir que NO es proyecto (sin openspec/ ni .git) → el foco se rechaza;
-      // avisamos en vez de abrir EN SILENCIO sobre OTRO repo (el foco anterior) y dejarlo confuso.
-      if (!fr.ok) console.log(`ℹ️ "${rootArg}" no parece un proyecto conductor (falta openspec/ o .git). Abro la app tal cual; para trabajar aquí inicialízalo con /sdd-init, o ve a un repo válido y ejecuta \`conductor\` ahí.`);
+      // avisamos en vez de abrir EN SILENCIO el panel global y dejarlo confuso.
+      else console.log(`ℹ️ "${rootArg}" no parece un proyecto conductor (falta openspec/ o .git). Te abro el panel global; para trabajar aquí inicialízalo con \`conductor init\`.`);
     } catch {}
     if (process.env.CONDUCTOR_NO_OPEN !== '1') {
       try {
-        const opener = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+        const opener = process.platform === 'win32' ? `start "" "${projUrl}"` : process.platform === 'darwin' ? `open "${projUrl}"` : `xdg-open "${projUrl}"`;
         execSync(opener, { shell: true, stdio: 'ignore', timeout: 5000, windowsHide: true });
       } catch { /* sin navegador disponible: la URL impresa basta */ }
     }
-    if (wasAlive) console.log(`✓ conductor ya estaba encendido — v${info?.version || '?'} sirviendo ${info?.root || 'tu proyecto'} · te abro el panel`);
+    // COPY HONESTO (P2): el mensaje dice EXACTAMENTE qué se abre — la página de ESTE proyecto, no «el panel».
+    if (wasAlive) console.log(projName
+      ? `✓ conductor ya estaba encendido — v${info?.version || '?'} · te abro ${projName}`
+      : `✓ conductor ya estaba encendido — v${info?.version || '?'} · te abro el panel`);
     else console.log(`✓ conductor v${VERSION} en marcha · (para pararlo: conductor stop)`);
-    console.log(`🌐 conductor: ${url}`);
+    console.log(`🌐 conductor: ${projUrl}`);
     break;
   }
   case 'upgrade': {
@@ -10966,4 +11003,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: fdd8e6aed073998cad1a853ba2edf1742b8a746a49435af67db4046877f3a3ca
+// build-inputs-sha256: a3e714f382fd6886c6cd72683337c300fc3cbf8add5eafa2fba2e2ab16b0bc9f

@@ -576,6 +576,30 @@ export function loadRegistry() {
     return j.filter((p) => p && p.root && existsSync(p.root));
   } catch { return []; }
 }
+// ALTA PERSISTENTE sin app viva (P0: `conductor init` registra): un proyecto inicializado es un
+// proyecto de conductor y la sidebar debe verlo desde el minuto uno — corra o no un run después.
+// Dedup por id; el saneo de rutas muertas lo hace loadRegistry al leer. La app en marcha lo recoge
+// vía /api/register (mismo id); apagada, se lo encuentra aquí al arrancar.
+// rama git de un proyecto SIN ejecutar git (lee .git/HEAD; soporta worktrees con .git-fichero):
+// coste de fichero, apto para el poll de 5s del panel. Detached → sha corto; sin git → null.
+export function gitBranchOf(root) {
+  try {
+    let gd = join(root, '.git');
+    try { if (statSync(gd).isFile()) { const m = readFileSync(gd, 'utf8').match(/gitdir:\s*(.+)/); if (m) gd = resolve(root, m[1].trim()); } } catch {}
+    const h = readFileSync(join(gd, 'HEAD'), 'utf8').trim();
+    const m = h.match(/^ref: refs\/heads\/(.+)$/);
+    return m ? m[1] : (h ? h.slice(0, 7) : null);
+  } catch { return null; }
+}
+
+export function registerProjectPersistent(root) {
+  const abs = resolve(root);
+  const id = projId(abs);
+  const list = loadRegistry();
+  if (!list.some((p) => p.id === id)) saveRegistry([...list, { id, root: abs, name: abs.split(/[\\/]/).pop() }]);
+  return id;
+}
+
 // escritura ATÓMICA (tmp + rename) + dedup por id: un crash a media escritura no corrompe el registro
 // global (rompía la entrada única a la app para TODOS los proyectos). Ola 1 (projects-registry-recovery).
 export function saveRegistry(list) {
@@ -1167,7 +1191,7 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
         // openspec=true ⇔ el proyecto pasó por init (predicado único isSdd, compartido con el gate de launch).
         // pending=true ⇔ ese run espera una DECISIÓN humana ahora mismo → el panel/sidebar lo señalan (un run
         // pausado era invisible fuera de su propia pantalla, justo en la herramienta cuyo corazón es la pausa).
-        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
+        const projects = [...registry.values()].map((p) => ({ id: p.id, name: p.name, root: p.root, branch: gitBranchOf(p.root), openspec: isSdd(p.root), changes: listChanges(p.root).map((c) => { const rg = runs.get(runKey(p.id, c.name)); return rg && !rg.exited && rg.pending ? { ...c, pending: true } : c; }) }));
         const def = projects.find((p) => p.id === focusId) || projects.find((p) => p.id === DEFAULT.id) || projects[0] || { name: DEFAULT.name, id: DEFAULT.id, changes: [] };
         // usage = gasto/presupuesto de TU key LiteLLM (solo si hay creds); el panel muestra "Uso total" cuando llega.
         // projectId = ID ESTABLE del proyecto servido (el panel lo usa para fijar el activo por ID, no por NOMBRE —

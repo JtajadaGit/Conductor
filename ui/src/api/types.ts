@@ -117,6 +117,8 @@ export interface ProjectSummary {
   id: string;
   name: string;
   root: string;
+  /** rama git del proyecto (null sin git) — el h1 siempre la enseña como chip */
+  branch?: string | null;
   openspec?: boolean;
   changes: ChangeSummary[];
 }

@@ -58,6 +58,9 @@ await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectado
   const sj = JSON.parse(rf(join(proj, '.claude', 'settings.json'), 'utf8'));
   assert(sj.permissions.allow.includes('mcp__conductor__*'), 'settings.json del proyecto pre-autoriza las tools MCP de conductor');
   assert(ex(join(proj, '.opencode', 'command', 'conductor.md')), 'comando de proyecto de OpenCode escrito (detectado, dir SINGULAR)');
+  // P0: init REGISTRA el proyecto (persistente) — la sidebar lo enseña sin necesidad de que corra un run
+  const regP = JSON.parse(rf(join(plumbPath(home), 'projects.json'), 'utf8'));
+  assert(regP.some((x) => x.root === proj), 'init deja el proyecto en el registro persistente (~/.conductor/projects.json)');
   assert(!ex(join(proj, '.github', 'skills', 'conductor', 'SKILL.md')), 'Copilot NO detectado => no se escribe su skill');
   assert(/open:false/.test(rf(join(proj, '.claude', 'skills', 'conductor', 'SKILL.md'), 'utf8')), 'la skill ensena el /conductor vacio educado (open:false)');
   // FRONTMATTER YAML VALIDO (caso real: la description sin comillas llevaba «: » dentro y el host

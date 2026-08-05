@@ -86,10 +86,12 @@ Si el repo ya tiene **AGENTS.md / copilot-instructions**, init lo detecta y el p
 ### 🌐 La miniweb (el cockpit)
 
 ```bash
-conductor        # «▶ arrancando conductor v2.0.0 …» → http://127.0.0.1:4750
+conductor        # abre la PÁGINA DE TU PROYECTO (http://127.0.0.1:4750/<proyecto>) — la arranca si está apagada
 ```
 
-1. **Describe la feature** en el formulario (`@fichero` para dar contexto, `/skill` para patrones de equipo, arrastra capturas).
+La jerarquía es **home global → proyecto → run**: `/` es el panel global (tus proyectos clicables, lo vivo y lo pendiente de todos, métricas e historial agregados) y cada proyecto tiene su URL declarativa (`/<proyecto>`, navegable y compartible) con su formulario de lanzar. Te mueves entre proyectos con un clic (tarjetas de la home o cabeceras de la sidebar) — o con `conductor` desde cualquier repo.
+
+1. **Describe la feature** en el formulario de tu proyecto (`@fichero` para dar contexto, `/skill` para patrones de equipo, arrastra capturas).
 2. Revisa el **plan**: preset propuesto, fases, y la **estimación de tokens sin gastar API**.
 3. Elige **modelo por fase** si quieres mezcla — y 💾 para guardarla como default del equipo.
 4. **Lanza** y decide en cada pausa: 📄 artefactos (✏️ editables) · **± vs spec viva** (diff del delta contra la spec promovida) · 📣 nota para la fase · 🎛 modelo en caliente · ↺ rehacer · ✓ aprobar · ■ detener.

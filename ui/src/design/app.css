@@ -83,6 +83,23 @@ app-sidebar {
   display: flex; align-items: center; gap: .3rem;
 }
 .sb-h::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--bd), transparent); }
+/* ── Cabecera CLICABLE = conmutador de proyecto (P1): affordance clara sin ruido — carpeta + nombre,
+   flecha de acento que aparece al hover/focus, y barra de acento en el proyecto ACTUAL. La fila entera
+   es objetivo de clic (padding negativo compensado) y hereda la voz mono-caps del encabezado. ── */
+.sb-hlink {
+  display: flex; align-items: center; gap: .35rem; min-width: 0; max-width: 100%;
+  color: inherit; text-decoration: none; border-radius: 6px;
+  padding: .22rem .3rem; margin: -.22rem -.3rem;
+  transition: color .12s, background .12s;
+}
+.sb-hlink .bi { flex-shrink: 0; opacity: .75; }
+.sb-hlink .sb-hname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-hlink .sb-go { margin-left: .1rem; color: var(--accent); font-weight: 700; opacity: 0; transform: translateX(-3px); transition: opacity .12s, transform .12s; }
+.sb-hlink:hover, .sb-hlink:focus-visible { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.sb-hlink:hover .sb-go, .sb-hlink:focus-visible .sb-go { opacity: 1; transform: none; }
+.sb-hlink.cur { color: var(--tx); }
+.sb-hlink.cur::before { content: ''; flex-shrink: 0; width: 3px; height: .95em; border-radius: 2px; background: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .sb-hlink, .sb-hlink .sb-go { transition: none; } }
 .sb-cnt {
   font: 700 .55rem/1 var(--mono); letter-spacing: 0; flex-shrink: 0;
   background: var(--bd2); color: var(--tx2); border-radius: 9px; /* --tx2 (no --tx3): el contador 9px despeja AA 4.5 */

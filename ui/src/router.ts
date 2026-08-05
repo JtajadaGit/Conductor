@@ -35,6 +35,13 @@ export function parseRoute(pathname: string, search = ''): Route {
     const segs = rest.split('/');
     return { name: 'session', apiBase: `/api/run/${rest}/`, projId: segs[0], change: segs.slice(1).join('/'), query };
   }
+  // RUTA DECLARATIVA DE PROYECTO: /<id-o-nombre> enfoca ese proyecto en el panel (URL navegable,
+  // compartible y que sobrevive al refresh). El canónico es el id (nombre~hash6); el nombre a mano vale
+  // si es único — la resolución (y el aviso honesto si no existe/ambiguo) vive en el panel, que tiene
+  // la lista. Las rutas reservadas de arriba SIEMPRE ganan; /panel es alias explícito de la home.
+  if (p === '/panel') return { name: 'panel', apiBase: '/api/', query };
+  const seg = p.slice(1);
+  if (seg && !seg.includes('/') && /^[a-z0-9-]+(~[a-f0-9]{6})?$/i.test(seg)) return { name: 'panel', apiBase: '/api/', projId: seg, query };
   return { name: 'panel', apiBase: '/api/', query };
 }
 
@@ -54,10 +61,10 @@ export class Router extends EventTarget {
 
   private resolve(): void {
     this.current = parseRoute(location.pathname, location.search);
-    // /run/<projId> SIN change → parseRoute lo mapeó a panel con projId. Reescribimos la URL a /?project=<id> para
-    // que el dashboard ENFOQUE ese proyecto (en vez de caer al global por defecto sin explicación, #13).
-    if (this.current.name === 'panel' && this.current.projId) {
-      try { history.replaceState({}, '', `/?project=${encodeURIComponent(this.current.projId)}`); } catch { /* sin history */ }
+    // /run/<projId> SIN change (o cualquier panel con proyecto) → URL canónica declarativa /<projId>
+    // (#13 evolucionado: antes se reescribía a /?project=<id>; ahora el path ES el foco).
+    if (this.current.name === 'panel' && this.current.projId && location.pathname !== `/${this.current.projId}`) {
+      try { history.replaceState({}, '', `/${encodeURIComponent(this.current.projId)}`); } catch { /* sin history */ }
     }
     this.dispatchEvent(new CustomEvent<Route>('change', { detail: this.current }));
   }

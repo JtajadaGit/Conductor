@@ -1,11 +1,12 @@
 import { html, nothing, type TemplateResult } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { CElement } from '../core/element';
 import { ConductorApi } from '../api/client';
 import { router } from '../router';
 import type { ProjectSummary, ChangeSummary, ModelsResponse, ModelsByRole, GhUsage, Usage, SearchHit, ArchiveEntry, PhaseEstimate, PlanCheck } from '../api/types';
 import { fmt, kebab, verdictClass, sanitizeProjects } from '../lib/format';
 import { icon } from '../lib/svg-icons';
+import { loader } from '../lib/loader';
 import '../components/status-pill';
 import '../components/mention-input';
 
@@ -53,12 +54,15 @@ export class PanelScreen extends CElement {
   @state() private projects: ProjectSummary[] = [];
   @state() private gh: GhUsage | null = null;
   @state() private usage: Usage | null = null;
-  @state() private version = ''; // versión del motor (badge visible → un relevo de versión no es invisible, #10)
   @state() private models: ModelsResponse | null = null;
   @state() private req = '';
   @state() private name = '';
   @state() private complexity = 'medium';
   @state() private auto = false;
+  /** RUTA DECLARATIVA (/<id-o-nombre>): fija el foco de ESTA vista — la URL manda; '/' sigue al servidor */
+  @property() routeProj = '';
+  @state() private routeErr = ''; // proyecto de la URL desconocido/ambiguo → aviso honesto, jamás adivinar
+  @state() private loadedOnce = false; // distingue «cargando» (spinner centrado) de «registro vacío» (estado honesto)
   @state() private projId = '';
   @state() private mPlanner = '';
   @state() private mCoder = '';
@@ -98,6 +102,32 @@ export class PanelScreen extends CElement {
     super.disconnectedCallback();
     if (this.liveTimer) clearInterval(this.liveTimer);
   }
+  // navegación /<proyecto> ↔ '/': el foco se resuelve EN SÍNCRONO contra la lista ya cargada (cero
+  // flash de «conductor»/datos mezclados — el bug de navegación reportado en real) y el fetch fresco
+  // corre por detrás. RUTA DECLARATIVA: id exacto > nombre único; desconocido/ambiguo = aviso honesto.
+  private resolveRoute(): void {
+    this.routeErr = '';
+    if (this.routeProj) {
+      const byId = this.projects.find((p) => p.id === this.routeProj);
+      const byName = this.projects.filter((p) => p.name === this.routeProj);
+      const hit = byId ?? (byName.length === 1 ? byName[0] : null);
+      if (hit) { this.projId = hit.id; return; }
+      if (this.projects.length) this.routeErr = byName.length > 1
+        ? `Hay ${byName.length} proyectos llamados «${this.routeProj}» — usa la URL con id, p.ej. /${byName[0].id}`
+        : `No conozco el proyecto «${this.routeProj}» — te dejo en el panel global. Regístralo con \`conductor init\` en su repo.`;
+    }
+    // sin /<proyecto> en la URL (o sin resolver): PANEL GLOBAL — projId vacío = scope todos.
+    // El servidor ya no teledirige pestañas: el gesto `conductor` abre /<id> directamente.
+    this.projId = '';
+  }
+  // willUpdate (PRE-render): la ruta se resuelve ANTES del primer pintado del ciclo — updated() era
+  // post-render y colaba UN frame con el estado anterior (el «flash» exacto que se veía al navegar).
+  override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('routeProj')) this.resolveRoute();
+  }
+  override updated(changed: Map<string, unknown>): void {
+    if (changed.has('routeProj')) void this.refreshChanges();
+  }
 
   private async load(): Promise<void> {
     await this.refreshChanges();
@@ -113,15 +143,12 @@ export class PanelScreen extends CElement {
       this.projects = sanitizeProjects(d.projects); // saneo en el BORDE: projects array, cada uno objeto con changes array → todo .map/.filter downstream a salvo de datos corruptos
       this.gh = d.ghUsage ?? null;
       this.usage = d.usage ?? null;
-      this.version = d.version ?? '';
       // PROYECTO ACTIVO por ID ESTABLE (no por nombre — dos repos con el mismo basename ya no colisionan, #9).
       const served = d.projectId || this.projects.find((p) => p.name === d.project)?.id || this.projects[0]?.id || '';
       this.defProjId = served;
-      // ARRANQUE PER-REPO (Opción A): sin selector en la web, el FOCO lo manda el SERVIDOR (focusId, que el
-      // arranque (`conductor`/tool conductor_app) fija vía /api/focus al repo desde el que lanzaste). El panel SIGUE ese foco en CADA
-      // poll → una pestaña ya abierta en OTRO repo se re-enfoca a ESTE en ≤5s, sin depender de que el navegador
-      // navegue a un ?project=. Si el servidor devuelve vacío puntualmente, se conserva el último foco bueno.
-      if (served) this.projId = served;
+      this.loadedOnce = true;
+      // la resolución de la ruta corre SIEMPRE tras traer la lista fresca (y en síncrono al navegar)
+      this.resolveRoute();
     } catch { /* conserva el último dato bueno */ }
   }
 
@@ -562,14 +589,15 @@ export class PanelScreen extends CElement {
   }
 
   override render(): TemplateResult {
-    // FOCO: por defecto solo el proyecto activo; "ver todos" agrega el global (#8 — lo global es opt-in).
+    // SPINNER ÚNICO en toda navegación: hasta que llega la primera carga, tick-strip CENTRADO —
+    // jamás una pantalla a medio pintar (h1 «conductor», métricas a cero) que luego «salta» a lo real.
+    if (!this.loadedOnce) return loader(this.routeProj ? 'Cargando proyecto' : 'Cargando panel', true);
     const scope = this.scopeProjects();
     const m = this.metrics(scope);
     const opts = this.modelOptions();
-    // Lo VIVO cruza el foco SIEMPRE (mismo principio que «Tu atención»): con dos proyectos corriendo a
-    // la vez, el panel per-repo escondía el run del otro — un run en curso jamás puede ser invisible.
-    // La tarjeta ya lleva el chip del proyecto, y el historial sí respeta el scope (la home es tu repo).
-    const activeItems = this.projects.flatMap((p) =>
+    // Lo VIVO: la home GLOBAL lo enseña de todos los proyectos (jamás invisible); la página de un
+    // proyecto enseña LO SUYO (lo demás vivo sigue a un vistazo en sidebar y «Tu atención»).
+    const activeItems = scope.flatMap((p) =>
       (p.changes ?? []).filter((c) => verdictClass(c.verdict) === 'CURSO').map((c) => ({ p, c }))
     );
     const doneItems = scope.flatMap((p) =>
@@ -640,24 +668,45 @@ export class PanelScreen extends CElement {
     // GATE DE INIT (coherencia gating==visibilidad): si el proyecto ACTIVO no está inicializado, se muestra el CTA
     // "Inicializar" en vez del formulario — no se ofrece lanzar sobre un proyecto sin gobierno.
     const active = this.projects.find((p) => p.id === this.projId) ?? null;
+    // DOS MODOS, una jerarquía: '/' = home GLOBAL (proyectos + métricas y historial agregados; sin
+    // formulario — se lanza DENTRO de un proyecto) · /<proyecto> = su página (formulario héroe + lo suyo).
+    const isGlobal = !active;
     const launchSurface = (active && active.openspec === false) ? this.initPanel(active) : launchForm;
     const att = this.attention();
     return html`
       <!-- la home ES tu proyecto: el título lleva su nombre (el texto que no orienta se ha podado; la ruta
            vive en el tooltip del selector y la versión del motor en el pliegue de Métricas) -->
-      <div class="apphdr"><h1>${active ? active.name : 'conductor'}</h1></div>
+      <!-- el h1 SIEMPRE con su chip de rama (petición de producto): sabes contra qué rama lanzas sin mirar la terminal -->
+      <div class="apphdr"><h1>${active ? active.name : 'conductor'}</h1>${active?.branch ? html`<span class="chip-branch" title="rama de git del proyecto">⎇ ${active.branch}</span>` : nothing}</div>
+      ${this.routeErr ? html`<p class="alert warn" role="status"><span>${this.routeErr}</span></p>` : nothing}
       ${att.length ? html`<div class="attn" role="alert" aria-label="runs que esperan tu decisión">
         ${att.map(({ p, c }) => html`<a class="attn-item" href="/run/${p.id}/${c.name}">${icon('pause')} <b>${c.name}</b> espera tu decisión${this.projects.length > 1 ? html` <span class="muted">· ${icon('folder')} ${p.name}</span>` : nothing}<span class="attn-go">Abrir →</span></a>`)}
       </div>` : nothing}
       <!-- coste "1 cifra en su momento" (decisión de producto): el desglose vive plegado; la cifra oportuna
            va en el estimate del form (al decidir) y en el run (al terminar). AI Credits queda como única señal ambiente. -->
-      <!-- el PROMPT es el HÉROE: siempre primero y desplegado (decisión UX); los runs en curso
-           viven ABAJO con el historial — el panel se abre para LANZAR, el seguimiento va después -->
-      ${launchSurface}
+      <!-- página de PROYECTO: el PROMPT es el HÉROE. Home GLOBAL: el héroe son los PROYECTOS
+           (moverse entre ellos en un clic) — se lanza dentro de cada proyecto, no desde la home. -->
+      ${isGlobal ? html`
+        <h2 class="sect">Proyectos</h2>
+        <div class="proj-grid">
+          ${this.projects.map((p) => {
+            const cs = p.changes ?? [];
+            const vivo = cs.some((c) => c.pending || verdictClass(c.verdict) === 'CURSO');
+            const green = cs.filter((c) => verdictClass(c.verdict) === 'GREEN').length;
+            return html`<a class="proj-card" href="/${p.id}" title="Abrir ${p.name} (URL directa: /${p.id})">
+              <span class="pc-head">${icon('folder')}<b class="pc-name">${p.name}</b>${vivo ? html`<span class="dot CURSO" role="img" aria-label="algo vivo en este proyecto"></span>` : nothing}</span>
+              <span class="pc-sub">${cs.length ? html`${cs.length} run${cs.length === 1 ? '' : 's'}${green ? html` · <span class="pc-g">${green} ✓</span>` : nothing}` : 'Sin runs todavía'}</span>
+              <span class="pc-go" aria-hidden="true">Abrir →</span>
+            </a>`;
+          })}
+        </div>
+        ${this.projects.length === 0 ? html`<p class="muted">Ningún proyecto registrado todavía — ejecuta <code>conductor init</code> en tu repo y aparecerá aquí.</p>` : nothing}
+      ` : launchSurface}
 
       <!-- MÉTRICAS SIEMPRE VISIBLES bajo el formulario (decisión UX: sin pliegue — el pliegue
            las escondía y nadie las abría). Flechas PEGADAS al número (voz de dato), versión discreta al pie. -->
-      <section class="metrics-strip" aria-label="métricas del proyecto">
+      <section class="metrics-strip" aria-label=${isGlobal ? 'métricas globales' : 'métricas del proyecto'}>
+        <div class="sectrow"><h2 class="sect">Métricas</h2></div>
         <div class="cards">
           <div class="card"><small>Runs</small><span>${m.total}</span></div>
           <div class="card ok"><small>Green</small><span>${m.green}</span></div>
@@ -667,7 +716,7 @@ export class PanelScreen extends CElement {
           ${this.gh ? html`<div class="card aic"><small>AI Credits</small><span>${this.gh.used}/${this.gh.entitlement}</span><div class="pbar ${this.gh.percentUsed > 80 ? 'warn' : ''}"><i style="width:${Math.min(100, this.gh.percentUsed)}%"></i></div></div>` : nothing}
           ${this.usage ? html`<div class="card"><small>Uso total LiteLLM</small><span>$${this.usage.spend.toFixed(2)}${this.usage.budget ? html` <span class="muted" style="font-size:.8rem;font-weight:500">/ $${this.usage.budget.toFixed(0)}</span>` : nothing}</span>${this.usage.budget ? html`<div class="pbar ${this.usage.spend / this.usage.budget > 0.8 ? 'warn' : ''}"><i style="width:${Math.min(100, (this.usage.spend / this.usage.budget) * 100)}%"></i></div>` : nothing}</div>` : nothing}
         </div>
-        ${this.version || (!m.measured && m.total) ? html`<p class="metrics-foot" title="versión del motor en uso">${this.version ? html`motor v${this.version}` : nothing}${!m.measured && m.total ? html`${this.version ? ' · ' : ''}tokens sin medir en estos runs` : nothing}</p>` : nothing}
+        ${!m.measured && m.total ? html`<p class="metrics-foot">tokens sin medir en estos runs</p>` : nothing}
       </section>
 
       ${activeItems.length > 0 ? html`
@@ -690,7 +739,7 @@ export class PanelScreen extends CElement {
 
       ${m.total === 0 ? html`<p class="muted" style="margin-top:.5rem">Aún no hay runs. Lanza el primero arriba.</p>` : nothing}
 
-      ${this.archived.length ? html`
+      ${!isGlobal && this.archived.length ? html`
         <details class="arch">
           <summary>${icon('archive')} Archivados <span class="muted">· ${this.archived.length}</span></summary>
           ${this.archived.map((a) => html`

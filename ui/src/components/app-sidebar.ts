@@ -15,7 +15,6 @@ export class AppSidebar extends CElement {
   @property() activeRoute = '';
   @property() activeProj = ''; // proyecto de la ruta actual (run/session) — manda sobre el foco recordado
   @state() private projects: ProjectSummary[] = [];
-  @state() private served = ''; // projectId servido por defecto (último fallback de foco)
   @state() private appMsg = '';
   private api = new ConductorApi('/api/');
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -30,18 +29,15 @@ export class AppSidebar extends CElement {
     if (this.timer) clearInterval(this.timer);
   }
   private async load(): Promise<void> {
-    try { const d = await this.api.changes(); this.projects = sanitizeProjects(d.projects); this.served = d.projectId ?? ''; } catch { /* conserva último bueno */ }
+    try { const d = await this.api.changes(); this.projects = sanitizeProjects(d.projects); } catch { /* conserva último bueno */ }
   }
 
-  // FOCO: la ruta (si estás dentro de un run) > el foco del SERVIDOR — la MISMA resolución que el panel.
-  // (El localStorage 'conductor.activeProject' era una reliquia del diseño con selector: nadie lo escribe
-  // ya, y leerlo aquí hacía que la sidebar enseñara un proyecto VIEJO mientras el panel seguía al servidor.)
+  // LA URL ES EL FOCO: solo la ruta marca el proyecto «actual» (dentro de un run o en /<proyecto>).
+  // En la home global no hay actual — todos los grupos al mismo nivel, en el orden del registro.
   private focusedProject(): ProjectSummary | null {
-    for (const id of [this.activeProj, this.served]) {
-      const p = id ? this.projects.find((x) => x.id === id) : undefined;
-      if (p) return p;
-    }
-    return this.projects[0] ?? null;
+    const id = this.activeProj;
+    // la ruta puede traer NOMBRE (URL a mano): vale para resaltar el grupo; la resolución honesta vive en el panel
+    return id ? (this.projects.find((x) => x.id === id || x.name === id) ?? null) : null;
   }
   // pausas esperando decisión humana, en CUALQUIER proyecto — la única señal que cruza el foco
   private attention(): Array<{ p: ProjectSummary; c: ChangeSummary }> {
@@ -91,9 +87,11 @@ export class AppSidebar extends CElement {
             <span class="nm">${icon('pause')} ${c.name}</span>
           </a>`)}
       </nav>` : nothing}
-      ${ordered.filter((p) => (p.changes ?? []).length > 0 || p.id === focus?.id).map((p) => html`
+      ${ordered.map((p) => html`
       <nav class="sb-runs" aria-label="Runs de ${p.name}">
-        <h2 class="sb-h">${p.name}${(p.changes ?? []).length ? html`<span class="sb-cnt">${(p.changes ?? []).length}</span>` : nothing}</h2>
+        <!-- cabecera CLICABLE = conmutador de proyecto (P1): clic → /<id> enfoca ese proyecto en el
+             panel. Affordance sin ruido: carpeta + nombre, flecha de acento al hover, barra del actual. -->
+        <h2 class="sb-h"><a class="sb-hlink ${focus?.id === p.id ? 'cur' : ''}" href="/${p.id}" title="Enfocar ${p.name} en el panel (URL directa: /${p.id})" aria-current=${focus?.id === p.id ? 'true' : nothing}>${icon('folder')}<span class="sb-hname">${p.name}</span>${(p.changes ?? []).length ? html`<span class="sb-cnt">${(p.changes ?? []).length}</span>` : nothing}<span class="sb-go" aria-hidden="true">→</span></a></h2>
         ${(p.changes ?? []).slice(0, 12).map((c) => html`
           <a class="sb-run" href="/run/${p.id}/${c.name}" title=${c.request} aria-current=${this.activeChange === c.name && this.activeProj === p.id ? 'page' : nothing}>
             <span class="dot ${this.dotClass(c)}" role="img" aria-label=${this.dotLabel(c)}></span>

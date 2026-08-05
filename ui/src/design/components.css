@@ -549,6 +549,19 @@ details.arch > summary { cursor: pointer; font-size: .74rem; font-weight: 700; l
 .why-lst { margin: .35rem 0 .3rem 1.1rem; padding: 0; }
 .why-lst li { margin: .15rem 0; }
 
+/* ── Home GLOBAL: tarjetas de PROYECTO (el héroe de la home) — instrumento, no marketing:
+   nombre en mono, pulso del proyecto (runs · verdes · punto vivo) y flecha de acento al hover ── */
+.proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .7rem; margin: .2rem 0 1.2rem; }
+.proj-card { display: flex; flex-direction: column; gap: .3rem; padding: .85rem .95rem; background: var(--card); border: 1px solid var(--bd); border-radius: var(--r); text-decoration: none; color: var(--tx); box-shadow: var(--sh); transition: border-color .12s, transform .12s; position: relative; }
+.proj-card:hover, .proj-card:focus-visible { border-color: var(--accent); transform: translateY(-1px); }
+.pc-head { display: flex; align-items: center; gap: .45rem; font: 700 .85rem/1.2 var(--mono); min-width: 0; }
+.pc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-sub { color: var(--tx2); font-size: .78rem; }
+.pc-g { color: var(--ok); font-weight: 600; }
+.pc-go { position: absolute; right: .9rem; bottom: .7rem; color: var(--accent); font-size: .78rem; font-weight: 600; opacity: 0; transform: translateX(-3px); transition: opacity .12s, transform .12s; }
+.proj-card:hover .pc-go, .proj-card:focus-visible .pc-go { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .proj-card, .pc-go { transition: none; } .proj-card:hover { transform: none; } }
+
 /* chip de rama git (voz de dato: mono, como los ctx-chip) */
 .chip-branch { display: inline-block; font: 600 .68rem/1.4 var(--mono); color: var(--tx2); background: var(--bg2); border: 1px solid var(--bd2); border-radius: 5px; padding: .06rem .4rem; vertical-align: baseline; }
 

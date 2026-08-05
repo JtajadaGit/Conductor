@@ -221,7 +221,7 @@ export class RunScreen extends CElement {
   override render(): TemplateResult {
     if (this.err && !this.s) return html`<p class="errline" role="alert">Error: ${this.err}</p>`;
     const s = this.s;
-    if (!s) return loader('Cargando run');
+    if (!s) return loader('Cargando run', true);
     const isDemo = this.apiBase.includes('/demo');
     // change que ya NO está en changes/ (archivado o URL errónea): pantalla honesta, jamás un run vivo vacío.
     // `missing`/`archivedAs` aún no viajan en el contrato RunState de types.ts (compartido) → cast local documentado.
@@ -238,9 +238,10 @@ export class RunScreen extends CElement {
       ${isDemo ? html`<p class="alert info" role="note" style="margin-bottom:1rem"><span><b>Demo</b> — pantalla de muestra con datos ficticios (modelos, cambios y coste no son reales). <a class="lnk" href="/">Ir a tu panel</a></span></p>` : nothing}
       <div class="apphdr">
         <h1 class="trunc">${this.change || s.project || 'run'}</h1>
+        ${s.branch ? html`<span class="chip-branch" title="rama de git del proyecto">⎇ ${s.branch}</span>` : nothing}
         <span role="status" aria-live="polite"><status-pill .verdict=${s.pending ? 'EN PAUSA' : (s.verdict ?? 'EN CURSO')}></status-pill></span>
       </div>
-      <p class="subhead">${s.project || '—'}${s.branch ? html` <span class="chip-branch" title="rama de git del proyecto">⎇ ${s.branch}</span>` : ''}</p>
+      <p class="subhead">${s.project || '—'}</p>
       <div class="actbar">
         <a class="btn sm sec" href=${this.sessionHref()} title="La traza del agente paso a paso: qué tools usó, qué permisos pidió, hooks y modelos de la sesión del CLI. Lectura local — 0 tokens.">${icon('session')} Ver sesión</a>
         ${(s.done || s.verdict === 'INTERRUMPIDO') && verdictClass(s.verdict) !== 'GREEN' ? html`<button class="btn sm resume" ?disabled=${this.busy === 'resume'} @click=${() => void this.resumeRun()} title=${s.verdict === 'INTERRUMPIDO' ? 'El proceso del run murió sin cerrar (¿equipo suspendido / terminal cerrada?) — reanuda desde la última fase completada' : 'reanudar el run'}>${this.busy === 'resume' ? 'Reanudando…' : html`${icon('play')} Reanudar`}</button>` : nothing}
