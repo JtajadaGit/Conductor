@@ -620,6 +620,14 @@ await test('serve(#74): POST /api/init scaffold SDD nativo (conductor.json + .co
   // que "completo" ya no incluye config.yaml (espejo detectado que nadie parseaba) sino project.md.
   assert(existsSync(join(R, 'openspec', 'project.md')), 'project.md creado — init ATÓMICO, no dos scaffolds');
   assert(!existsSync(join(R, 'openspec', 'config.yaml')), 'SIN config.yaml (ni espejo ni marcador — el archive del CLI oficial no mueve nuestra evidencia)');
+  // rama del proyecto SIN ejecutar git (chip del h1): ref normal, detached → sha corto, sin git → null
+  const { gitBranchOf } = await import('../lib/serving/serve.mjs');
+  const G = join(R, '.tmp-branch'); mkdirSync(join(G, '.git'), { recursive: true });
+  writeFileSync(join(G, '.git', 'HEAD'), 'ref: refs/heads/feature/2.0.0\n');
+  eq(gitBranchOf(G), 'feature/2.0.0', 'rama de la ref');
+  writeFileSync(join(G, '.git', 'HEAD'), 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678\n');
+  eq(gitBranchOf(G), 'a1b2c3d', 'detached => sha corto');
+  eq(gitBranchOf(join(R, 'no-git')), null, 'sin git => null (el chip simplemente no se pinta)');
   assert(existsSync(join(R, '.copilotignore')), '.copilotignore creado en el root del proyecto');
   assert(existsSync(join(R, '.gitignore')), '.gitignore creado (la fontanería del run fuera del repo)');
   const r2 = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
