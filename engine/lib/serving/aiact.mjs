@@ -62,8 +62,10 @@ export function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
   const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td style="color:var(--tx2)">${E(m.role || '—')}</td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  // VÍA HONESTA: human-web = clic de una persona en el panel; human-chat = decisión TRANSMITIDA por el
+  // agente MCP del chat (el motor no puede probar que hubo humano detrás — y el acta no lo afirma).
   const apps = d.approvals.length
-    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
+    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — ${a.via === 'human-chat' ? 'aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)' : `aprobada por <b>una persona</b> (${E(a.via || 'panel web')})`} el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
   const files = d.aiGeneratedFiles.map((f) => `<li><code>${E(f.p)}</code> <span style="color:var(--tx3);font-size:.85em">${E(f.k)} · ${E(f.phase)}</span></li>`).join('') || '<li style="color:var(--tx3)">ninguno registrado</li>';
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

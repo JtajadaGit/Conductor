@@ -328,7 +328,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
         return {
           ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, needsInit: lj?.needsInit || undefined,
           web: lj?.url ? app.url.replace(/\/$/, '') + lj.url : undefined, activeChange,
-          ...(activeChange ? { next: `Hay un run activo («${activeChange}») en este repo — NO lances otro: síguelo con conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"} y ve contando su progreso al usuario.` } : {}),
+          ...(activeChange ? { next: `Tu PRIMERA LÍNEA al usuario, literal: «⚠ NO he lanzado tu petición: este repo ya tiene un run activo («${activeChange}») y dos runs sobre el mismo código se pisarían». Después pregúntale: ¿seguir ese run, detenerlo y lanzar el tuyo, o esperar? Para seguirlo: conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"}. JAMÁS relances en bucle.` } : {}),
         };
       }
       // ARRANQUE RÁPIDO: la PRIMERA respuesta vuelve en
@@ -358,7 +358,9 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       let stale = null; // decisión que llegó TARDE a una pausa ya resuelta (p.ej. desde la web)
       if (action === 'stop') { try { await fetch(app.url + base + '/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); } catch {} }
       else if (action !== 'wait') {
-        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
+        // source:'chat' — la decisión llega TRANSMITIDA por un agente MCP, no de un clic humano en el
+        // panel: el driver lo graba (via human-chat) y el acta AI Act deja de afirmar «una persona» a ciegas.
+        const payload = { source: 'chat', ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
         try {
           const r = await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
           if (r.status === 409) { const j = await r.json().catch(() => ({})); if (j.stalePause) stale = j; }

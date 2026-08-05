@@ -33,10 +33,11 @@ export class AppSidebar extends CElement {
     try { const d = await this.api.changes(); this.projects = sanitizeProjects(d.projects); this.served = d.projectId ?? ''; } catch { /* conserva último bueno */ }
   }
 
-  // FOCO: la ruta (si estás dentro de un run) > el proyecto elegido en el panel (localStorage) > el servido.
+  // FOCO: la ruta (si estás dentro de un run) > el foco del SERVIDOR — la MISMA resolución que el panel.
+  // (El localStorage 'conductor.activeProject' era una reliquia del diseño con selector: nadie lo escribe
+  // ya, y leerlo aquí hacía que la sidebar enseñara un proyecto VIEJO mientras el panel seguía al servidor.)
   private focusedProject(): ProjectSummary | null {
-    let stored: string | null = null; try { stored = localStorage.getItem('conductor.activeProject'); } catch { /* sin storage */ }
-    for (const id of [this.activeProj, stored, this.served]) {
+    for (const id of [this.activeProj, this.served]) {
       const p = id ? this.projects.find((x) => x.id === id) : undefined;
       if (p) return p;
     }

@@ -480,6 +480,19 @@ await test('drive(v3-P1): nota del humano y MODELO EN CALIENTE — solo para la 
   assert(Array.isArray(tl.approvals) && tl.approvals.some((a) => a.phase === 'apply' && a.via === 'human-web'), 'aprobaciones humanas registradas (AI Act)');
 });
 
+await test('drive(vía honesta): una decisión con source:"chat" queda como human-chat — jamás se disfraza de clic humano', async () => {
+  fresh();
+  const changeDir = join(TMP, 'openspec', 'changes', 'via');
+  const r = await drive({
+    changeDir, request: 'x', complexity: 'simple', domain: 'counter', srcDir: TMP, runAgent: goodAgent,
+    pauseAt: ['apply'],
+    onPause: () => Promise.resolve({ source: 'chat' }),
+  });
+  eq(r.verdict, 'GREEN');
+  const tl = JSON.parse(readFileSync(plumbPath(changeDir, 'timeline.json'), 'utf8'));
+  assert(tl.approvals.some((a) => a.phase === 'apply' && a.via === 'human-chat'), 'la aprobación transmitida por el agente MCP queda auditada como human-chat');
+});
+
 await test('drive(#45): CHAT-EN-PAUSA — redo:"spec" rehace la spec con la instrucción y VUELVE a pausar antes de apply', async () => {
   fresh();
   const changeDir = join(TMP, 'openspec', 'changes', 'redo1');

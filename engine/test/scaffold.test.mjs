@@ -159,7 +159,7 @@ await test('aiact (P3): informe de transparencia — modelos, aprobaciones human
   writeFileSync(join(T, 'specs', 'counter', 'spec.md'), '## ADDED Requirements');
   writeFileSync(plumbPath(T, 'timeline.json'), JSON.stringify({
     request: 'add counter', verdict: 'GREEN',
-    approvals: [{ phase: 'apply', at: '2026-06-11T10:00:00Z', via: 'human-web' }],
+    approvals: [{ phase: 'apply', at: '2026-06-11T10:00:00Z', via: 'human-web' }, { phase: 'verify', at: '2026-06-11T10:04:00Z', via: 'human-chat' }],
     phases: [
       { phase: 'spec', model: 'qwen36-msc1', provider: 'byok', ok: true },
       { phase: 'apply', model: 'claude-haiku-4.5', provider: 'copilot', files: [{ p: 'src/c.js', k: 'create' }], tokens: { in: 1000, out: 100 }, ok: true },
@@ -173,6 +173,7 @@ await test('aiact (P3): informe de transparencia — modelos, aprobaciones human
   // SDD-first: la pastilla dice DE QUIÉN es el veredicto (del run, no del AI Act), la tabla enseña el
   // papel de cada agente, y el documento NO se autoexplica (la didáctica vive en /help del panel)
   assert(html.includes('veredicto del run (SDD)'), 'la pastilla GREEN queda atribuida al run SDD, no al AI Act');
+  assert(html.includes('aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)'), 'human-chat se declara TAL CUAL — el acta jamás afirma «una persona» sin poder saberlo');
   assert(html.includes('<th>papel</th>'), 'columna papel: el equipo de agentes es visible por fase');
   assert(!html.includes('En corto'), 'el entregable abre con datos — la guía está en /help, no dentro del documento');
   rmSync(T, { recursive: true, force: true });

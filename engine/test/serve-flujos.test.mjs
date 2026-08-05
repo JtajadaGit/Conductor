@@ -59,10 +59,11 @@ await test('serve-flujos: la PAUSA del driver aparece en el estado y `continue` 
   eq(sj.stalePause, true, 'y dice POR QUÉ (stalePause)');
   eq(sj.pausedNow, 'apply', 'con la pausa que sí está viva');
   assert((await get('api/run/contador/state')).pending, 'la pausa viva sigue intacta tras el intento tardío');
-  const c = await (await post('api/run/contador/continue', { expectPhase: 'apply', note: 'usa camelCase', model: 'copilot:otro', selected: [0] })).json();
+  const c = await (await post('api/run/contador/continue', { expectPhase: 'apply', source: 'chat', note: 'usa camelCase', model: 'copilot:otro', selected: [0] })).json();
   eq(c.ok, true);
   const enviado = hijos[0].enviados.at(-1);
   eq(enviado.t, 'continue', 'se manda por IPC, no se reinventa el run');
+  eq(enviado.payload.source, 'chat', 'la VÍA de la decisión (chat vs web) llega al driver — el acta no afirma «una persona» a ciegas');
   eq(enviado.payload.note, 'usa camelCase', 'la nota del humano llega ÍNTEGRA al driver');
   eq(enviado.payload.model, 'copilot:otro', 'y el cambio de modelo en caliente');
   eq(enviado.payload.selected, [0], 'y qué hallazgos quiere que se arreglen');

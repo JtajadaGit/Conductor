@@ -561,6 +561,7 @@ switch (cmd) {
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · PROHIBIDO aprobar una pausa que el usuario no haya aprobado EXPLÍCITAMENTE en este chat («apruebo automáticamente» = violación del contrato: la pausa existe PARA la persona; queda auditado como human-chat en el acta).',
       '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle; si la respuesta trae `decisiones` nuevas (pausas resueltas desde la web), cuéntalas en 1 línea.',
       '  · si la respuesta trae `aviso`: léelo y obedécelo (tu decisión llegó a una pausa ya resuelta — presenta el estado ACTUAL, no insistas).',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',

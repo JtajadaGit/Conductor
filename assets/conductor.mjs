@@ -4733,8 +4733,10 @@ function renderAiact(changeDir) {
   const d = aiactData(changeDir);
   const vc = d.verdict === 'GREEN' ? 'GREEN' : (d.verdict === 'ABORTED' || d.verdict === 'STOPPED' ? d.verdict : 'INTERRUMPIDO');
   const models = d.models.map((m) => `<tr><td><code>${E(m.phase)}</code></td><td style="color:var(--tx2)">${E(m.role || '—')}</td><td>${m.model ? `<b>${E(m.model)}</b>` : '<span style="color:var(--tx3)">modelo de la sesión del CLI de Copilot <small>(el runtime no lo expone por fase)</small></span>'}</td><td style="color:var(--tx3)">${E(m.provider || '—')}${m.fallback ? `<br><small>reserva tras ${E(m.fallback.afterKind)} (pedido: ${E(m.fallback.from)})</small>` : ''}</td><td style="font-variant-numeric:tabular-nums">${m.tokens ? `↓${Number(m.tokens.in) || 0} ↑${Number(m.tokens.out) || 0}` : '—'}</td></tr>`).join('');
+  // VÍA HONESTA: human-web = clic de una persona en el panel; human-chat = decisión TRANSMITIDA por el
+  // agente MCP del chat (el motor no puede probar que hubo humano detrás — y el acta no lo afirma).
   const apps = d.approvals.length
-    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — aprobada por <b>una persona</b> (${E(a.via)}) el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
+    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — ${a.via === 'human-chat' ? 'aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)' : `aprobada por <b>una persona</b> (${E(a.via || 'panel web')})`} el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
   const files = d.aiGeneratedFiles.map((f) => `<li><code>${E(f.p)}</code> <span style="color:var(--tx3);font-size:.85em">${E(f.k)} · ${E(f.phase)}</span></li>`).join('') || '<li style="color:var(--tx3)">ninguno registrado</li>';
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -6211,7 +6213,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
             redoCount++;
             if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
             decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
-            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
+            approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
             log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
             step = r;
             continue;
@@ -6236,7 +6238,10 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       if (pr?.note && String(pr.note).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'note', value: String(pr.note).trim().slice(0, 200) });
       if (pr?.model && String(pr.model).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'model-override', value: String(pr.model).trim() });
       if (phase === 'fix' && Array.isArray(pr?.selected) && pr.selected.length) decisions.push({ at: new Date().toISOString(), phase, kind: 'fix-selection', value: pr.selected.length });
-      approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
+      // VÍA HONESTA de la decisión (hallazgo real: el «apruebo automáticamente» de un agente de chat
+      // quedaba registrado como human-web — el acta afirmaba «una persona» sin poder saberlo):
+      // human-web = clic en el panel · human-chat = decisión TRANSMITIDA por el agente MCP del chat.
+      approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
       log(`▶ aprobado — continúa "${phase}"`);
     }
     // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
@@ -9465,7 +9470,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
         return {
           ok: false, error: lj?.error || `launch HTTP ${lr?.status}`, needsInit: lj?.needsInit || undefined,
           web: lj?.url ? app.url.replace(/\/$/, '') + lj.url : undefined, activeChange,
-          ...(activeChange ? { next: `Hay un run activo («${activeChange}») en este repo — NO lances otro: síguelo con conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"} y ve contando su progreso al usuario.` } : {}),
+          ...(activeChange ? { next: `Tu PRIMERA LÍNEA al usuario, literal: «⚠ NO he lanzado tu petición: este repo ya tiene un run activo («${activeChange}») y dos runs sobre el mismo código se pisarían». Después pregúntale: ¿seguir ese run, detenerlo y lanzar el tuyo, o esperar? Para seguirlo: conductor_continue {projectRoot, changeName:"${activeChange}", action:"wait"}. JAMÁS relances en bucle.` } : {}),
         };
       }
       // ARRANQUE RÁPIDO: la PRIMERA respuesta vuelve en
@@ -9495,7 +9500,9 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       let stale = null; // decisión que llegó TARDE a una pausa ya resuelta (p.ej. desde la web)
       if (action === 'stop') { try { await fetch(app.url + base + '/stop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); } catch {} }
       else if (action !== 'wait') {
-        const payload = { ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
+        // source:'chat' — la decisión llega TRANSMITIDA por un agente MCP, no de un clic humano en el
+        // panel: el driver lo graba (via human-chat) y el acta AI Act deja de afirmar «una persona» a ciegas.
+        const payload = { source: 'chat', ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
         try {
           const r = await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
           if (r.status === 409) { const j = await r.json().catch(() => ({})); if (j.stalePause) stale = j; }
@@ -10149,6 +10156,7 @@ switch (cmd) {
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '  · PROHIBIDO aprobar una pausa que el usuario no haya aprobado EXPLÍCITAMENTE en este chat («apruebo automáticamente» = violación del contrato: la pausa existe PARA la persona; queda auditado como human-chat en el acta).',
       '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle; si la respuesta trae `decisiones` nuevas (pausas resueltas desde la web), cuéntalas en 1 línea.',
       '  · si la respuesta trae `aviso`: léelo y obedécelo (tu decisión llegó a una pausa ya resuelta — presenta el estado ACTUAL, no insistas).',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
@@ -10957,4 +10965,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: f099a33bd3bad8ee64ff5ff17996d36c76403b78ca6849ff3e5296aef2e21db0
+// build-inputs-sha256: 386575ca2d9a4f4dee5eaae37d0589eb75cc1ad80160479ffc531d98d8edcc3b

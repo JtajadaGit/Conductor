@@ -1231,7 +1231,7 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
             redoCount++;
             if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
             decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
-            approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
+            approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
             log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
             step = r;
             continue;
@@ -1256,7 +1256,10 @@ export async function drive({ changeDir, request, complexity = 'medium', domain 
       if (pr?.note && String(pr.note).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'note', value: String(pr.note).trim().slice(0, 200) });
       if (pr?.model && String(pr.model).trim()) decisions.push({ at: new Date().toISOString(), phase, kind: 'model-override', value: String(pr.model).trim() });
       if (phase === 'fix' && Array.isArray(pr?.selected) && pr.selected.length) decisions.push({ at: new Date().toISOString(), phase, kind: 'fix-selection', value: pr.selected.length });
-      approvals.push({ phase, at: new Date().toISOString(), via: 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
+      // VÍA HONESTA de la decisión (hallazgo real: el «apruebo automáticamente» de un agente de chat
+      // quedaba registrado como human-web — el acta afirmaba «una persona» sin poder saberlo):
+      // human-web = clic en el panel · human-chat = decisión TRANSMITIDA por el agente MCP del chat.
+      approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
       log(`▶ aprobado — continúa "${phase}"`);
     }
     // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
