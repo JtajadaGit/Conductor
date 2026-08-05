@@ -56,6 +56,23 @@ await test('events: filtro por categoría, búsqueda y paginado; null si no exis
   eq(parseEvents(join(TMP, 'nope.jsonl')), null, 'fichero ausente → null');
 });
 
+await test('events: session.shutdown se etiqueta como fin de FASE (no del run) con su recibo de tokens', () => {
+  fresh(); const d = plumbPath(TMP); mkdirSync(d, { recursive: true }); const f = join(d, 'events.jsonl');
+  // las dos formas reales del recibo: tokenDetails (Copilot) y modelMetrics (BYOK/LiteLLM) — y el checkpoint
+  const evs = [
+    { type: 'session.usage_checkpoint', data: {}, id: 'c1', timestamp: '2026-06-16T14:51:00.000Z' },
+    { type: 'session.shutdown', data: { tokenDetails: { input: { tokenCount: 100 }, cache_write: { tokenCount: 20 }, output: { tokenCount: 30 } } }, id: 'd1', timestamp: '2026-06-16T14:51:01.000Z' },
+    { type: 'session.shutdown', data: { modelMetrics: { m: { usage: { inputTokens: 50, outputTokens: 5 } } } }, id: 'd2', timestamp: '2026-06-16T14:51:02.000Z' },
+  ];
+  writeFileSync(f, evs.map((e) => JSON.stringify(e)).join('\n'));
+  const r = parseEvents(f);
+  const [cp, s1, s2] = r.events;
+  assert(cp.label.includes('Recuento de tokens'), 'checkpoint sin type crudo');
+  assert(!s1.label.includes('session.shutdown') && s1.label.includes('Fin de sesión de la fase'), 'shutdown etiquetado en cristiano');
+  assert(s1.detail.includes('↓120 ↑30') && s1.detail.includes('no termina el run'), 'detail con recibo tokenDetails + aclaración');
+  assert(s2.detail.includes('↓50 ↑5'), 'detail con recibo modelMetrics');
+});
+
 // VISOR para runs qwen: sin events.jsonl, se reconstruye la traza desde spans OTel (.conductor/otel/<fase>.jsonl)
 const OTEL = [
   { type: 'span', name: 'chat qwen36-msc1', attributes: { 'gen_ai.operation.name': 'chat', 'gen_ai.response.model': 'qwen36-msc1', 'gen_ai.usage.input_tokens': 1200, 'gen_ai.usage.output_tokens': 80 }, startTime: [1781780221, 0], endTime: [1781780223, 0], status: { code: 0 }, events: [] },

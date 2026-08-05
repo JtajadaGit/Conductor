@@ -107,6 +107,8 @@ La app es única y local (127.0.0.1, solo tú), instalable como PWA, se apaga so
 /conductor                                            ← estado y ayuda, sin abrir navegador
 ```
 
+**El modelo del chat no viaja al run**: las fases usan lo que diga `openspec/conductor.json` (o el modelo de sesión de Copilot si no fijaste nada) — el banner de arranque declara cuáles. Si quieres uno concreto (por ejemplo el mismo de tu chat), dilo en el mensaje («usa litellm:mi-modelo») y el agente lo pasa al run entero.
+
 Las pausas te llegan como conversación **legible**: el motor construye la presentación (fase, progreso, decisiones previas, hallazgos y la spec en titulares — jamás el muro GIVEN/WHEN/THEN) y el chat la imprime tal cual. Web y chat se coordinan: si apruebas en la web, cualquier mensaje tuyo re-engancha el chat con lo decidido, y una aprobación tardía **jamás** cae en una pausa que no viste. En VS Code, la primera vez el chat pedirá permiso por cada tool: elige **«Always allow»**. Para procesos/CI existe además el modo job: la tool MCP `conductor_drive {async:true}` lanza y devuelve el identificador al instante.
 
 ---
@@ -217,6 +219,12 @@ El detalle completo y auditado (harness, primitivas, contratos internos) vive en
 
 ## Requisitos
 
-- **Node.js ≥ 20** y git.
-- **GitHub Copilot CLI** con licencia activa (el ejecutor de las fases). Los CLIs de chat (Copilot, Claude Code, OpenCode) son vías opcionales al mismo motor.
-- Opcional: key de tu proxy LiteLLM (modelos a 0 créditos premium) · `gh` CLI para ver tus AI Credits en la web.
+| Necesitas | Para qué | Si falta |
+|---|---|---|
+| **Node.js ≥ 20** | el motor y la miniweb (cero dependencias npm) | nada arranca |
+| **git de línea de comandos** | instalar desde el repo (`npm i -g git+…` usa git por debajo) y las integraciones **solo-lectura** de la miniweb: la sección «Cambios» del run (diff), el sello `git_tree` y el guardrail de árbol limpio | la app funciona y el chip de rama sigue (lee `.git/HEAD` directamente, sin ejecutar git), pero sin diffs ni sello |
+| **GitHub Copilot CLI** con licencia activa | el ejecutor de TODAS las fases, el catálogo vivo de modelos y los tokens/AI credits reales (salen del recibo de cierre de cada sesión) | no hay runs — los CLIs de chat (Copilot, Claude Code, OpenCode, VS Code) son vías opcionales al mismo motor |
+| key de tu proxy LiteLLM (opcional) | modelos propios a **0 créditos premium** | solo modelos del catálogo Copilot |
+| **GitHub CLI** (`gh`) — **opcional** | ver las métricas de AI credits en la web | todo lo demás funciona igual |
+
+> En equipos gestionados, git y GitHub CLI están disponibles en el **Portal de empresa**.

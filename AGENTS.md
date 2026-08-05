@@ -110,7 +110,7 @@ Guard global: Host local exacto o 403 · POST exige JSON · body ≤1 MB (12 MB 
 ## Las dos vías (una instalación)
 `npm i -g "git+<url-del-repo>#<tag>"` → `conductor setup` → `conductor init` por proyecto → :
 1. **🌐 Miniweb**: `conductor` levanta el panel. Formulario con adjuntos de imagen (pegar/arrastrar → `attachments/`), preflight de tokens sin API, plan de fases con obligatorias bloqueadas, selector modelo-por-fase con presets de coste y 💾 «guardar como default del proyecto» (merge conservador en `conductor.json`).
-2. **💬 Chat**: `/conductor <petición>` en el CLI del host → `conductor_feature`/`conductor_continue` (bucle de arriba). El driver NO se toca: el chat reusa las pausas de la app.
+2. **💬 Chat**: `/conductor <petición>` en el CLI del host → `conductor_feature`/`conductor_continue` (bucle de arriba). El driver NO se toca: el chat reusa las pausas de la app. **El run NO hereda el modelo del chat**: `conductor_feature` acepta `model` opcional (`litellm:`/`copilot:`, va a todas las fases por el mismo `/api/launch` validado que usa la web); sin él mandan `conductor.json` o la sesión de Copilot, y el banner de arranque declara los modelos (línea `🤖 Modelos:`). El visor de sesión etiqueta `session.shutdown` como «Fin de sesión de la fase» con su recibo de tokens (cada fase usa una sesión efímera propia — su cierre NO es el fin del run).
 
 ## Guía por host
 - **Copilot CLI**: MCP en `~/.copilot/mcp-config.json` (`{"mcpServers":{"conductor":{"command":"conductor","args":["mcp"]}}}`). El `/conductor` es POR PROYECTO: `conductor init` escribe `.github/skills/conductor/SKILL.md` (con `$ARGUMENTS`).

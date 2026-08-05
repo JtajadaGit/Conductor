@@ -31,6 +31,10 @@ function labelOf(e) {
   switch (e.type) {
     case 'session.start': return 'Sesión iniciada' + (d.copilotVersion ? ` · Copilot ${d.copilotVersion}` : '');
     case 'session.model_change': return 'Modelo → ' + (d.newModel || '?');
+    // cada FASE corre en su propia sesión efímera: su cierre es rutina (entrega el recibo de tokens), no el fin
+    // del run — el type crudo «session.shutdown» a mitad de timeline se leía como un apagado inesperado.
+    case 'session.shutdown': return 'Fin de sesión de la fase';
+    case 'session.usage_checkpoint': return 'Recuento de tokens (checkpoint)';
     case 'subagent.selected': case 'subagent.started': return 'Subagente: ' + (d.agentDisplayName || d.agentName || '?');
     case 'subagent.completed': return 'Subagente completado' + (d.agentName ? ': ' + d.agentName : '');
     case 'user.message': return 'Usuario: ' + snippet(d.content, 90);
@@ -48,6 +52,15 @@ function labelOf(e) {
 function detailOf(e) {
   const d = e.data || {};
   if (e.type === 'session.start') return snippet([d.context?.cwd, d.context?.branch].filter(Boolean).join(' · '));
+  if (e.type === 'session.shutdown') {
+    // el recibo de cierre trae el consumo real (tokenDetails o modelMetrics según proveedor) — mismo dato que parseSessionUsage
+    let tin = 0, tout = 0;
+    const td = d.tokenDetails || {};
+    const n = (k) => Number(td[k]?.tokenCount) || 0;
+    if (d.tokenDetails) { tin = n('input') + n('cache_write'); tout = n('output'); }
+    else if (d.modelMetrics && typeof d.modelMetrics === 'object') for (const m of Object.values(d.modelMetrics)) { const u = (m && m.usage) || {}; tin += Number(u.inputTokens) || 0; tout += Number(u.outputTokens) || 0; }
+    return ((tin || tout) ? `recibo: ↓${tin} ↑${tout} tokens · ` : '') + 'cada fase usa una sesión propia — este cierre no termina el run';
+  }
   if (e.type.startsWith('tool.')) return snippet(d.command || d.input?.command || d.input?.file_path || d.input?.path || JSON.stringify(d.input || d.arguments || {}));
   if (e.type === 'permission.completed') return snippet(d.permissionDecision || d.decision || '');
   if (e.type === 'subagent.selected') return snippet((d.tools || []).join(', '));

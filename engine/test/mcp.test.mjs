@@ -46,6 +46,11 @@ await test('mcp: tools/list expone el motor completo', async () => {
   // MODO CHAT (pausas conversacionales): el contrato de las dos tools que hacen del chat el cockpit
   const feat = list.result.tools.find((t) => t.name === 'conductor_feature');
   eq(feat.inputSchema.required, ['request', 'projectRoot'], 'conductor_feature: request + projectRoot obligatorios');
+  // el run NO hereda el modelo del chat (caso real: OpenCode+LiteLLM → haiku de la sesión): el agente puede
+  // pasar `model` explícito y su description debe declarar los prefijos y la regla de gobierno
+  assert(feat.inputSchema.properties.model?.type === 'string', 'conductor_feature: model opcional declarado');
+  assert(/litellm:.*copilot:/.test(feat.inputSchema.properties.model.description || ''), 'conductor_feature: description de model con prefijos');
+  assert(/does NOT inherit/.test(feat.inputSchema.properties.model.description || ''), 'conductor_feature: la description avisa de que el run no hereda el modelo del chat');
   const cont = list.result.tools.find((t) => t.name === 'conductor_continue');
   eq(cont.inputSchema.required, ['projectRoot', 'changeName'], 'conductor_continue: projectRoot + changeName obligatorios');
   eq(cont.inputSchema.properties.action.enum, ['continue', 'stop', 'wait'], 'conductor_continue: acciones cerradas');
