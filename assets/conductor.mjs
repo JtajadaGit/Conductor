@@ -4549,10 +4549,11 @@ const COPILOTIGNORE = [
   '.conductor/',
 ].join('\n') + '\n';
 
-// openspec/config.yaml: el ESPEJO rico de lo detectado murió (se reescribía en cada arranque y nadie
-// lo parseaba — lo derivado se recalcula, no se versiona). Lo que SÍ nace es el MARCADOR MÍNIMO del
-// estándar (`schema: spec-driven`, una línea): el CLI oficial de OpenSpec reconoce el repo por él —
-// conformidad upstream sin espejo que pudra. Idempotente: uno existente jamás se pisa.
+// openspec/config.yaml NO SE GENERA. El espejo rico murió (se reescribía y nadie lo parseaba); el
+// marcador mínimo del estándar también se descartó tras análisis: su único valor era que el CLI
+// oficial de OpenSpec reconociera el repo, y ese CLI trae un `archive` PROPIO que archivaría SIN
+// mover la evidencia ni tocar el ledger — dos archivadores sobre el mismo árbol es incoherencia
+// servida. Quien lo quiera: una línea (`schema: spec-driven`) y listo; isSdd() lo sigue reconociendo.
 
 // .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
 // MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
@@ -4591,8 +4592,6 @@ function initConfig(openspecDir) {
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
   mkdirSync(join(openspecDir, 'specs'), { recursive: true });
-  const yamlPath = join(openspecDir, 'config.yaml');
-  if (!existsSync(yamlPath)) writeFileSync(yamlPath, 'schema: spec-driven\n# marcador del estándar OpenSpec — la config del motor vive en conductor.json\n');
   const specsReadme = join(openspecDir, 'specs', 'README.md');
   if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
   const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');
@@ -10965,4 +10964,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 386575ca2d9a4f4dee5eaae37d0589eb75cc1ad80160479ffc531d98d8edcc3b
+// build-inputs-sha256: 1659cc31fa8ea340e93735f1665f4d0acda52b67d8f767d41499bb21f8f7c99e

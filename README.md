@@ -73,7 +73,6 @@ conductor init
 openspec/
 ├── project.md            ← CONTEXTO (con el bloque «detectado» que cada init refresca; el resto es tuyo)
 ├── conductor.json        gobierno del equipo — nace con TUS checks detectados; todo lo demás es opcional
-├── config.yaml           marcador del estándar OpenSpec (el CLI oficial reconoce el repo)
 ├── specs/                fuente de verdad VIVA (la llena el ciclo al archivar)
 └── changes/  + archive/  cambios activos e histórico
 ```
@@ -171,7 +170,7 @@ Tu petición entra (web o chat) → el **driver determinista** (código, no un m
 
 - `openspec/` — **committeable**: specs (fuente de verdad), changes, gobierno del equipo (`conductor.json`), contexto (`project.md`), ledger de verificaciones. Tu equipo lo hereda al clonar.
 - `.conductor/` en la raíz del proyecto — **estado de máquina** (ignorado por git): evidencia de runs, timeline, log, crudo del modelo, sello. La miniweb lee de aquí; los prompts, jamás.
-- Regla de deduplicación: **cada dato, una casa** — lo derivable se re-detecta vivo en cada run (stack, codemap, catálogo) en vez de versionarse y pudrirse; si ya tienes `AGENTS.md`/`copilot-instructions`, el contexto los referencia en vez de repetirlos.
+- Regla de deduplicación: **cada dato, una casa** — lo derivable se re-detecta vivo en cada run (stack, codemap, catálogo) en vez de versionarse y pudrirse; si ya tienes `AGENTS.md`/`copilot-instructions`, el contexto los referencia en vez de repetirlos. (¿Quieres usar además el CLI oficial de OpenSpec? Crea `openspec/config.yaml` con `schema: spec-driven` — conductor no lo necesita, y ojo: el `archive` de ese CLI no mueve nuestra evidencia; archiva siempre con conductor.)
 
 ### La calidad del propio motor
 

@@ -180,10 +180,11 @@ const COPILOTIGNORE = [
   '.conductor/',
 ].join('\n') + '\n';
 
-// openspec/config.yaml: el ESPEJO rico de lo detectado murió (se reescribía en cada arranque y nadie
-// lo parseaba — lo derivado se recalcula, no se versiona). Lo que SÍ nace es el MARCADOR MÍNIMO del
-// estándar (`schema: spec-driven`, una línea): el CLI oficial de OpenSpec reconoce el repo por él —
-// conformidad upstream sin espejo que pudra. Idempotente: uno existente jamás se pisa.
+// openspec/config.yaml NO SE GENERA. El espejo rico murió (se reescribía y nadie lo parseaba); el
+// marcador mínimo del estándar también se descartó tras análisis: su único valor era que el CLI
+// oficial de OpenSpec reconociera el repo, y ese CLI trae un `archive` PROPIO que archivaría SIN
+// mover la evidencia ni tocar el ledger — dos archivadores sobre el mismo árbol es incoherencia
+// servida. Quien lo quiera: una línea (`schema: spec-driven`) y listo; isSdd() lo sigue reconociendo.
 
 // .gitignore: la FONTANERÍA del run (events.jsonl, otel/, raw/, lock.json con un PID) es estado de
 // MÁQUINA. Ya la excluíamos del contexto del modelo (.copilotignore) pero no de git, así que acababa
@@ -222,8 +223,6 @@ export function initConfig(openspecDir) {
   // RECONOCERLO al abrir el repo — specs/ (fuente de verdad viva, la llena el archivado) + changes/archive/.
   mkdirSync(join(openspecDir, 'changes', 'archive'), { recursive: true });
   mkdirSync(join(openspecDir, 'specs'), { recursive: true });
-  const yamlPath = join(openspecDir, 'config.yaml');
-  if (!existsSync(yamlPath)) writeFileSync(yamlPath, 'schema: spec-driven\n# marcador del estándar OpenSpec — la config del motor vive en conductor.json\n');
   const specsReadme = join(openspecDir, 'specs', 'README.md');
   if (!existsSync(specsReadme)) writeFileSync(specsReadme, 'Fuente de verdad VIVA (estándar OpenSpec): al archivar un change GREEN, conductor promueve aquí sus delta specs. No se edita a mano — se cambia proponiendo un change.\n');
   const keep = join(openspecDir, 'changes', 'archive', '.gitkeep');

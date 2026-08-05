@@ -619,7 +619,7 @@ await test('serve(#74): POST /api/init scaffold SDD nativo (conductor.json + .co
   // init ATÓMICO (#6): un fresh-init deja el proyecto COMPLETO de una vez. Lo que cambia  es
   // que "completo" ya no incluye config.yaml (espejo detectado que nadie parseaba) sino project.md.
   assert(existsSync(join(R, 'openspec', 'project.md')), 'project.md creado — init ATÓMICO, no dos scaffolds');
-  assert(readFileSync(join(R, 'openspec', 'config.yaml'), 'utf8').startsWith('schema: spec-driven'), 'config.yaml = marcador mínimo del estándar OpenSpec (el CLI oficial reconoce el repo)');
+  assert(!existsSync(join(R, 'openspec', 'config.yaml')), 'SIN config.yaml (ni espejo ni marcador — el archive del CLI oficial no mueve nuestra evidencia)');
   assert(existsSync(join(R, '.copilotignore')), '.copilotignore creado en el root del proyecto');
   assert(existsSync(join(R, '.gitignore')), '.gitignore creado (la fontanería del run fuera del repo)');
   const r2 = await (await fetch(srv.url + 'api/init', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
