@@ -9492,19 +9492,35 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       return { ok: true, url, project: name, focused, openspec, runs, note: focused ? `panel enfocado en «${name}» — escribe la feature y lánzala desde ahí` : `«${root}» no parece un proyecto conductor (falta openspec/ o .git) — el panel abre con su foco anterior; inicialízalo desde la web` };
     } },
   // ── MODO CHAT (la vía CLI de primera clase): el proceso se VE en la conversación ──
-  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. The FIRST call returns in a few seconds (launch confirmation + initial progress + web link); wait calls return within ~55s. Statuses: "working" = phase still running, with a `progress` snapshot (phases done ✓, current phase, tokens, log tail) → give the user a ONE-LINE update when progress changed, then IMMEDIATELY call conductor_continue {action:"wait"} and repeat; "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' }, model: { type: 'string', description: 'model for ALL phases, prefixed: litellm:<id> or copilot:<id>. Pass it when the user names a model or expects THIS chat\'s model — a run does NOT inherit the chat model: without this field the repo governance (openspec/conductor.json models) or the Copilot session default decides' } }, required: ['request', 'projectRoot'] } },
-    run: async ({ request, projectRoot, changeName, model }) => {
+  conductor_feature: { def: { name: 'conductor_feature', title: 'run a feature WITH conversational review pauses (the chat is the cockpit)', description: 'Start the governed SDD pipeline for a feature. The FIRST call returns in a few seconds (launch confirmation + initial progress + web link); wait calls return within ~55s. Statuses: "working" = phase still running, with a `progress` snapshot (phases done ✓, current phase, tokens, log tail) → give the user a ONE-LINE update when progress changed, then IMMEDIATELY call conductor_continue {action:"wait"} and repeat; "paused" = review pause → SHOW the returned artifacts (proposal/spec/report, trimmed) to the user verbatim and wait for their reply, then call conductor_continue with their decision; "done" = final verdict + receipt. Use this when the user wants to follow the run IN THE CHAT; use conductor_app if they prefer the web panel. A /skill-name mention inside the request activates that team skill for the whole run.', inputSchema: { type: 'object', properties: { request: { type: 'string', description: 'the feature request, in the user\'s words (may include @paths and /skill mentions)' }, projectRoot: { type: 'string', description: 'absolute path of the project root' }, changeName: { type: 'string', description: 'optional kebab name; derived from the request if absent' }, model: { type: 'string', description: 'model for ALL phases, prefixed: litellm:<id> or copilot:<id>. Pass it ONLY when the user names a model — it beats everything, including the repo governance' }, chatModel: { type: 'string', description: 'the model THIS chat conversation runs on, prefixed: litellm:<id> or copilot:<id>. ALWAYS pass it when you know it: a run does NOT inherit the chat model by itself — with this field it does whenever the repo pins no models in openspec/conductor.json (repo governance, when present, wins). Invalid ids are rejected by validation and the launch retries without it (field `aviso` explains)' } }, required: ['request', 'projectRoot'] } },
+    run: async ({ request, projectRoot, changeName, model, chatModel }) => {
       if (!request) throw new Error('request requerido');
       const root = resolve(projectRoot || process.cwd());
       const app = await appUp(root);
       if (!app) return { ok: false, error: 'la app local no arrancó — diagnostica con `conductor doctor`' };
       const name = changeName ? slug(changeName) : featureName(request);
       let lr = null, lj = null;
-      // modelo del CHAT ≠ modelo del RUN (caso real: lanzado desde OpenCode con LiteLLM, el run cayó al default
-      // de la sesión de Copilot y el usuario lo descubrió en el visor): si el agente pasa `model`, va a TODAS las
-      // fases por el mismo canal validado que usa la web (checkByokModels + policy en /api/launch).
-      const models = model ? { planner: model, coder: model, reviewer: model } : undefined;
-      try { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name, project: root, auto: false, ...(models ? { models } : {}) }) }); lj = await lr.json().catch(() => null); } catch (e) { return { ok: false, error: String(e.message) }; }
+      // MODELO del run (caso real: lanzado desde OpenCode con LiteLLM, el run caía al default de la sesión de
+      // Copilot y el usuario lo descubría en el visor). Precedencia: `model` (el usuario lo NOMBRÓ — gana a todo)
+      // > gobierno del repo (conductor.json models) > `chatModel` (el modelo de la conversación — herencia por
+      // defecto cuando el repo no fija nada) > sesión de Copilot. Todo va por el mismo canal validado que usa la
+      // web (checkByokModels + policy en /api/launch); los env de launch pisan al conductor.json, por eso
+      // chatModel SOLO se aplica con gobierno vacío.
+      let gov = {}; try { gov = JSON.parse(readFileSync(join(root, 'openspec', 'conductor.json'), 'utf8')).models || {}; } catch {}
+      const govHas = Object.values(gov).some(Boolean);
+      const effModel = model || (!govHas && chatModel ? chatModel : null);
+      let models = effModel ? { planner: effModel, coder: effModel, reviewer: effModel } : undefined;
+      let avisoModelo = null;
+      const doLaunch = async () => { lr = await fetch(app.url + 'api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ request, name, project: root, auto: false, ...(models ? { models } : {}) }) }); lj = await lr.json().catch(() => null); };
+      try {
+        await doLaunch();
+        // id de modelo inválido (p.ej. el agente pasó el nombre bonito del chat, no el id del catálogo): UN
+        // reintento sin modelos para no dejar al usuario sin run, con aviso honesto de qué se descartó.
+        if (!lj?.ok && models && /model/i.test(String(lj?.error || ''))) {
+          avisoModelo = `el modelo «${effModel}» no pasó la validación (${lj.error}) — el run sale SIN él (gobierno del repo o sesión de Copilot); comprueba el id con \`conductor litellm status\` o fija models en openspec/conductor.json`;
+          models = undefined; await doLaunch();
+        }
+      } catch (e) { return { ok: false, error: String(e.message) }; }
       if (!lj?.ok) {
         // RUN ACTIVO (caso real: un timeout del host dejó el run vivo y el reintento chocaba a
         // ciegas): dile al agente CÓMO engancharse al run en marcha en vez de dejarle relanzar en bucle.
@@ -9528,17 +9544,15 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
         if (Array.isArray(st.plan) && st.plan.length) banner = `🚀 Pipeline: ${name}\n📋 ${st.complexity || 'medium'} · Fases: ${st.plan.join(' → ')}`;
         // TRANSPARENCIA de modelos en el arranque: qué va a ejecutar de verdad (el run NO hereda el modelo del chat)
         if (banner) {
-          let mLine;
-          if (model) mLine = `${model} (todas las fases)`;
-          else {
-            let gov = {}; try { gov = JSON.parse(readFileSync(join(root, 'openspec', 'conductor.json'), 'utf8')).models || {}; } catch {}
-            const roles = Object.entries(gov).filter(([, v]) => v);
-            mLine = roles.length ? 'gobierno del repo: ' + roles.map(([k, v]) => `${k}=${v}`).join(' · ') : 'los de la sesión de Copilot (este chat no impone el suyo)';
-          }
+          const roles = Object.entries(gov).filter(([, v]) => v);
+          const mLine = (models && model) ? `${model} (todas las fases — pedido en el chat)`
+            : (models && effModel) ? `${effModel} (heredado de este chat)`
+            : roles.length ? 'gobierno del repo: ' + roles.map(([k, v]) => `${k}=${v}`).join(' · ')
+            : 'los de la sesión de Copilot (este chat no impone el suyo)';
           banner += `\n🤖 Modelos: ${mLine}`;
         }
       } catch {}
-      return { ...res, ...(banner ? { banner, next: 'Imprime `banner` TAL CUAL y sigue: ' + (res.next || '') } : {}), changeName: name, web: webF };
+      return { ...res, ...(banner ? { banner, next: 'Imprime `banner` TAL CUAL y sigue: ' + (res.next || '') } : {}), ...(avisoModelo ? { aviso: avisoModelo } : {}), changeName: name, web: webF };
     } },
   conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
     run: async ({ projectRoot, changeName, note, model, phase, action }) => {
@@ -10212,8 +10226,8 @@ switch (cmd) {
       '- Si el error dice «could not request permission» (el host NI PREGUNTA): dile que escriba `/allow-all` EN ESTE MISMO CHAT y repita /conductor (gesto ligero); plan B: salir y relanzar con `copilot --allow-all-tools`.',
       '- Si viene VACÍA: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (campo `runs`) y la URL del panel como texto.',
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
-      '  · MODELO: el run NO hereda el modelo de este chat. Si el usuario nombra un modelo (o espera que se use el del chat), pásalo: model:"litellm:<id>" | "copilot:<id>". Sin model, mandan openspec/conductor.json o la sesión de Copilot — el banner lo declara: imprímelo.',
-      '  · status:"paused" → imprime el campo `render` TAL CUAL (es la presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
+      '  · MODELO: pasa SIEMPRE chatModel:"litellm:<id>" | "copilot:<id>" con el modelo de ESTA conversación si lo conoces — si el repo no fija modelos en conductor.json, el run lo HEREDA (si los fija, gana el repo). Si el usuario NOMBRA un modelo, pásalo en model (gana a todo). Imprime el banner (su línea 🤖 declara lo que ejecuta de verdad) y si llega `aviso` de modelo, cuéntalo en una línea.',
+      '  · status:"paused" → imprime el campo `render` TAL CUAL Y COMPLETO, hasta la última línea (la del reenganche web incluida — no la recortes ni resumas, ni pegues los artifacts) y ESPERA su respuesta;',
       '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · si el usuario decide en la WEB, tu turno ya habrá terminado y este chat queda en silencio — es NORMAL: en cuanto escriba CUALQUIER cosa, reengánchate con conductor_continue {action:"wait"} y sigue narrando.',
       '  · PROHIBIDO aprobar una pausa que el usuario no haya aprobado EXPLÍCITAMENTE en este chat («apruebo automáticamente» = violación del contrato: la pausa existe PARA la persona; queda auditado como human-chat en el acta).',
@@ -11033,4 +11047,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 2bcb14e76e6ee275d245929391579c83bf709524396b06a64c1978b695f71f98
+// build-inputs-sha256: ee737381eb873df69372b2ba10f57f0f0b2832bba8d6ada0b37c6ec7bdbaff49
