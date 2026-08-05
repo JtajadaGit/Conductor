@@ -142,6 +142,45 @@ Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige 
 
 ---
 
+## Arquitectura: cómo funciona por dentro
+
+### El flujo de un run (el modelo mental)
+
+Tu petición entra (web o chat) → el **driver determinista** (código, no un modelo) resuelve el plan de fases según complejidad y preset → lanza **un agente por fase** con su papel, su modelo y su toolset recortado → cada artefacto pasa el **gate sin LLM** → tú decides en las pausas → en GREEN, el run queda **sellado** y su evidencia archivada. Si algo no cumple, no avanza — da igual lo convincente que suene el modelo.
+
+### Las piezas
+
+- **Motor** (`engine/`): JavaScript puro (ESM), Node ≥ 20, **cero dependencias de npm**. Contiene el driver del pipeline, los gates, el servidor web local, el servidor MCP y el CLI.
+- **Miniweb** (`ui/`): la única parte TypeScript — componentes **Lit** (web components estándar) compilados con **Vite**. Instalable como **PWA**, con Service Worker.
+- **Empaquetado**: la UI la compila Vite a `assets/ui/`; el motor lo concatena un **bundler propio** (`node engine/build.mjs`, también 0 deps) en un único fichero — `assets/conductor.mjs` — que es exactamente lo que instala `npm i -g`. Sin `node_modules` en producción: menos superficie, arranque instantáneo, auditoría de un solo fichero.
+
+### Cómo ejecuta a los agentes
+
+- Cada fase corre como una **sesión del CLI de GitHub Copilot** — por proceso (`spawn`) o por su **SDK** oficial (`runner: "sdk"`). Del SDK salen además el **catálogo vivo de modelos** (nombres oficiales, ventana de contexto, categoría de AI credits) y los **tokens reales** por sesión.
+- Los modelos de tu **proxy LiteLLM** entran por la vía BYOK (0 créditos premium) — mezclables por fase en el mismo run.
+- **Papeles**: `planner` (planifica y especifica — no toca código) · `coder` (el único con escritura en el proyecto, fases apply/fix) · `reviewer` (verify, con **lentes en paralelo cuyo número marca el riesgo del preset**). La orquestación jamás es un LLM: por eso dos runs con las mismas entradas se comportan igual.
+- **Correa por fase**: toolset recortado (`--excluded-tools` en fases que no codean), reviewer sin escritura, sin git ni comandos destructivos, y ejecutar tus tests reales exige tu consentimiento explícito (`checks` + toggle test).
+
+### Con qué se integra
+
+- **MCP en dos direcciones**: conductor **es** un servidor MCP (JSON-RPC por stdio: tools `conductor_feature`, `conductor_continue`, `conductor_app`, `conductor_gate`, `conductor_receipt`…) — así conducen el pipeline Copilot CLI, VS Code, OpenCode y Claude Code. Y los agentes de fase **pueden consumir** servidores MCP de terceros si el equipo los configura (opt-in con guardas).
+- **git, solo en modo lectura**: checkpoints por fase y baseline de cambios con **índice propio** (`git write-tree` con `GIT_INDEX_FILE`) — cero impacto en tu HEAD, rama o staging. El sello registra el árbol exacto verificado. **Conductor jamás commitea**: eso es tuyo.
+- **`gh` CLI** (opcional) para tus AI credits; **tu proxy LiteLLM** (`/key/info`) para el gasto real; **OTel** para reconstruir la traza de sesión de los runs LiteLLM.
+
+### Dónde vive cada cosa (y por qué)
+
+- `openspec/` — **committeable**: specs (fuente de verdad), changes, gobierno del equipo (`conductor.json`), contexto (`project.md`), ledger de verificaciones. Tu equipo lo hereda al clonar.
+- `.conductor/` en la raíz del proyecto — **estado de máquina** (ignorado por git): evidencia de runs, timeline, log, crudo del modelo, sello. La miniweb lee de aquí; los prompts, jamás.
+- Regla de deduplicación: **cada dato, una casa** — lo derivable se re-detecta vivo en cada run (stack, codemap, catálogo) en vez de versionarse y pudrirse; si ya tienes `AGENTS.md`/`copilot-instructions`, el contexto los referencia en vez de repetirlos.
+
+### La calidad del propio motor
+
+Suite de **más de 600 tests** (gates, driver, servidor, MCP, CLI), un **golden-set** de escenarios extremo-a-extremo offline (`conductor evals`, 0 tokens) cuyo pass-rate queda versionado, y un **gate de prompts**: cambiar un prompt del pipeline exige re-certificar en verde. Criptografía de la evidencia con `node:crypto` (SHA-256, HMAC, **Ed25519**); config validada con **JSON Schema** (draft-07); estructura de specs conforme al estándar **OpenSpec** (el CLI oficial reconoce los repos).
+
+El detalle completo y auditado (harness, primitivas, contratos internos) vive en **AGENTS.md**.
+
+---
+
 ## Comandos de referencia
 
 | Diario | |
