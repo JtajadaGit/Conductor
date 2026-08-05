@@ -10842,6 +10842,7 @@ function printHelp() {
     receipt <changeDir>                  recibo de PR (markdown) del run verificado
     stats                                tokens, coste REAL y ahorro por proveedor/modelo
     doctor                               autotest del entorno (proxy, app, bundle)
+    stop | restart                       apaga o reinicia la app (se niega a parar con runs vivos)
 
   PRIMERA VEZ (tras npm i -g)
     setup                                elige tus CLIs (Copilot/Claude/OpenCode) → /conductor en su chat
@@ -10862,6 +10863,17 @@ function printHelp() {
                                           # garantiza la secuencia con cualquier modelo. runner sdk = sesiones
                                           # calientes (requiere @github/copilot-sdk; spawn = default validado)
   run|resume|status ...
+  init [dir] [--hosts copilot,claude,opencode,vscode|none]   # árbol OpenSpec + detección profunda + /conductor por-proyecto
+  init-config <root> [--smart]                 # config+project.md; --smart = relleno semántico con IA (un one-shot)
+  setup                                        # instalación guiada: credenciales + hosts (/conductor + MCP)
+  upgrade [origen]                             # reinstala desde tu origen + selfcheck del motor nuevo
+  evals [--k N] [--json]                       # golden-set del harness (offline, 0 tokens) → eval/results.jsonl
+  estimate <changeDir> ...                     # preflight de tokens SIN gastar API
+  litellm login|status                         # credenciales del proxy (asistente con cifrado / huella de la key)
+  byok save|status                             # credenciales BYOK por variables de entorno
+  archive <changeDir>                          # archiva un GREEN: promueve la spec a specs/ + evidencia al histórico
+  aiact <changeDir> [--src d]                  # informe de transparencia («quién hizo qué») de un change
+  search <texto> · skills · stack · atlas · app-status · config   # exploración del proyecto y del registro
   keygen [--priv key.pem] [--pub key.pem]      # genera par Ed25519 para firmar provenance/bundle
   seal <changeDir> [--src d] [--usage j] [--priv key.pem | --key hmac] [-o out]
   verify <prov.json> [--pub key.pem | --key hmac]
@@ -10945,4 +10957,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 6efdb9b033f14fbb60c9dd00f168c05828fee53f666bef9684abf9bfcaa6257e
+// build-inputs-sha256: f099a33bd3bad8ee64ff5ff17996d36c76403b78ca6849ff3e5296aef2e21db0

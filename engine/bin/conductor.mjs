@@ -1254,6 +1254,7 @@ function printHelp() {
     receipt <changeDir>                  recibo de PR (markdown) del run verificado
     stats                                tokens, coste REAL y ahorro por proveedor/modelo
     doctor                               autotest del entorno (proxy, app, bundle)
+    stop | restart                       apaga o reinicia la app (se niega a parar con runs vivos)
 
   PRIMERA VEZ (tras npm i -g)
     setup                                elige tus CLIs (Copilot/Claude/OpenCode) → /conductor en su chat
@@ -1274,6 +1275,17 @@ function printHelp() {
                                           # garantiza la secuencia con cualquier modelo. runner sdk = sesiones
                                           # calientes (requiere @github/copilot-sdk; spawn = default validado)
   run|resume|status ...
+  init [dir] [--hosts copilot,claude,opencode,vscode|none]   # árbol OpenSpec + detección profunda + /conductor por-proyecto
+  init-config <root> [--smart]                 # config+project.md; --smart = relleno semántico con IA (un one-shot)
+  setup                                        # instalación guiada: credenciales + hosts (/conductor + MCP)
+  upgrade [origen]                             # reinstala desde tu origen + selfcheck del motor nuevo
+  evals [--k N] [--json]                       # golden-set del harness (offline, 0 tokens) → eval/results.jsonl
+  estimate <changeDir> ...                     # preflight de tokens SIN gastar API
+  litellm login|status                         # credenciales del proxy (asistente con cifrado / huella de la key)
+  byok save|status                             # credenciales BYOK por variables de entorno
+  archive <changeDir>                          # archiva un GREEN: promueve la spec a specs/ + evidencia al histórico
+  aiact <changeDir> [--src d]                  # informe de transparencia («quién hizo qué») de un change
+  search <texto> · skills · stack · atlas · app-status · config   # exploración del proyecto y del registro
   keygen [--priv key.pem] [--pub key.pem]      # genera par Ed25519 para firmar provenance/bundle
   seal <changeDir> [--src d] [--usage j] [--priv key.pem | --key hmac] [-o out]
   verify <prov.json> [--pub key.pem | --key hmac]
