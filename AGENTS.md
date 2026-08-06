@@ -138,7 +138,7 @@ Cobertura por área — **gobierno/pipeline**: `determinism` (secuencia inviolab
 ## Comandos de trabajo (memoriza)
 - Tests: `node engine/test/run.mjs` (~462) · E2E offline: `node engine/test/e2e-app.mjs`.
 - Build motor: `node engine/build.mjs`. Build UI: `cd ui && npm run build` (servida de disco: recargar basta).
-- App: `conductor ping | stop | restart [root]` — NUNCA matar el proceso con runs activos. Logs de arranque: `.conductor/launcher.log`.
+- App: `conductor ping | stop | restart [root]` — NUNCA matar el proceso con runs activos. Logs por run: `.conductor/runs/<change>/log.txt` (no existe log de arranque de la app: el spawn va con stdio ignore).
 - Diagnóstico: `conductor doctor` · `conductor stats` · `conductor litellm status`.
 - Instalación global de prueba: el prefix npm puede ser custom — el motor instalado vive en `<prefix>/node_modules/conductor/assets/conductor.mjs`.
 

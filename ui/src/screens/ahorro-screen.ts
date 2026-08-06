@@ -23,8 +23,8 @@ export class AhorroScreen extends CElement {
     },
     {
       t: 'Mapa del repo para orientarse',
-      d: 'Stack, carpetas clave, entrypoints y el comando de test, resumidos en unas pocas líneas. La fase de exploración localiza las áreas relevantes del cambio sin escanear el repo entero.',
-      como: 'detección determinista del stack (sin LLM, sin red), inyectada solo a la fase explore',
+      d: 'Stack, carpetas clave, entrypoints y el comando de test, resumidos en unas pocas líneas y disponibles en todas las fases: ningún agente escanea el repo entero para saber dónde está.',
+      como: 'detección determinista del stack (sin LLM, sin red), re-derivada por run e inyectada a TODAS las fases; el mapa de código y el brownfield, solo a explore',
     },
     {
       t: 'Mapa de relaciones (blast-radius)',
@@ -57,6 +57,21 @@ export class AhorroScreen extends CElement {
       como: 'one-shot por fase + presupuesto de contexto (~12k tokens): lo que no cabe viaja resumido a cabeceras e ids, no cortado a ciegas',
     },
     {
+      t: 'El output, capado por fase',
+      d: 'El token de salida es el más caro, y cada fase tiene su tope escrito en el prompt: la propuesta no pasa de 120 palabras, la spec de 6 requisitos con 3 escenarios, las tareas de 15. Un modelo verborreico no encarece el run.',
+      como: 'límites explícitos en la instrucción de cada fase (orchestrate); la salida de tests hacia el fix va topada a 900 caracteres',
+    },
+    {
+      t: 'Planificar sin abrir el código',
+      d: 'Las fases de planificación tienen PROHIBIDO leer ficheros fuente: deciden con el índice verificado y el mapa del repo. Leer N ficheros para proponer un enfoque es el gasto silencioso más común de los agentes — aquí no existe.',
+      como: 'la instrucción de propose/design/tasks incluye «do NOT read project source files»; las skills se inyectan como índice y su contenido se lee solo si se usa',
+    },
+    {
+      t: 'Freno anti-quemado',
+      d: 'Los reintentos van acotados (0–3) y si el driver detecta un estado imposible aborta ANTES de llamar al modelo. Iterar a ciegas contra un fallo estructural es la forma más cara de no arreglar nada.',
+      como: 'maxRetries con tope duro; guard de fase inválida que corta sin gastar; si el comando de test ni arranca → BLOCKED inmediato, sin ciclo fix',
+    },
+    {
       t: 'Caché de prefijo estable',
       d: 'El prompt de cada fase pone lo estático primero y nada volátil (cero timestamps): el proveedor puede servir ese prefijo desde su caché a una fracción del precio.',
       como: 'orden del prompt fijado por test; los tokens cached reales del recibo de sesión se enseñan en el informe',
@@ -84,7 +99,7 @@ export class AhorroScreen extends CElement {
     {
       t: 'Menos tools a la vista',
       d: 'Las fases que solo escriben su artefacto (planificación y revisión) no ven los tools de web, shell o parcheo: sus schemas dejan de viajar en el system prompt de cada turno. Automático; se desactiva con "toolFilter": false si una skill los necesita.',
-      como: 'el spawn de fases no-coder añade --excluded-tools (web_search, web_fetch, powershell, task, apply_patch)',
+      como: 'el spawn de fases no-coder añade --excluded-tools (web_search, web_fetch, powershell, stop_powershell, task, apply_patch) y desconecta los MCP (--disable-builtin-mcps)',
     },
     {
       t: 'Verificación reutilizable (opt-in)',
@@ -131,7 +146,7 @@ export class AhorroScreen extends CElement {
 
       <div class="ahorro-note">
         <b>Tu clave, tu máquina.</b> Tu clave del proxy vive en <code>~/.conductor/litellm.json</code> tal cual tú la
-        escribas y jamás viaja al modelo ni por HTTP.
+        escribas; jamás la ve un modelo y solo viaja a TU proxy (cabecera de autorización).
         El catálogo de modelos sale <b>en vivo</b> de tu LiteLLM y del CLI de Copilot cuando responden — con caché
         y modelos observados en tus runs como respaldo. Nunca de listas inventadas.
       </div>

@@ -362,7 +362,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       try {
         const st = await (await fetch(app.url + 'api' + lj.url + '/state', { signal: AbortSignal.timeout(3000) })).json();
         if (Array.isArray(st.plan) && st.plan.length) banner = `🚀 Pipeline: ${name}\n📋 ${st.complexity || 'medium'} · Fases: ${st.plan.join(' → ')}`;
-        // TRANSPARENCIA de modelos en el arranque: qué va a ejecutar de verdad (el run NO hereda el modelo del chat)
+        // TRANSPARENCIA de modelos en el arranque: qué va a ejecutar de verdad (nombrado > gobierno > heredado del chat > sesión)
         if (banner) {
           const roles = Object.entries(gov).filter(([, v]) => v);
           const mLine = (models && model) ? `${model} (todas las fases — pedido en el chat)`

@@ -451,7 +451,7 @@ switch (cmd) {
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
-      const sealedNow = sealByokFile(home); // no-op si el dev puso "seal": false (su decisión informada)
+      const sealedNow = sealByokFile(home); // no-op salvo que el dev pusiera "seal": true (el cifrado es opt-in)
       const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
       let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false, optOut = false, keyTx = '';
       try {

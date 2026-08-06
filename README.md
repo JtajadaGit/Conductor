@@ -45,7 +45,7 @@ conductor convierte "pedirle código a la IA" en un **proceso de ingeniería aud
 | Un modelo flojo se salta pasos | La secuencia la garantiza **código**: con cualquier modelo, las fases van en orden o no avanzan |
 | Un solo modelo para todo | **Modelo por FASE**, mezclando proveedores en el mismo run: planifica barato con tu proxy, codea con tu licencia premium |
 | El consumo es una caja negra | **Tokens y coste por fase**, estimación ANTES de lanzar (sin gastar API) y precisión del estimador medida |
-| Sin evidencia | Cada GREEN queda **sellado (Ed25519)**, encadenado a un **ledger** y con **informe AI Act** (modelos, aprobaciones humanas con hash de lo aprobado, verificación) |
+| Sin evidencia | Cada GREEN queda **sellado** (integridad SHA-256; firma **Ed25519** si configuras clave), encadenado a un **ledger** y con **informe AI Act** disponible (modelos, aprobaciones humanas con hash de lo aprobado, verificación) |
 
 > [!IMPORTANT]
 > **Tú mandas**: el pipeline pausa para tu revisión, y en cada pausa puedes editar la spec, dar instrucciones, cambiar el modelo en caliente, rehacer una fase o parar. Nada de piloto automático.
@@ -65,7 +65,7 @@ conductor version          # → conductor 2.0.0
 conductor setup
 ```
 
-`setup` conecta el comando **`/conductor`** y el servidor MCP en los CLIs que tengas (Copilot, Claude Code, OpenCode) y deja creada la **plantilla de credenciales**.
+`setup` conecta el servidor MCP en los CLIs que tengas y el comando **`/conductor`** en Claude Code y OpenCode; en Copilot CLI el `/conductor` es por-proyecto y lo deja `conductor init` (`.github/skills/`). Además crea la **plantilla de credenciales**.
 
 <details>
 <summary><b>Credenciales del proxy LiteLLM</b> (opcional, recomendado — modelos a 0 créditos premium)</summary>
@@ -86,7 +86,7 @@ Abre `~/.conductor/litellm.json` — la plantilla te enseña el formato:
 
 - Los `models` que declares salen **siempre** en el selector, con su nombre y sus límites.
 - **También puedes pegar tu bloque de proveedor de OpenCode tal cual** (con `options.baseURL`, timeouts…) — conductor lo entiende.
-- La key **se queda como tú la escribas** (mismo hábito que tu `opencode.json`). ¿Prefieres cifrarla? Añade `"seal": true` (AES-256-GCM) o usa `conductor litellm login`. En cualquier caso jamás viaja por HTTP ni la ve un modelo, y `conductor litellm status` te enseña su huella (últimos 4 + sha corto) para que SIEMPRE sepas cuál hay dentro.
+- La key **se queda como tú la escribas** (mismo hábito que tu `opencode.json`). ¿Prefieres cifrarla? Añade `"seal": true` (AES-256-GCM) o usa `conductor litellm login`. En cualquier caso solo viaja a TU proxy (cabecera `Authorization`, usa `https` en el baseUrl) y jamás la ve un modelo, y `conductor litellm status` te enseña su huella (últimos 4 + sha corto) para que SIEMPRE sepas cuál hay dentro.
 
 </details>
 
@@ -99,7 +99,7 @@ cd tu-proyecto
 conductor init
 ```
 
-`init` **detecta tu repo** (determinista, 0 tokens) y te lo enseña: versiones exactas, gestor de paquetes, proyectos del workspace y los **comandos reales** de build/test/lint — que quedan **ya sembrados como `checks`** en conductor.json (la fase test los ejecuta). Crea el árbol **OpenSpec** completo:
+`init` **detecta tu repo** (determinista, 0 tokens) y te lo enseña: versiones exactas, gestor de paquetes, proyectos del workspace y los **comandos reales** de build/test/lint (y typecheck si hay TS) — que quedan **ya sembrados como `checks`** al crear conductor.json (si ya existía, no se pisa; la fase test los ejecuta). Crea el árbol **OpenSpec** completo:
 
 ```
 openspec/
@@ -109,7 +109,7 @@ openspec/
 └── changes/  + archive/  cambios activos e histórico
 ```
 
-Si el repo ya tiene **AGENTS.md / copilot-instructions**, init lo detecta y el project.md los **referencia** en vez de repetirlos (cero duplicidad: cada dato, una casa). Para el relleno semántico leyendo tu repo con IA: `conductor init-config . --smart`. `init` también ofrece (mini-menú) el comando `/conductor` **por-proyecto** para cada CLI — ficheros committeables: al clonar el repo, todo tu equipo lo hereda.
+Si el repo ya tiene **AGENTS.md / CLAUDE.md / copilot-instructions**, init lo detecta y el project.md recién creado los **referencia** en vez de repetirlos (cero duplicidad: cada dato, una casa). Para el relleno semántico leyendo tu repo con IA: `conductor init-config . --smart`. `init` también ofrece (mini-menú) el comando `/conductor` **por-proyecto** para cada CLI — ficheros committeables: al clonar el repo, todo tu equipo lo hereda.
 
 ---
 
@@ -124,7 +124,7 @@ conductor        # abre la PÁGINA DE TU PROYECTO (http://127.0.0.1:4750/<proyec
 La jerarquía es **home global → proyecto → run**: `/` es el panel global (tus proyectos clicables, lo vivo y lo pendiente de todos, métricas e historial agregados) y cada proyecto tiene su URL declarativa (`/<proyecto>`, navegable y compartible) con su formulario de lanzar. Te mueves entre proyectos con un clic (tarjetas de la home o cabeceras de la sidebar) — o con `conductor` desde cualquier repo.
 
 1. **Describe la feature** en el formulario de tu proyecto (`@fichero` para dar contexto, `/skill` para patrones de equipo, arrastra capturas).
-2. Revisa el **plan**: preset propuesto, fases, y la **estimación de tokens sin gastar API**.
+2. Revisa el **plan**: las fases SDD (marcables), las comprobaciones que enciende tu petición, y la **estimación de tokens sin gastar API**.
 3. Elige **modelo por fase** si quieres mezcla — y 💾 para guardarla como default del equipo.
 4. **Lanza** y decide en cada pausa: 📄 artefactos (✏️ editables) · **± vs spec viva** (diff del delta contra la spec promovida) · 📣 nota para la fase · 🎛 modelo en caliente · ↺ rehacer · ✓ aprobar · ■ detener.
 5. Si el gate encuentra fallos: eliges cuáles van al **fix dirigido** y se re-verifica.
@@ -140,7 +140,7 @@ La app es única y local (127.0.0.1, solo tú), instalable como PWA, se apaga so
 ```
 
 > [!NOTE]
-> **El modelo del chat no viaja al run**: las fases usan lo que diga `openspec/conductor.json` (o el modelo de sesión de Copilot si no fijaste nada) — el banner de arranque declara cuáles. Si quieres uno concreto (por ejemplo el mismo de tu chat), dilo en el mensaje («usa litellm:mi-modelo») y el agente lo pasa al run entero.
+> **El modelo del run se decide así**: si nombras uno en el mensaje («usa litellm:mi-modelo»), gana a todo; si no, manda el gobierno del repo (`openspec/conductor.json` → `models`); y si el repo no fija nada, el run **hereda el modelo de tu chat**. El banner de arranque (línea 🤖) declara siempre cuál ejecuta de verdad.
 
 Las pausas te llegan como conversación **legible**: el motor construye la presentación (fase, progreso, decisiones previas, hallazgos y la spec en titulares — jamás el muro GIVEN/WHEN/THEN) y el chat la imprime tal cual. Web y chat se coordinan: si apruebas en la web, cualquier mensaje tuyo re-engancha el chat con lo decidido, y una aprobación tardía **jamás** cae en una pausa que no viste. En VS Code, la primera vez el chat pedirá permiso por cada tool: elige **«Always allow»**. Para procesos/CI existe además el modo job: la tool MCP `conductor_drive {async:true}` lanza y devuelve el identificador al instante.
 
@@ -172,8 +172,8 @@ Presets (el dial de gobierno): `quick-fix` · `visual` (laxos: un typo no exige 
 
 - **Gate determinista sin LLM**: coherencia, estructura, trazabilidad, tests que verifican de verdad (caza tests "huecos"), secretos hardcodeados, SQL destructivo, breaking-changes de contrato. No obedece prompts: o cumple, o FAIL.
 - **El propio harness se auto-certifica**: un golden-set de 12 escenarios (`conductor evals`, offline, 0 tokens) ejercita cada gate e invariante con su resultado esperado; el pass-rate queda **versionado en git**, y cambiar un prompt del pipeline **exige** re-certificar en verde.
-- **Provenance**: sello Ed25519 por GREEN **atado al árbol git exacto** del working tree («verificado» = ESTE código, no la fe) + ledger hash-encadenado (manipular una entrada rompe la cadena) + `conductor upgrade` que reinstala de tu origen y **verifica el motor nuevo** antes de dártelo por bueno.
-- **Agentes con correa corta**: sin git, sin red, sin comandos destructivos; toolset mínimo por rol; el contenido del repo se trata como **datos**, no como instrucciones; ejecutar los tests del proyecto requiere TU consentimiento explícito.
+- **Provenance**: sello por GREEN **atado al árbol git exacto** del working tree («verificado» = ESTE código, no la fe) — integridad SHA-256 siempre, firma **Ed25519** con `CONDUCTOR_PRIV_KEY` (o HMAC con `CONDUCTOR_PROV_KEY`) — + ledger hash-encadenado (manipular una entrada rompe la cadena) + `conductor upgrade` que reinstala de tu origen y **verifica el motor nuevo** antes de dártelo por bueno.
+- **Correa por rol**: planner y reviewer sin shell ni red — solo escriben su artefacto; el coder (el único que implementa) usa las tools completas del CLI, con sus cambios acotados por checkpoints por fase, el gate y tu revisión del diff. El contenido del repo se trata como **datos**, no como instrucciones; ejecutar los tests del proyecto requiere TU consentimiento explícito.
 - **AI Act**: el acta de «quién hizo qué» por cambio (modelo y **papel** de cada agente por fase, aprobaciones humanas **con hash de lo aprobado**, verificación, sello) — la evidencia que exige la UE desde el 2-ago-2026, como subproducto gratis del pipeline. **No es el sello de calidad** (eso es GREEN, el veredicto SDD): es la respuesta preparada si un cliente o auditoría pregunta por la IA. Cuándo aplica y cuándo no: en la Ayuda del panel.
 
 ---
@@ -190,7 +190,7 @@ flowchart LR
     G -- "no cumple" --> R["reintento o<br>fix dirigido"] --> C
     G -- "cumple" --> P{"¿pausa?"}
     P -- "tú decides" --> C
-    P -- "última fase" --> V["GREEN<br>sello + acta AI Act"]
+    P -- "última fase" --> V["GREEN<br>sello + evidencia"]
 ```
 
 Tu petición entra (web o chat) → el **driver determinista** (código, no un modelo) resuelve el plan de fases según complejidad y preset → lanza **un agente por fase** con su papel, su modelo y su toolset recortado → cada artefacto pasa el **gate sin LLM** → tú decides en las pausas → en GREEN, el run queda **sellado** y su evidencia archivada. Si algo no cumple, no avanza — da igual lo convincente que suene el modelo.
@@ -212,7 +212,7 @@ Cada fase corre en su **propia sesión efímera** que muere al terminar — y el
 ### Cómo ejecuta a los agentes
 
 - Cada fase corre como una **sesión del CLI de GitHub Copilot** — por proceso (`spawn`) o por su **SDK** oficial (`runner: "sdk"`). Del SDK salen además el **catálogo vivo de modelos** (nombres oficiales, ventana de contexto, categoría de AI credits) y los **tokens reales** por sesión.
-- **El SDK no se instala nunca** (ni conductor ni cada run): viene **dentro** del paquete `@github/copilot` que ya tienes instalado con tu CLI de Copilot. Conductor lo localiza (`npm root -g`) y lo carga con un **import dinámico** — una vez por proceso, milisegundos, y Node lo cachea. Por eso el motor sigue a 0 dependencias, no hay nada que actualizar por separado (el catálogo se renueva solo cuando tú actualizas tu CLI) y si el SDK no está, hay fallback automático al modo proceso.
+- **Conductor no añade dependencias para ejecutar**: el modo por defecto (proceso) usa tu CLI de Copilot tal cual. El **runtime** y el **catálogo vivo de modelos** salen del paquete `@github/copilot` que ya tienes instalado — conductor lo localiza (`npm root -g`) y lo carga con **import dinámico** (una vez por proceso, milisegundos). El runner `sdk` es opcional y usa el paquete `@github/copilot-sdk` si está presente; si no, cae solo al modo proceso. En todos los casos el motor sigue a 0 dependencias y el catálogo se renueva solo cuando tú actualizas tu CLI.
 - Los modelos de tu **proxy LiteLLM** entran por la vía BYOK (0 créditos premium) — mezclables por fase en el mismo run.
 - **Papeles**: `planner` (planifica y especifica — no toca código) · `coder` (el único con escritura en el proyecto, fases apply/fix) · `reviewer` (verify, con **lentes en paralelo cuyo número marca el riesgo del preset**). La orquestación jamás es un LLM: por eso dos runs con las mismas entradas se comportan igual.
 - **Correa por fase**: toolset recortado (`--excluded-tools` en fases que no codean), reviewer sin escritura, sin git ni comandos destructivos, y ejecutar tus tests reales exige tu consentimiento explícito (`checks` + toggle test).
@@ -220,8 +220,8 @@ Cada fase corre en su **propia sesión efímera** que muere al terminar — y el
 ### Con qué se integra
 
 - **MCP en dos direcciones**: conductor **es** un servidor MCP — así conducen el pipeline Copilot CLI, VS Code, OpenCode y Claude Code. Y los agentes de fase **pueden consumir** servidores MCP de terceros si el equipo los configura (opt-in con guardas).
-- **Cómo sabe tu CLI que conductor «habla MCP»**: no hay registro central ni instalación aparte — `conductor setup` escribe UNA entrada en la config de tu host (`{"mcpServers": {"conductor": {"command": "conductor", "args": ["mcp"]}}}`) que significa «lanza este comando como proceso hijo y háblale el protocolo MCP». Al abrir el chat, el host lo arranca y hacen el saludo del protocolo: `initialize` (nombre, versión, capacidades) → `tools/list` (las tools con sus schemas). Eso es «**JSON-RPC por stdio**»: mensajes JSON con id de petición/respuesta, por la entrada/salida estándar del proceso — sin red, sin puertos, sin credenciales.
-- **git, solo en modo lectura**: checkpoints por fase y baseline de cambios con **índice propio** (`git write-tree` con `GIT_INDEX_FILE`) — cero impacto en tu HEAD, rama o staging. El sello registra el árbol exacto verificado. **Conductor jamás commitea**: eso es tuyo.
+- **Cómo sabe tu CLI que conductor «habla MCP»**: no hay registro central ni instalación aparte — `conductor setup` escribe UNA entrada en la config de tu host — en esencia `{"mcpServers": {"conductor": {"command": "conductor", "args": ["mcp"]}}}` (la clave exacta y los extras varían por host) — que significa «lanza este comando como proceso hijo y háblale el protocolo MCP». Al abrir el chat, el host lo arranca y hacen el saludo del protocolo: `initialize` (nombre, versión, capacidades) → `tools/list` (las tools con sus schemas). Eso es «**JSON-RPC por stdio**»: mensajes JSON con id de petición/respuesta, por la entrada/salida estándar del proceso — sin red, sin puertos, sin credenciales.
+- **git, en modo lectura por defecto**: checkpoints por fase, baseline de cambios y sello con **índice propio** (`git write-tree` con `GIT_INDEX_FILE`) — cero impacto en tu HEAD, rama o staging. **Por defecto conductor jamás commitea**: eso es tuyo (existe un opt-in explícito de commit por fase, `"gitCommit": true`, apagado de serie).
 - **GitHub CLI** (opcional) para tus AI credits; **tu proxy LiteLLM** (`/key/info`, endpoint estándar de LiteLLM: gasto real y presupuesto de TU key según el proxy — no una estimación) para el dinero. Los tokens por fase salen del **recibo de cierre de cada sesión** (`session.shutdown`); la lectura por **OTel** es la vía **legacy** (CLIs de Copilot antiguos que ya no lo emiten) y solo queda como fallback para runs viejos.
 
 ### Las 17 tools MCP (la superficie completa)
@@ -250,7 +250,6 @@ openspec/                          COMMITTEABLE — tu equipo lo hereda al clona
 .conductor/                        ESTADO DE MÁQUINA — ignorado por git
   runs/<change>/                   evidencia: timeline.json (fases/modelos/tokens/veredicto) ·
                                    log.txt · events.jsonl (traza de sesión) · dashboard.html · sello
-  launcher.log                     arranques de la app local
 
 .github/skills/conductor/SKILL.md  el /conductor de Copilot CLI y VS Code (committeable)
 .claude/  .opencode/               el mismo /conductor para Claude Code y OpenCode
@@ -280,7 +279,7 @@ El detalle completo y auditado (harness, primitivas, contratos internos) vive en
 | `/conductor <petición>` | el pipeline en el chat de tu CLI |
 | `conductor stats` | consumo real, ahorro y precisión del estimador |
 | `conductor doctor` | autotest del entorno (credenciales, prompts, hosts, app) |
-| `conductor receipt <change>` | descripción de PR del run verificado |
+| `conductor receipt <changeDir>` | descripción de PR del run verificado (ruta del change, p.ej. `openspec/changes/mi-cambio`) |
 
 | Cuando lo necesites | |
 |---|---|
@@ -300,4 +299,4 @@ El detalle completo y auditado (harness, primitivas, contratos internos) vive en
 2. `http://127.0.0.1:4750/demo` — un run de muestra completo sin gastar un token.
 3. La pantalla «conductor está apagado» no es un error: es la app siendo honesta; arráncala con `conductor`.
 4. Credenciales: el panel muestra el MOTIVO exacto (plantilla sin rellenar, key rechazada por el proxy…) — nunca inventa modelos.
-5. Log de arranque: `.conductor/launcher.log` en tu proyecto.
+5. Log del run: `.conductor/runs/<change>/log.txt` (y la traza completa en `events.jsonl`).

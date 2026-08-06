@@ -9542,7 +9542,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       try {
         const st = await (await fetch(app.url + 'api' + lj.url + '/state', { signal: AbortSignal.timeout(3000) })).json();
         if (Array.isArray(st.plan) && st.plan.length) banner = `🚀 Pipeline: ${name}\n📋 ${st.complexity || 'medium'} · Fases: ${st.plan.join(' → ')}`;
-        // TRANSPARENCIA de modelos en el arranque: qué va a ejecutar de verdad (el run NO hereda el modelo del chat)
+        // TRANSPARENCIA de modelos en el arranque: qué va a ejecutar de verdad (nombrado > gobierno > heredado del chat > sesión)
         if (banner) {
           const roles = Object.entries(gov).filter(([, v]) => v);
           const mLine = (models && model) ? `${model} (todas las fases — pedido en el chat)`
@@ -10113,7 +10113,7 @@ switch (cmd) {
     if (sub === 'status') {
       const envOk = !!(process.env.COPILOT_PROVIDER_BASE_URL && process.env.COPILOT_PROVIDER_API_KEY);
       // key en claro (fichero escrito a mano) → SELLARLA aquí mismo antes de informar (hábito-de-fichero sin plaintext)
-      const sealedNow = sealByokFile(home); // no-op si el dev puso "seal": false (su decisión informada)
+      const sealedNow = sealByokFile(home); // no-op salvo que el dev pusiera "seal": true (el cifrado es opt-in)
       const fRead = byokFile(home); // litellm.json, o el byok.json legado si aún no migró
       let fileOk = false, enc = false, portable = false, nDecl = 0, tpl = false, optOut = false, keyTx = '';
       try {
@@ -11047,4 +11047,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: ee737381eb873df69372b2ba10f57f0f0b2832bba8d6ada0b37c6ec7bdbaff49
+// build-inputs-sha256: d251b76fb757437d43a9bde1494d2445f762552696b0c2fb491f1d7d9c323991
