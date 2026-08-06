@@ -86,6 +86,9 @@ export interface RunState {
   done: boolean;
   hasDashboard: boolean;
   alive?: boolean;
+  /** run fantasma: el driver murió antes de escribir nada (sin timeline) — la UI lo cuenta honesto */
+  ghost?: boolean;
+  ghostError?: string | null;
   pending: PendingDecision | null;
   approvals?: Approval[];
   /** resumen del gate para el banner del veredicto: el porqué arriba, no enterrado en el registro */

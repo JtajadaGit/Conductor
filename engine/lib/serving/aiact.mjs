@@ -65,7 +65,7 @@ export function renderAiact(changeDir) {
   // VÍA HONESTA: human-web = clic de una persona en el panel; human-chat = decisión TRANSMITIDA por el
   // agente MCP del chat (el motor no puede probar que hubo humano detrás — y el acta no lo afirma).
   const apps = d.approvals.length
-    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — ${a.via === 'human-chat' ? 'aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)' : `aprobada por <b>una persona</b> (${E(a.via || 'panel web')})`} el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
+    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — ${a.via === 'human-chat' ? `aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)${a.userSaid ? ` — el usuario dijo: <b>«${E(a.userSaid)}»</b>` : ''}` : `aprobada por <b>una persona</b> (${E(a.via || 'panel web')})`} el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
   const files = d.aiGeneratedFiles.map((f) => `<li><code>${E(f.p)}</code> <span style="color:var(--tx3);font-size:.85em">${E(f.k)} · ${E(f.phase)}</span></li>`).join('') || '<li style="color:var(--tx3)">ninguno registrado</li>';
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

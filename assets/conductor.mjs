@@ -4480,6 +4480,7 @@ const CONFIG_SCHEMA = {
     reviewTimeoutMs: { type: 'integer', minimum: 0, default: 0, description: 'Timeout (ms) de la revisión humana en una pausa. 0 = espera indefinida (default). Combínalo con onReviewTimeout para headless/CI.' },
     onReviewTimeout: { type: 'string', enum: ['wait', 'continue', 'abort'], default: 'wait', description: 'Qué hacer si una pausa de revisión no se atiende en reviewTimeoutMs: wait (espera, default) | continue (sigue como aprobado) | abort (detiene el run).' },
     secretScan: { type: 'boolean', default: true, description: 'Escanea los ficheros escritos en busca de secretos/PII hardcodeados; un hallazgo tumba el GREEN. Desactívalo (false) solo en repos con fixtures de secreto a propósito.' },
+    webApprovalOnly: { type: 'boolean', default: false, description: 'Opt-in: toda pausa se aprueba SOLO en la web — las decisiones transmitidas por un agente de chat se rechazan (403). Railguard de servidor para equipos que no quieren aprobaciones vía agente.' },
     specFreeze: { type: 'boolean', default: false, description: 'Congela el hash de la spec al completarse y bloquea el GREEN si la spec muta después (gobierno estricto/migración). Opt-in: en modo laxo "fix" puede editar la spec.' },
     dataGate: { type: 'boolean', default: false, description: 'Gate de DATOS: el SQL escrito pasa el linter de seguridad de migraciones (DDL destructivo/irreversible + PII en columnas). Lo activa el preset "migration"; ponlo aquí para forzarlo en otros flujos.' },
     hollowTests: { type: 'boolean', default: false, description: 'Gate de TESTS HUECOS: marca tests que pasan sin verificar nada (sin aserciones, tautológicos, cuerpo vacío, todos skip) sobre los tests escritos; un hallazgo error tumba el GREEN. Opt-in (algunos repos usan placeholders a propósito).' },
@@ -4750,7 +4751,7 @@ function renderAiact(changeDir) {
   // VÍA HONESTA: human-web = clic de una persona en el panel; human-chat = decisión TRANSMITIDA por el
   // agente MCP del chat (el motor no puede probar que hubo humano detrás — y el acta no lo afirma).
   const apps = d.approvals.length
-    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — ${a.via === 'human-chat' ? 'aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)' : `aprobada por <b>una persona</b> (${E(a.via || 'panel web')})`} el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
+    ? d.approvals.map((a) => `<li>fase <code>${E(a.phase)}</code> — ${a.via === 'human-chat' ? `aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)${a.userSaid ? ` — el usuario dijo: <b>«${E(a.userSaid)}»</b>` : ''}` : `aprobada por <b>una persona</b> (${E(a.via || 'panel web')})`} el ${E(a.at)}${a.artifactsSha ? `<br><small style="color:var(--tx3)">artefactos aprobados (sha256): ${Object.entries(a.artifactsSha).map(([f, h]) => `${E(f)}@${E(h)}`).join(' · ')}</small>` : ''}</li>`).join('')
     : '<li style="color:var(--tx3)">sin pausas de revisión en este run (modo autoApprove)</li>';
   const files = d.aiGeneratedFiles.map((f) => `<li><code>${E(f.p)}</code> <span style="color:var(--tx3);font-size:.85em">${E(f.k)} · ${E(f.phase)}</span></li>`).join('') || '<li style="color:var(--tx3)">ninguno registrado</li>';
   return `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -6227,7 +6228,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
             redoCount++;
             if (pr?.note && String(pr.note).trim()) { userNote = String(pr.note).trim().slice(0, 2000); }
             decisions.push({ at: new Date().toISOString(), phase, kind: 'redo', value: `${pr.redo.trim()}${userNote ? ` · ${userNote.slice(0, 160)}` : ''}` });
-            approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
+            approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', ...(pr?.userSaid ? { userSaid: String(pr.userSaid).slice(0, 300) } : {}), redo: pr.redo.trim(), artifactsSha: approvalSha(changeDir) });
             log(`🔁 redo del revisor: rehago "${pr.redo.trim()}"${userNote ? ' con instrucción' : ''} — todo lo posterior re-ejecuta en orden y volveré a pausar antes de "${phase}"`);
             step = r;
             continue;
@@ -6255,7 +6256,7 @@ async function drive({ changeDir, request, complexity = 'medium', domain = 'core
       // VÍA HONESTA de la decisión (hallazgo real: el «apruebo automáticamente» de un agente de chat
       // quedaba registrado como human-web — el acta afirmaba «una persona» sin poder saberlo):
       // human-web = clic en el panel · human-chat = decisión TRANSMITIDA por el agente MCP del chat.
-      approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
+      approvals.push({ phase, at: new Date().toISOString(), via: pr?.source === 'chat' ? 'human-chat' : 'human-web', ...(pr?.userSaid ? { userSaid: String(pr.userSaid).slice(0, 300) } : {}), note: pr?.note ? true : undefined, artifactsSha: approvalSha(changeDir) });
       log(`▶ aprobado — continúa "${phase}"`);
     }
     // FASE TEST DETERMINISTA (modelo apply → test → fix-loop → verify): ejecuta las pruebas REALES del proyecto (0
@@ -8933,7 +8934,11 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
             return json(200, { missing: true, archivedAs, phases: [], plan: [], logTail: [], done: true, verdict: null, now: Date.now() });
           }
           const alive = !!((reg && !reg.exited) || activeRun(changeDir));
-          return json(200, { ...runState(changeDir, proj.root, { alive }), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
+          // RUN FANTASMA (señal inequívoca, sin heurísticas de tiempo): el driver murió al nacer — hijo
+          // terminado, sin timeline escrito y sin lock. Antes se pintaba «EN CURSO» eterno con 0/0 fases
+          // (caso real). Aditivo: `ghost` + el error del spawn si lo hubo; la UI lo cuenta honesto.
+          const ghost = !!(reg && reg.exited && !readJson(plumbPath(changeDir, 'timeline.json')) && !activeRun(changeDir));
+          return json(200, { ...runState(changeDir, proj.root, { alive }), ...(ghost ? { ghost: true, ghostError: reg.error || null } : {}), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
         }
         if (req.method === 'POST' && action === 'continue') {
           const payload = await readBody(req);
@@ -8944,6 +8949,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           // declara a qué fase responde (expectPhase) y no coincide con la pausa viva, 409 honesto con la actual.
           const { expectPhase, ...fwd } = payload;
           if (expectPhase && reg.pending.before !== expectPhase) return json(409, { ok: false, stalePause: true, pausedNow: reg.pending.before, error: `esa decisión era para la pausa «${expectPhase}», que ya se decidió — ahora está pausado en «${reg.pending.before}»` });
+          // GOBIERNO opt-in «webApprovalOnly»: las decisiones transmitidas por un agente de chat se rechazan —
+          // toda pausa se resuelve con un clic humano en el panel. Railguard de servidor, no de prompt.
+          if (fwd.source === 'chat') { try { if (readDriveConfig(proj.root).webApprovalOnly === true) return json(403, { ok: false, webApprovalOnly: true, error: `este proyecto exige aprobar las pausas EN LA WEB (webApprovalOnly) — dile al usuario que decida en /run/${proj.id}/${name}` }); } catch {} }
           // enviar PRIMERO, limpiar pending solo si el canal respondió: antes un send fallido dejaba la pausa
           // irrecuperable (pending ya borrado, driver esperando) y aun así respondía ok.
           let sent = false; try { sent = reg.child.send({ t: 'continue', payload: fwd }) !== false; } catch { sent = false; }
@@ -9554,8 +9562,13 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       } catch {}
       return { ...res, ...(banner ? { banner, next: 'Imprime `banner` TAL CUAL y sigue: ' + (res.next || '') } : {}), ...(avisoModelo ? { aviso: avisoModelo } : {}), changeName: name, web: webF };
     } },
-  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] } }, required: ['projectRoot', 'changeName'] } },
-    run: async ({ projectRoot, changeName, note, model, phase, action }) => {
+  conductor_continue: { def: { name: 'conductor_continue', title: 'answer a conductor review pause (approve / note / hot-model / stop) or keep waiting', description: 'Continue a PAUSED conductor run with the user\'s decision: no note = approve as-is; note = guidance injected into the next phase; model = hot-swap just for that phase (litellm:<m> | copilot:<m>); action:"stop" stops the run keeping everything; action:"wait" = no decision, just keep waiting. ALWAYS pass phase (the `phase` field of the pause you are answering) with a decision — if that pause was already resolved (e.g. from the web) the run is NOT touched and you get the CURRENT state back (field `aviso`). Same contract as conductor_feature: returns within ~55s with "working" + `progress` (→ one-line user update if it changed, then call again with action:"wait"), "paused" (→ print `render` verbatim, ask the user) or "done" (verdict + receipt).', inputSchema: { type: 'object', properties: { projectRoot: { type: 'string' }, changeName: { type: 'string' }, note: { type: 'string' }, model: { type: 'string' }, phase: { type: 'string', description: 'phase of the pause being answered (from the pause payload) — guards against racing a web decision' }, action: { type: 'string', enum: ['continue', 'stop', 'wait'] }, userSaid: { type: 'string', description: 'REQUIRED for any decision (approve/note/model): the user\'s literal message, verbatim, that authorizes it. Without it the decision is REJECTED — a pause can only be resolved by an explicit human instruction, never on the agent\'s initiative. Recorded in the audit trail. Not needed for action:"wait" or "stop"' } }, required: ['projectRoot', 'changeName'] } },
+    run: async ({ projectRoot, changeName, note, model, phase, action, userSaid }) => {
+      // CANDADO ESTRUCTURAL (no de prompt): una decisión sin la cita literal del usuario se rechaza AQUÍ,
+      // antes de tocar nada — un agente en autopilot no puede aprobar pausas por iniciativa propia.
+      if (action !== 'wait' && action !== 'stop' && !(userSaid && String(userSaid).trim())) {
+        return { ok: false, error: 'decisión RECHAZADA: falta `userSaid` (la cita literal del mensaje del usuario que la autoriza). Si el usuario aún no ha decidido, espera con action:"wait" o dile que decida en la web — JAMÁS decidas tú.' };
+      }
       const root = resolve(projectRoot || process.cwd());
       const name = slug(changeName);
       const app = await appUp(root);
@@ -9569,7 +9582,7 @@ description: 'Create openspec/conductor.json in the given openspec dir (only if 
       else if (action !== 'wait') {
         // source:'chat' — la decisión llega TRANSMITIDA por un agente MCP, no de un clic humano en el
         // panel: el driver lo graba (via human-chat) y el acta AI Act deja de afirmar «una persona» a ciegas.
-        const payload = { source: 'chat', ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
+        const payload = { source: 'chat', userSaid: String(userSaid).trim().slice(0, 300), ...(note ? { note } : {}), ...(model ? { model } : {}), ...(phase ? { expectPhase: phase } : {}) };
         try {
           const r = await fetch(app.url + base + '/continue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
           if (r.status === 409) { const j = await r.json().catch(() => ({})); if (j.stalePause) stale = j; }
@@ -10230,7 +10243,7 @@ switch (cmd) {
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · MODELO: pasa SIEMPRE chatModel:"litellm:<id>" | "copilot:<id>" con el modelo de ESTA conversación si lo conoces — si el repo no fija modelos en conductor.json, el run lo HEREDA (si los fija, gana el repo). Si el usuario NOMBRA un modelo, pásalo en model (gana a todo). Imprime el banner (su línea 🤖 declara lo que ejecuta de verdad) y si llega `aviso` de modelo, cuéntalo en una línea.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL Y COMPLETO, hasta la última línea (la del reenganche web incluida — no la recortes ni resumas, ni pegues los artifacts) y ESPERA su respuesta;',
-      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) Y userSaid (la CITA LITERAL de su mensaje — sin ella toda decisión se RECHAZA; queda en el acta) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · si el usuario decide en la WEB, tu turno ya habrá terminado y este chat queda en silencio — es NORMAL: en cuanto escriba CUALQUIER cosa, reengánchate con conductor_continue {action:"wait"} y sigue narrando.',
       '  · PROHIBIDO aprobar una pausa que el usuario no haya aprobado EXPLÍCITAMENTE en este chat («apruebo automáticamente» = violación del contrato: la pausa existe PARA la persona; queda auditado como human-chat en el acta).',
       '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle; si la respuesta trae `decisiones` nuevas (pausas resueltas desde la web), cuéntalas en 1 línea.',
@@ -10245,7 +10258,7 @@ switch (cmd) {
     const DESC = JSON.stringify('Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)');
     const homeH = process.env.CONDUCTOR_USERHOME || homedir();
     const HOSTS_PROJ = [
-      { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md + .github/mcp.json (scope de proyecto del CLI moderno)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), ghMcpJson: join(rootI2, '.github', 'mcp.json') },
       // Claude: SKILLS es el estándar recomendado (crea /conductor); OpenCode además DESCUBRE .claude/skills
       // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
       { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md + settings.json (tools pre-autorizadas)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), claudeSettings: join(rootI2, '.claude', 'settings.json') },
@@ -10289,6 +10302,13 @@ switch (cmd) {
           const prevM = existsSync(h.mcpJson) ? readFileSync(h.mcpJson, 'utf8') : '';
           const rm = mergeMcpEntry(prevM, engineI, { key: 'servers', portable: portableI });
           if (!rm.error && rm.changed) { mkdirSync(dirname(h.mcpJson), { recursive: true }); if (prevM) writeFileSync(h.mcpJson + '.bak', prevM); writeFileSync(h.mcpJson, rm.text); }
+        }
+        if (h.ghMcpJson) {
+          // Copilot CLI moderno retiró .vscode/mcp.json y pide el scope de proyecto en .github/mcp.json
+          // (clave mcpServers, como su config global — que sigue valiendo de red). Misma fusión no destructiva.
+          const prevG = existsSync(h.ghMcpJson) ? readFileSync(h.ghMcpJson, 'utf8') : '';
+          const rg = mergeMcpEntry(prevG, engineI, { key: 'mcpServers', portable: portableI });
+          if (!rg.error && rg.changed) { mkdirSync(dirname(h.ghMcpJson), { recursive: true }); if (prevG) writeFileSync(h.ghMcpJson + '.bak', prevG); writeFileSync(h.ghMcpJson, rg.text); }
         }
       } catch {}
     }
@@ -10782,7 +10802,7 @@ switch (cmd) {
       '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
       '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
-      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) Y userSaid (la CITA LITERAL de su mensaje — sin ella toda decisión se RECHAZA; queda en el acta) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
@@ -10875,7 +10895,7 @@ switch (cmd) {
         '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
         '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
         '  · status:"paused" → imprime el campo `render` TAL CUAL (presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
-        '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+        '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) Y userSaid (la CITA LITERAL de su mensaje — sin ella toda decisión se RECHAZA; queda en el acta) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
         '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
         '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
@@ -11049,4 +11069,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: ef3980988317c1e3a440855d5342854b29be1aa807c3bc43551cc90f52f275ca
+// build-inputs-sha256: 2402dafd809e9e6af1b3df283dcbb99ff25ace1b8636e84594c630cc67a7abb9

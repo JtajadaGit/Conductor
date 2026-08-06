@@ -57,8 +57,25 @@ await test('mcp: tools/list expone el motor completo', async () => {
   const cont = list.result.tools.find((t) => t.name === 'conductor_continue');
   eq(cont.inputSchema.required, ['projectRoot', 'changeName'], 'conductor_continue: projectRoot + changeName obligatorios');
   eq(cont.inputSchema.properties.action.enum, ['continue', 'stop', 'wait'], 'conductor_continue: acciones cerradas');
+  // CANDADO userSaid: la cita literal del usuario es parte del contrato, declarada en el schema
+  assert(cont.inputSchema.properties.userSaid?.type === 'string', 'conductor_continue: userSaid declarado');
+  assert(/REQUIRED for any decision/.test(cont.inputSchema.properties.userSaid.description || ''), 'conductor_continue: la description exige la cita en toda decisión');
   await c.close();
 });
+// CANDADO ESTRUCTURAL: una DECISIÓN sin la cita literal del usuario se rechaza en la propia tool, antes
+// de tocar la app — un agente en autopilot no puede aprobar pausas por iniciativa propia (caso real).
+await test('mcp: conductor_continue RECHAZA toda decisión sin userSaid — y el error enseña el remedio', async () => {
+  const c = client();
+  await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  const sin = await c.callTool('conductor_continue', { projectRoot: F1, changeName: 'x', note: 'apruebo yo solo' });
+  eq(sin.ok, false, 'decisión sin cita => rechazada');
+  assert(/RECHAZADA/.test(sin.error || '') && /userSaid/.test(sin.error || ''), `el error enseña el remedio: ${sin.error}`);
+  const vacia = await c.callTool('conductor_continue', { projectRoot: F1, changeName: 'x', userSaid: '   ' });
+  eq(vacia.ok, false, 'una cita en blanco tampoco vale');
+  assert(/RECHAZADA/.test(vacia.error || ''), 'mismo rechazo con espacios');
+  await c.close();
+});
+
 await test('mcp: conductor_gate ejecuta el gate real', async () => {
   const c = client();
   await c.rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } });

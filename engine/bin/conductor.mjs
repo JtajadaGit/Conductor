@@ -568,7 +568,7 @@ switch (cmd) {
       '- Si trae petición: llama a `conductor_feature` con {request, projectRoot: raíz absoluta del proyecto actual}.',
       '  · MODELO: pasa SIEMPRE chatModel:"litellm:<id>" | "copilot:<id>" con el modelo de ESTA conversación si lo conoces — si el repo no fija modelos en conductor.json, el run lo HEREDA (si los fija, gana el repo). Si el usuario NOMBRA un modelo, pásalo en model (gana a todo). Imprime el banner (su línea 🤖 declara lo que ejecuta de verdad) y si llega `aviso` de modelo, cuéntalo en una línea.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL Y COMPLETO, hasta la última línea (la del reenganche web incluida — no la recortes ni resumas, ni pegues los artifacts) y ESPERA su respuesta;',
-      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) Y userSaid (la CITA LITERAL de su mensaje — sin ella toda decisión se RECHAZA; queda en el acta) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · si el usuario decide en la WEB, tu turno ya habrá terminado y este chat queda en silencio — es NORMAL: en cuanto escriba CUALQUIER cosa, reengánchate con conductor_continue {action:"wait"} y sigue narrando.',
       '  · PROHIBIDO aprobar una pausa que el usuario no haya aprobado EXPLÍCITAMENTE en este chat («apruebo automáticamente» = violación del contrato: la pausa existe PARA la persona; queda auditado como human-chat en el acta).',
       '  · status:"working" → re-llama `conductor_continue` con {action:"wait"} y sigue el bucle; si la respuesta trae `decisiones` nuevas (pausas resueltas desde la web), cuéntalas en 1 línea.',
@@ -583,7 +583,7 @@ switch (cmd) {
     const DESC = JSON.stringify('Feature con el pipeline SDD verificado de conductor — pausas de revisión EN ESTE CHAT (sin petición: estado en el chat, sin abrir navegador)');
     const homeH = process.env.CONDUCTOR_USERHOME || homedir();
     const HOSTS_PROJ = [
-      { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n') },
+      { n: '1', key: 'copilot', label: 'Copilot', det: existsSync(join(homeH, '.copilot')), file: join(rootI2, '.github', 'skills', 'conductor', 'SKILL.md'), rel: '.github/skills/conductor/SKILL.md + .github/mcp.json (scope de proyecto del CLI moderno)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), ghMcpJson: join(rootI2, '.github', 'mcp.json') },
       // Claude: SKILLS es el estándar recomendado (crea /conductor); OpenCode además DESCUBRE .claude/skills
       // como skill del modelo → un fichero, dos hosts. El gesto /conductor de OpenCode sigue en command/.
       { n: '2', key: 'claude', label: 'Claude Code', det: existsSync(join(homeH, '.claude')), file: join(rootI2, '.claude', 'skills', 'conductor', 'SKILL.md'), rel: '.claude/skills/conductor/SKILL.md + settings.json (tools pre-autorizadas)', content: ['---', 'name: conductor', `description: ${DESC}`, '---', ...BODY_CMD].join('\n'), claudeSettings: join(rootI2, '.claude', 'settings.json') },
@@ -627,6 +627,13 @@ switch (cmd) {
           const prevM = existsSync(h.mcpJson) ? readFileSync(h.mcpJson, 'utf8') : '';
           const rm = mergeMcpEntry(prevM, engineI, { key: 'servers', portable: portableI });
           if (!rm.error && rm.changed) { mkdirSync(dirname(h.mcpJson), { recursive: true }); if (prevM) writeFileSync(h.mcpJson + '.bak', prevM); writeFileSync(h.mcpJson, rm.text); }
+        }
+        if (h.ghMcpJson) {
+          // Copilot CLI moderno retiró .vscode/mcp.json y pide el scope de proyecto en .github/mcp.json
+          // (clave mcpServers, como su config global — que sigue valiendo de red). Misma fusión no destructiva.
+          const prevG = existsSync(h.ghMcpJson) ? readFileSync(h.ghMcpJson, 'utf8') : '';
+          const rg = mergeMcpEntry(prevG, engineI, { key: 'mcpServers', portable: portableI });
+          if (!rg.error && rg.changed) { mkdirSync(dirname(h.ghMcpJson), { recursive: true }); if (prevG) writeFileSync(h.ghMcpJson + '.bak', prevG); writeFileSync(h.ghMcpJson, rg.text); }
         }
       } catch {}
     }
@@ -1120,7 +1127,7 @@ switch (cmd) {
       '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
       '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
       '  · status:"paused" → imprime el campo `render` TAL CUAL (presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
-      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+      '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) Y userSaid (la CITA LITERAL de su mensaje — sin ella toda decisión se RECHAZA; queda en el acta) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
       '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
       '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',
@@ -1213,7 +1220,7 @@ switch (cmd) {
         '- Si $ARGUMENTS está VACÍO: llama a `conductor_app` con {open:false} (NO abre navegador) y responde EN EL CHAT: cómo lanzar (`/conductor <qué construir>`), los runs del proyecto (activos/en pausa del campo `runs`) y la URL del panel como texto por si prefiere la web.',
         '- Si trae petición: llama a `conductor_feature` con {request: $ARGUMENTS, projectRoot: raíz absoluta del proyecto actual}.',
         '  · status:"paused" → imprime el campo `render` TAL CUAL (presentación determinista — no la resumas ni pegues los artifacts) y ESPERA su respuesta;',
-        '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
+        '    después llama `conductor_continue` con su decisión Y phase (la fase de esa pausa) Y userSaid (la CITA LITERAL de su mensaje — sin ella toda decisión se RECHAZA; queda en el acta) (sin note = aprobar · note = instrucción · model = cambio en caliente · action:"stop"). Repite.',
         '  · status:"done" → presenta el receipt VERBATIM. Si es GREEN, el usuario revisa y commitea ÉL — tú JAMÁS ejecutas git.',
         '  · NO orquestes fases tú ni edites ficheros tú: el motor conduce; tú solo transmites las pausas y las decisiones.',
       '  · mientras status:"working": si `progress` cambió, cuenta en UNA línea las fases ✓, la fase actual y los tokens — el usuario debe VER avanzar el run.',

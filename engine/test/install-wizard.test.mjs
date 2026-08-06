@@ -1,6 +1,6 @@
 // Test del INSTALADOR GUIADO (`conductor install`): el onboarding de un comando. Guionizado por pipe
 // (CONDUCTOR_TTY=1) — cada paso saltable, jamás se cuelga, y sin TTY imprime la checklist y sale.
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { plumbPath } from '../lib/core/plumb.mjs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,4 +81,25 @@ await test('init: mini-menu de hosts POR-PROYECTO — pipe conecta los detectado
   assert(!ex(join(proj2, '.claude')) && !ex(join(proj2, '.opencode')), '"n" = sin comandos de proyecto');
   assert(ex(join(proj2, 'openspec', 'project.md')), 'el init OpenSpec ocurre igualmente');
   rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true }); rmSync(proj2, { recursive: true, force: true });
+});
+
+// Copilot CLI moderno retiró .vscode/mcp.json del scope de proyecto y pide .github/mcp.json (clave
+// mcpServers). El global ~/.copilot/mcp-config.json sigue valiendo — esto es el scope committeable.
+await test('init: con Copilot detectado escribe .github/mcp.json (mcpServers.conductor, fusión no destructiva)', async () => {
+  const { readFileSync: rf, existsSync: ex } = await import('node:fs');
+  const home = join(HERE, '.tmp-initghmcp-home');
+  const proj = join(HERE, '.tmp-initghmcp-proj');
+  rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true });
+  mkdirSync(join(home, '.copilot'), { recursive: true });
+  // fichero previo del equipo con OTRO server: la fusión debe conservarlo (no destructiva) y dejar .bak
+  mkdirSync(join(proj, '.github'), { recursive: true });
+  writeFileSync(join(proj, '.github', 'mcp.json'), JSON.stringify({ mcpServers: { otro: { command: 'x' } } }, null, 2));
+  const env = { ...process.env, CONDUCTOR_USERHOME: home, CONDUCTOR_HOME: plumbPath(home) };
+  execFileSync(process.execPath, [BIN, 'init', proj], { encoding: 'utf8', stdio: 'pipe', windowsHide: true, timeout: 30000, env });
+  assert(ex(join(proj, '.github', 'skills', 'conductor', 'SKILL.md')), 'skill de Copilot escrita');
+  const gj = JSON.parse(rf(join(proj, '.github', 'mcp.json'), 'utf8'));
+  assert(gj.mcpServers?.conductor, '.github/mcp.json lleva la entrada conductor');
+  assert(gj.mcpServers?.otro, 'y CONSERVA el server previo del equipo (fusión, no pisotón)');
+  assert(ex(join(proj, '.github', 'mcp.json.bak')), 'con backup del fichero previo');
+  rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true });
 });

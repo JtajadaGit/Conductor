@@ -1388,7 +1388,11 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
             return json(200, { missing: true, archivedAs, phases: [], plan: [], logTail: [], done: true, verdict: null, now: Date.now() });
           }
           const alive = !!((reg && !reg.exited) || activeRun(changeDir));
-          return json(200, { ...runState(changeDir, proj.root, { alive }), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
+          // RUN FANTASMA (señal inequívoca, sin heurísticas de tiempo): el driver murió al nacer — hijo
+          // terminado, sin timeline escrito y sin lock. Antes se pintaba «EN CURSO» eterno con 0/0 fases
+          // (caso real). Aditivo: `ghost` + el error del spawn si lo hubo; la UI lo cuenta honesto.
+          const ghost = !!(reg && reg.exited && !readJson(plumbPath(changeDir, 'timeline.json')) && !activeRun(changeDir));
+          return json(200, { ...runState(changeDir, proj.root, { alive }), ...(ghost ? { ghost: true, ghostError: reg.error || null } : {}), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
         }
         if (req.method === 'POST' && action === 'continue') {
           const payload = await readBody(req);
@@ -1399,6 +1403,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           // declara a qué fase responde (expectPhase) y no coincide con la pausa viva, 409 honesto con la actual.
           const { expectPhase, ...fwd } = payload;
           if (expectPhase && reg.pending.before !== expectPhase) return json(409, { ok: false, stalePause: true, pausedNow: reg.pending.before, error: `esa decisión era para la pausa «${expectPhase}», que ya se decidió — ahora está pausado en «${reg.pending.before}»` });
+          // GOBIERNO opt-in «webApprovalOnly»: las decisiones transmitidas por un agente de chat se rechazan —
+          // toda pausa se resuelve con un clic humano en el panel. Railguard de servidor, no de prompt.
+          if (fwd.source === 'chat') { try { if (readDriveConfig(proj.root).webApprovalOnly === true) return json(403, { ok: false, webApprovalOnly: true, error: `este proyecto exige aprobar las pausas EN LA WEB (webApprovalOnly) — dile al usuario que decida en /run/${proj.id}/${name}` }); } catch {} }
           // enviar PRIMERO, limpiar pending solo si el canal respondió: antes un send fallido dejaba la pausa
           // irrecuperable (pending ya borrado, driver esperando) y aun así respondía ok.
           let sent = false; try { sent = reg.child.send({ t: 'continue', payload: fwd }) !== false; } catch { sent = false; }

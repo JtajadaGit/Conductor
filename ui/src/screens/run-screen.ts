@@ -26,6 +26,7 @@ export class RunScreen extends CElement {
   @state() private models: ModelsResponse | null = null;
   @state() private files: RunFiles | null = null; // resumen de cambios (experiencia Git)
   @state() private busy = ''; // acción POST en vuelo ('resume'|'approve'|'rollback'|'archive') → botón deshabilitado con texto de progreso
+  @state() private approvedHint = ''; // aviso efímero tras aprobar: cómo reenganchar un chat que siga este run
   @state() private actionErr = ''; // error de la última acción — inline, nunca en silencio
   @state() private archivedMsg = ''; // resultado del archivado (promoted/needsManualMerge)
   @state() private tool: Record<string, string> = {}; // tab abierto por tarjeta de fase (clave índice:fase)
@@ -96,6 +97,10 @@ export class RunScreen extends CElement {
       if (!r.ok) { this.actionErr = r.error || 'no se pudo aprobar — reintenta o detén el run'; return; }
       this.note = ''; this.hotModel = ''; this.selected = new Set();
       if (this.s) this.s = { ...this.s, pending: null }; // óptimista: la card desaparece ya (el poll confirma en ≤2s)
+      // COORDINACIÓN WEB↔CHAT: si este run se sigue desde un chat, el agente no puede enterarse solo
+      // (MCP no permite avisarle) — se lo decimos a la persona en el momento exacto de la decisión.
+      this.approvedHint = 'Aprobado. Si sigues este run desde un chat, escribe allí cualquier cosa para que continúe narrando.';
+      setTimeout(() => { this.approvedHint = ''; }, 12000);
     } finally { this.busy = ''; }
   }
   // CHAT-EN-PAUSA: fases de PLANIFICACIÓN ya completadas de este run, en su orden canónico — candidatas a rehacer.
@@ -253,7 +258,9 @@ export class RunScreen extends CElement {
       </div>
       <!-- FUERA de .actbar: dentro era un item flex más y partía la barra de botones en dos filas -->
       ${s.verdict === 'INTERRUMPIDO' ? html`<p class="alert warn" role="status"><span>Run <b>interrumpido</b>: el proceso murió sin cerrar (¿equipo suspendido?). Nada se ha perdido — <b>↻ Reanudar</b> continúa desde la última fase completada.</span></p>` : nothing}
+      ${s.ghost ? html`<p class="alert warn" role="alert"><span>Este run <b>no llegó a arrancar</b>: el proceso del driver murió antes de escribir nada${s.ghostError ? html` — <code>${s.ghostError}</code>` : nothing}. No hay fases ni evidencia; relánzalo desde el panel del proyecto.</span></p>` : nothing}
       ${this.actionErr ? html`<div class="errline" role="alert">${this.actionErr}</div>` : nothing}
+      ${this.approvedHint ? html`<p class="alert ok" role="status"><span>${this.approvedHint}</span></p>` : nothing}
       ${this.archivedMsg ? html`<div class="whybox ok" role="status">${this.archivedMsg} <a href="/">Volver al panel</a></div>` : nothing}
       ${s.done && s.verdict ? this.verdictBanner(s) : nothing}
       ${s.tests?.ran ? html`<div class="muted" style="margin:.1rem 0 .9rem;font-size:.82rem">Pruebas del proyecto (antes de verify): ${s.tests.passed ? html`<span style="color:var(--ok);font-weight:600">✓ pasaron</span>` : html`<span style="color:var(--warn);font-weight:600">✗ fallaron</span>`} <code style="font-size:.85em">${s.tests.cmds.join(' · ')}</code>${!s.tests.passed && s.tests.failed.length ? html` <span class="muted">— falló: ${s.tests.failed.join(', ')}</span>` : nothing}</div>` : nothing}
@@ -263,7 +270,7 @@ export class RunScreen extends CElement {
       ${s.pending ? this.pendingCard(s.pending, s) : nothing}
       ${this.cards(s)}
       ${this.pipeline(s)}
-      ${this.changesSection()}
+      ${this.changesSection(s)}
       ${s.cost ? html`<model-breakdown .cost=${s.cost}></model-breakdown>` : nothing}
       ${this.logBox(s)}
     `;
@@ -412,12 +419,15 @@ export class RunScreen extends CElement {
   }
 
   // CAMBIOS del run (experiencia Git): changeset consolidado — fichero × tipo × +/− líneas, clic → diff coloreado.
-  private changesSection(): TemplateResult | typeof nothing {
+  private changesSection(s?: RunState): TemplateResult | typeof nothing {
     const f = this.files;
     if (!Array.isArray(f?.files) || !f.files.length) return nothing; // demo/backend parcial: objeto sin `files` array
     const t = f.totals;
+    // con 0 fases ejecutadas nada de esto lo escribió el run: es el estado previo del árbol (sin el aviso,
+    // un run fantasma se «atribuía» skills/init sin commitear — caso real)
+    const preRun = !!s && Array.isArray(s.phases) && s.phases.length === 0;
     return html`
-      <div class="sectrow"><h2 class="sect">Cambios</h2>${f.fromGit ? nothing : html`<span class="muted" style="font-size:.72rem">aprox. (sin git)</span>`}</div>
+      <div class="sectrow"><h2 class="sect">Cambios</h2>${preRun ? html`<span class="muted" style="font-size:.72rem">cambios previos en el árbol — ninguna fase ha escrito todavía</span>` : f.fromGit ? nothing : html`<span class="muted" style="font-size:.72rem">aprox. (sin git)</span>`}</div>
       <div class="changes">
         <div class="changes-head">
           <span class="ch-n">${t.files} fichero${t.files === 1 ? '' : 's'}</span>

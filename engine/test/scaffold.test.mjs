@@ -55,6 +55,7 @@ await test('scaffold: crea conductor.json + project.md + .copilotignore + .gitig
   eq((readFileSync(join(TMP, '.gitignore'), 'utf8').match(/\.conductor\//g) || []).length, 1, 'la línea NO se duplica en re-init');
   assert(CONFIG_SCHEMA.properties.models && CONFIG_SCHEMA.properties.mcp, 'schema cubre models/mcp');
   assert(CONFIG_SCHEMA.properties.rules, 'schema cubre rules (si no, additionalProperties:false lo rechazaría)');
+  assert(CONFIG_SCHEMA.properties.webApprovalOnly?.type === 'boolean' && CONFIG_SCHEMA.properties.webApprovalOnly.default === false, 'webApprovalOnly declarado (opt-in, default false)');
 });
 
 rmSync(TMP, { recursive: true, force: true });
@@ -162,7 +163,7 @@ await test('aiact (P3): informe de transparencia — modelos, aprobaciones human
   writeFileSync(join(T, 'specs', 'counter', 'spec.md'), '## ADDED Requirements');
   writeFileSync(plumbPath(T, 'timeline.json'), JSON.stringify({
     request: 'add counter', verdict: 'GREEN',
-    approvals: [{ phase: 'apply', at: '2026-06-11T10:00:00Z', via: 'human-web' }, { phase: 'verify', at: '2026-06-11T10:04:00Z', via: 'human-chat' }],
+    approvals: [{ phase: 'apply', at: '2026-06-11T10:00:00Z', via: 'human-web' }, { phase: 'verify', at: '2026-06-11T10:04:00Z', via: 'human-chat', userSaid: 'aprobar verify' }],
     phases: [
       { phase: 'spec', model: 'qwen36-msc1', provider: 'byok', ok: true },
       { phase: 'apply', model: 'claude-haiku-4.5', provider: 'copilot', files: [{ p: 'src/c.js', k: 'create' }], tokens: { in: 1000, out: 100 }, ok: true },
@@ -177,6 +178,7 @@ await test('aiact (P3): informe de transparencia — modelos, aprobaciones human
   // papel de cada agente, y el documento NO se autoexplica (la didáctica vive en /help del panel)
   assert(html.includes('veredicto del run (SDD)'), 'la pastilla GREEN queda atribuida al run SDD, no al AI Act');
   assert(html.includes('aprobada <b>desde el chat</b> (decisión transmitida por el agente MCP)'), 'human-chat se declara TAL CUAL — el acta jamás afirma «una persona» sin poder saberlo');
+  assert(html.includes('el usuario dijo') && html.includes('aprobar verify'), 'el acta enseña la CITA literal que autorizó la decisión (candado userSaid)');
   assert(html.includes('<th>papel</th>'), 'columna papel: el equipo de agentes es visible por fase');
   assert(!html.includes('En corto'), 'el entregable abre con datos — la guía está en /help, no dentro del documento');
   rmSync(T, { recursive: true, force: true });

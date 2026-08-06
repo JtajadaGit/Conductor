@@ -59,11 +59,12 @@ await test('serve-flujos: la PAUSA del driver aparece en el estado y `continue` 
   eq(sj.stalePause, true, 'y dice POR QUÉ (stalePause)');
   eq(sj.pausedNow, 'apply', 'con la pausa que sí está viva');
   assert((await get('api/run/contador/state')).pending, 'la pausa viva sigue intacta tras el intento tardío');
-  const c = await (await post('api/run/contador/continue', { expectPhase: 'apply', source: 'chat', note: 'usa camelCase', model: 'copilot:otro', selected: [0] })).json();
+  const c = await (await post('api/run/contador/continue', { expectPhase: 'apply', source: 'chat', userSaid: 'aprobar, adelante con apply', note: 'usa camelCase', model: 'copilot:otro', selected: [0] })).json();
   eq(c.ok, true);
   const enviado = hijos[0].enviados.at(-1);
   eq(enviado.t, 'continue', 'se manda por IPC, no se reinventa el run');
   eq(enviado.payload.source, 'chat', 'la VÍA de la decisión (chat vs web) llega al driver — el acta no afirma «una persona» a ciegas');
+  eq(enviado.payload.userSaid, 'aprobar, adelante con apply', 'la CITA literal del usuario llega al driver — el acta puede responder «quién autorizó»');
   eq(enviado.payload.note, 'usa camelCase', 'la nota del humano llega ÍNTEGRA al driver');
   eq(enviado.payload.model, 'copilot:otro', 'y el cambio de modelo en caliente');
   eq(enviado.payload.selected, [0], 'y qué hallazgos quiere que se arreglen');
@@ -111,6 +112,41 @@ await test('serve-flujos: el cliente NO puede rebajar el gobierno pidiendo compl
   assert(a.complexity !== 'micro', `el servidor debe derivarla, no obedecer al cliente — llegó "${a.complexity}"`);
   assert(['simple', 'medium', 'complex'].includes(a.complexity), `y ser un flujo SDD gobernado: "${a.complexity}"`);
   hijos[antes].emit('exit', 0); // liberar el repo para los casos de archivado
+});
+
+// RAILGUARD DE SERVIDOR «webApprovalOnly» (opt-in): las decisiones transmitidas por un agente de chat se
+// rechazan con 403 — la pausa solo la resuelve un clic humano en el panel. Sin la clave, nada cambia.
+await test('serve-flujos: webApprovalOnly rechaza decisiones de chat (403) y respeta el clic del panel', async () => {
+  writeFileSync(join(ROOT, 'openspec', 'conductor.json'), JSON.stringify({ webApprovalOnly: true }));
+  const antes = hijos.length;
+  const r = await (await post('api/launch', { request: 'con candado de aprobación', name: 'candado' })).json();
+  eq(r.ok, true, JSON.stringify(r));
+  hijos[antes].emit('message', { t: 'pause', before: 'apply', role: 'coder', findings: [] });
+  const chat = await post('api/run/candado/continue', { expectPhase: 'apply', source: 'chat', userSaid: 'aprobar' });
+  eq(chat.status, 403, 'la decisión del agente se rechaza aunque traiga cita');
+  const cj = await chat.json();
+  eq(cj.webApprovalOnly, true, 'y dice el PORQUÉ (para que el agente se lo cuente al usuario)');
+  assert((await get('api/run/candado/state')).pending, 'la pausa sigue viva: nada se aprobó');
+  const web = await (await post('api/run/candado/continue', { expectPhase: 'apply' })).json();
+  eq(web.ok, true, 'el clic del panel (sin source) pasa como siempre');
+  hijos[antes].emit('exit', 0);
+  writeFileSync(join(ROOT, 'openspec', 'conductor.json'), '{}'); // restaurar para el resto de la suite
+});
+
+// RUN FANTASMA: el driver muere al nacer (dir del change creado, NADA escrito) — antes la web pintaba
+// «EN CURSO» eterno con 0/0 fases (caso real). Señal inequívoca: hijo terminado + sin timeline + sin lock.
+await test('serve-flujos: un driver muerto sin timeline se declara ghost en el estado (no EN CURSO eterno)', async () => {
+  const antes = hijos.length;
+  const r = await (await post('api/launch', { request: 'nace muerto', name: 'fantasma' })).json();
+  eq(r.ok, true, JSON.stringify(r));
+  mkdirSync(chDir('fantasma'), { recursive: true }); // el driver real crea el dir antes de morir
+  hijos[antes].emit('error', new Error('spawn ENOENT'));
+  const s = await get('api/run/fantasma/state');
+  eq(s.ghost, true, 'el estado declara que el run no llegó a arrancar');
+  assert(/ENOENT/.test(s.ghostError || ''), 'con el error del spawn a la vista');
+  // la señal es QUIRÚRGICA: en cuanto el driver escribió su timeline, el estado lo cuenta el timeline
+  w(plumbPath(chDir('fantasma'), 'timeline.json'), JSON.stringify({ request: 'x', verdict: 'ABORTED', phases: [] }));
+  assert(!(await get('api/run/fantasma/state')).ghost, 'con timeline escrito jamás se marca ghost');
 });
 
 await test('serve-flujos: archivar exige GREEN — un run sin verificar NO se promueve', async () => {
