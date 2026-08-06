@@ -32,6 +32,21 @@ export class AhorroScreen extends CElement {
       como: 'índice regex 0-dep construido 1× por run; el mapa general va a explore y el radio focalizado de tus @ficheros, a apply/fix',
     },
     {
+      t: 'Contexto que no caduca (se re-detecta)',
+      d: 'Las listas de estado — stack, versiones, comandos, catálogo de modelos — no se escriben en la doc, donde caducan en días: se re-detectan en vivo en cada init y cada run. El modelo jamás lee un contexto podrido, ni tú pagas tokens por des-confundirlo.',
+      como: 'el bloque «detectado» de project.md se refresca en cada init; stack y catálogo se re-derivan por run — lo derivable JAMÁS se versiona',
+    },
+    {
+      t: 'Referencia, no repitas',
+      d: 'Si el repo ya tiene AGENTS.md o copilot-instructions, el contexto del proyecto los referencia en vez de copiarlos. Cada dato tiene una casa: sin párrafos duplicados que viajan dos veces en cada prompt y se contradicen entre sí al mes.',
+      como: 'init detecta los ficheros de instrucciones existentes y project.md los enlaza («ver AGENTS.md»); el driver inyecta una sola fuente',
+    },
+    {
+      t: 'Historial generado, no redactado',
+      d: 'El recibo de PR, el acta y el ledger salen del run real — fases, modelos, tokens, aprobaciones — sin changelog manual que mantener ni que se quede atrás de lo publicado. La doc de «qué pasó» no puede caducar, y producirla cuesta 0 tokens.',
+      como: 'timeline.json → recibo y acta renderizados por el servidor; openspec/provenance.ledger.jsonl encadenado por hash al sellar',
+    },
+    {
       t: 'Contexto a dieta (.copilotignore)',
       d: 'El motor genera un .copilotignore con node_modules, builds, lockfiles, .env y claves; el CLI anfitrión lo honra para el contexto del modelo y el driver lo respeta al capturar cambios. Solo entra lo que un revisor humano querría leer.',
       como: 'se escribe en el init (jamás pisa el tuyo); lo honra el CLI anfitrión y lo respeta la captura de cambios del driver',
