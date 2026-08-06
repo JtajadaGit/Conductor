@@ -1392,7 +1392,9 @@ export function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0
           // terminado, sin timeline escrito y sin lock. Antes se pintaba «EN CURSO» eterno con 0/0 fases
           // (caso real). Aditivo: `ghost` + el error del spawn si lo hubo; la UI lo cuenta honesto.
           const ghost = !!(reg && reg.exited && !readJson(plumbPath(changeDir, 'timeline.json')) && !activeRun(changeDir));
-          return json(200, { ...runState(changeDir, proj.root, { alive }), ...(ghost ? { ghost: true, ghostError: reg.error || null } : {}), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
+          // `alive` viaja en la respuesta: types.ts lo declaraba desde siempre pero el server no lo enviaba
+          // (la ventana de cierre del driver — sello/ledger tras el verdict — era invisible para los clientes).
+          return json(200, { ...runState(changeDir, proj.root, { alive }), alive, ...(ghost ? { ghost: true, ghostError: reg.error || null } : {}), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
         }
         if (req.method === 'POST' && action === 'continue') {
           const payload = await readBody(req);

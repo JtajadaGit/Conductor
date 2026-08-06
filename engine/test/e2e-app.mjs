@@ -138,7 +138,12 @@ try {
   if (aiact.status !== 200 || !aiact.body.includes('fake-hot-model') || !aiact.body.includes('aprobada por <b>una persona</b>')) fail('aiact');
   ok('🇪🇺 informe AI Act generado con modelos + aprobaciones reales');
 
-  // rollback del apply tras terminar (restaura app.js, borra header.js)
+  // rollback del apply tras terminar (restaura app.js, borra header.js). El verdict aparece en el timeline
+  // ANTES de que el driver muera (sello/ledger/limpieza en curso) — esperar la muerte REAL del proceso:
+  // el guard de rollback exige run parado, y llamar en la ventana de cierre era una carrera del test
+  // (perdida siempre con la máquina cargada). Si el driver no muriera, esto agota y el fail sigue delatándolo.
+  for (let i = 0; i < 300; i++) { st = await apiJson('/api/run/header-e2e/state'); if (!st.alive) break; await sleep(200); }
+  if (st.alive) fail('el driver sigue VIVO 60s después del verdict — fuga de cierre (sello/ledger/handle abierto)');
   const rb = await apiJson('/api/run/header-e2e/rollback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"phase":"apply"}' });
   if (!rb.ok) fail('rollback: ' + JSON.stringify(rb));
   if (existsSync(join(PROJ, 'src', 'header.js'))) fail('rollback no borró header.js');

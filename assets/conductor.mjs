@@ -8938,7 +8938,9 @@ function createAppServer({ root, engine, spawnRun = spawnIpcRun, port = 0, host 
           // terminado, sin timeline escrito y sin lock. Antes se pintaba «EN CURSO» eterno con 0/0 fases
           // (caso real). Aditivo: `ghost` + el error del spawn si lo hubo; la UI lo cuenta honesto.
           const ghost = !!(reg && reg.exited && !readJson(plumbPath(changeDir, 'timeline.json')) && !activeRun(changeDir));
-          return json(200, { ...runState(changeDir, proj.root, { alive }), ...(ghost ? { ghost: true, ghostError: reg.error || null } : {}), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
+          // `alive` viaja en la respuesta: types.ts lo declaraba desde siempre pero el server no lo enviaba
+          // (la ventana de cierre del driver — sello/ledger tras el verdict — era invisible para los clientes).
+          return json(200, { ...runState(changeDir, proj.root, { alive }), alive, ...(ghost ? { ghost: true, ghostError: reg.error || null } : {}), pending: reg?.pending ?? null, stopRequested: reg?.stopRequested ?? false, usage: await litellmUsage(), ghUsage: ghPremiumUsage(), now: Date.now() });
         }
         if (req.method === 'POST' && action === 'continue') {
           const payload = await readBody(req);
@@ -11069,4 +11071,4 @@ function renderTraceHtml(t) {
   return `<!doctype html><meta charset=utf-8><title>linaje</title><style>body{font:14px system-ui;max-width:820px;margin:2rem auto}.r{border:1px solid #ddd;border-radius:8px;margin:.4rem 0;padding:.4rem .8rem}.r.gap{border-color:#e0245e;background:#fff5f8}.b{display:inline-block;width:1.2em;text-align:center;border-radius:3px;color:#fff}.b.ok{background:#1aa260}.b.no{background:#e0245e}code{background:#f0f0f5;padding:0 .3em;border-radius:4px}</style><h1>conductor · linaje spec→task→code→test</h1>${t.matrix.map((m) => `<div class="r ${m.cov.task && m.cov.code && m.cov.test ? '' : 'gap'}"><b><code>${esc(m.id)}</code></b> ${esc(m.name)} — task ${b(m.cov.task)} code ${b(m.cov.code)} test ${b(m.cov.test)}<br><small>tasks: ${m.tasks.length} · code: ${m.code.map((f) => esc(f.path)).join(', ') || '—'} · tests: ${m.tests.map((f) => esc(f.path)).join(', ') || '—'}</small></div>`).join('')}`;
 }
 
-// build-inputs-sha256: 2402dafd809e9e6af1b3df283dcbb99ff25ace1b8636e84594c630cc67a7abb9
+// build-inputs-sha256: 1843268b60a0d8edcc8328f184ffa946a72fc855641a747ed76bba4978a5e155
