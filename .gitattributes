@@ -1,7 +1,6 @@
 # QUÉ VIAJA en el tarball de `npm i -g git+<repo>` (codeload = git archive respeta export-ignore).
 # Patrones ANCLADOS (/) — un patrón sin anclar ("ui/") se comía assets/ui (bug real: instalación sin panel).
 # Producto que SÍ viaja: assets/ · prompts/ · hooks/ · package.json · README.md
-/CLAUDE.md export-ignore
 /task export-ignore
 /engine export-ignore
 /ui export-ignore
