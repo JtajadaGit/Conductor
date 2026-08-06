@@ -20,6 +20,7 @@ export class HelpScreen extends CElement {
         <li>Con el run <b>Verificado</b> (GREEN): revisa el <b>Informe</b>, haz tu commit y pulsa <b>Archivar</b> — los requisitos nuevos de la spec se promueven a la fuente de verdad del repo (los modificados/eliminados quedan señalados para merge manual) y el cambio pasa al archivo.</li>
       </ol>
       <p class="muted">Desde el chat de tu agente (Copilot CLI, VS Code, OpenCode, Claude Code) solo necesitas <code>/conductor</code>: enciende esta app y abre el panel — y con una petición, corre la feature con pausas y progreso EN el chat. Todo lo demás (init, lanzar, revisar, archivar, informes) vive aquí.</p>
+      <p class="muted"><b>Las dos vías no dan las mismas garantías.</b> Desde esta app no hay ningún LLM entre tu clic y el motor: el proceso es inviolable con cualquier modelo — uno débil da peor contenido (y el gate lo frena), pero jamás rompe la secuencia ni aprueba nada por ti. El chat añade un <b>mensajero</b> — el agente de TU chat — que transmite pausas y decisiones: su fiabilidad depende del modelo de esa conversación (su contrato le prohíbe construir por su cuenta, pero un contrato no es un candado). Con un modelo de chat flojo, lanza desde aquí y sigue el run donde quieras.</p>
 
       <h2 class="sect">Las tres ventanas de un run</h2>
       <p class="muted">Cada run deja evidencia consultable con tres botones. Ninguno gasta tokens: leen ficheros locales.</p>
