@@ -1,3 +1,7 @@
+<!-- markdownlint-disable MD033 MD036 MD041 MD051 -->
+<!-- MD033/MD036/MD041: el hero centrado y el <details> de credenciales son HTML deliberado (GitHub los
+     renderiza); MD051: el ancla de «Arquitectura» lleva el emoji percent-encoded, que GitHub resuelve
+     y el linter no sabe verificar. -->
 <div align="center">
 
 # conductor
@@ -16,7 +20,7 @@ cumple lo especificado — antes de dar nada por hecho.*
 ## 📋 Requisitos
 
 | Necesitas | Obligatorio | Para qué | Si falta |
-|---|:---:|---|---|
+| --- | :---: | --- | --- |
 | **Node.js ≥ 20** | ✅ | el motor y la miniweb (cero dependencias npm) | nada arranca |
 | **git de línea de comandos** | ✅ | instalar desde el repo (`npm i -g git+…` usa git por debajo) y las integraciones **solo-lectura** de la miniweb: la sección «Cambios» del run (diff), el sello `git_tree` y el guardrail de árbol limpio | la app funciona y el chip de rama sigue (lee `.git/HEAD` directamente), pero sin diffs ni sello |
 | **GitHub Copilot CLI** con licencia activa | ✅ | el ejecutor de TODAS las fases, el catálogo vivo de modelos y los tokens/AI credits reales (salen del recibo de cierre de cada sesión) | no hay runs — los CLIs de chat (Copilot, Claude Code, OpenCode, VS Code) son vías opcionales al mismo motor |
@@ -39,7 +43,7 @@ cumple lo especificado — antes de dar nada por hecho.*
 conductor convierte "pedirle código a la IA" en un **proceso de ingeniería auditable**: primero la spec, luego el código contra ella, y al final un **gate determinista** (código, no un modelo) verifica coherencia spec ↔ código ↔ tests. Si no cumple, no hay GREEN — da igual lo convincente que suene el modelo.
 
 | Sin conductor | Con conductor |
-|---|---|
+| --- | --- |
 | La IA genera código al vuelo | **Spec primero**; el código se implementa contra ella |
 | "Hecho" = "el modelo dice que está hecho" | **Gate sin LLM** verifica coherencia y trazabilidad requisito→código→test; sin NINGÚN test = **aviso visible** (y **bloquea** en presets estrictos). Un test sin etiqueta que ejercita el código **cuenta** (cobertura por referencia) |
 | Un modelo flojo se salta pasos | La secuencia la garantiza **código**: con cualquier modelo, las fases van en orden o no avanzan |
@@ -101,7 +105,7 @@ conductor init
 
 `init` **detecta tu repo** (determinista, 0 tokens) y te lo enseña: versiones exactas, gestor de paquetes, proyectos del workspace y los **comandos reales** de build/test/lint (y typecheck si hay TS) — que quedan **ya sembrados como `checks`** al crear conductor.json (si ya existía, no se pisa; la fase test los ejecuta). Crea el árbol **OpenSpec** completo:
 
-```
+```text
 openspec/
 ├── project.md            ← CONTEXTO (con el bloque «detectado» que cada init refresca; el resto es tuyo)
 ├── conductor.json        gobierno del equipo — nace con TUS checks detectados; todo lo demás es opcional
@@ -134,7 +138,7 @@ La app es única y local (127.0.0.1, solo tú), instalable como PWA, se apaga so
 
 ### 💬 El chat (sin salir de tu CLI)
 
-```
+```text
 /conductor añade un endpoint de salud con sus tests   ← pipeline con pausas EN el chat
 /conductor                                            ← estado y ayuda, sin abrir navegador
 ```
@@ -221,13 +225,16 @@ Cada fase corre en su **propia sesión efímera** que muere al terminar — y el
 
 - **MCP en dos direcciones**: conductor **es** un servidor MCP — así conducen el pipeline Copilot CLI, VS Code, OpenCode y Claude Code. Y los agentes de fase **pueden consumir** servidores MCP de terceros si el equipo los configura (opt-in con guardas).
 - **Cómo sabe tu CLI que conductor «habla MCP»**: no hay registro central ni instalación aparte — `conductor setup` escribe UNA entrada en la config de tu host — en esencia `{"mcpServers": {"conductor": {"command": "conductor", "args": ["mcp"]}}}` (la clave exacta y los extras varían por host) — que significa «lanza este comando como proceso hijo y háblale el protocolo MCP». Al abrir el chat, el host lo arranca y hacen el saludo del protocolo: `initialize` (nombre, versión, capacidades) → `tools/list` (las tools con sus schemas). Eso es «**JSON-RPC por stdio**»: mensajes JSON con id de petición/respuesta, por la entrada/salida estándar del proceso — sin red, sin puertos, sin credenciales.
+- **Es MCP estándar, no un dialecto**: implementa el *wire protocol* oficial — JSON-RPC 2.0 con sus códigos de error estándar, ciclo de vida `initialize`/`initialized`/`ping`, versión de protocolo negociada, `tools/list` con schemas JSON Schema y `tools/call` respondiendo el formato oficial (`content` + `isError`; los fallos de una tool van como resultado, no como error de protocolo, tal y como manda la spec). Soporta el subconjunto `tools` y lo **declara en `capabilities`** — que es exactamente cómo el estándar anuncia lo que un servidor ofrece (sin resources/prompts/sampling, que aquí no aportan). No usa el SDK oficial porque el estándar es el protocolo en el cable, no una librería: son ~30 líneas auditables. La prueba de interoperabilidad: **cuatro hosts de terceros** (Copilot CLI, VS Code, OpenCode, Claude Code) lo consumen sin ningún adaptador.
+- **Dónde corre**: en ningún servidor. `conductor mcp` es un **proceso hijo efímero** que tu CLI lanza al abrir el chat y que muere al cerrarlo — uno por sesión de chat, sin puerto, sin URL, sin demonio. La cadena completa de procesos, toda en tu máquina: CLI de chat → `conductor mcp` (stdio) → app local en 127.0.0.1:4750 (el MCP la arranca si está apagada) → driver del run → sesiones de fase.
+- **Quién usa las tools**: el **agente LLM de tu chat** — y fíjate en qué tools le damos: lanzar, esperar, transmitir tu decisión, enseñar el recibo. Son tools de *mensajero*, no de director: el que decide fases, reintentos, pausas y gates es el driver determinista. Es deliberado — un orquestador-LLM no es reproducible ni certificable con tests, se puede persuadir (prompt injection: «sáltate la verificación»), paga tokens por cada decisión de control y deja sin respuesta el «¿quién decidió esto?» que exige una auditoría. Aquí el control es código versionado y la inteligencia va en las hojas: planner, coder (con sus subagentes) y reviewer.
 - **git, en modo lectura por defecto**: checkpoints por fase, baseline de cambios y sello con **índice propio** (`git write-tree` con `GIT_INDEX_FILE`) — cero impacto en tu HEAD, rama o staging. **Por defecto conductor jamás commitea**: eso es tuyo (existe un opt-in explícito de commit por fase, `"gitCommit": true`, apagado de serie).
 - **GitHub CLI** (opcional) para tus AI credits; **tu proxy LiteLLM** (`/key/info`, endpoint estándar de LiteLLM: gasto real y presupuesto de TU key según el proxy — no una estimación) para el dinero. Los tokens por fase salen del **recibo de cierre de cada sesión** (`session.shutdown`); la lectura por **OTel** es la vía **legacy** (CLIs de Copilot antiguos que ya no lo emiten) y solo queda como fallback para runs viejos.
 
 ### Las 17 tools MCP (la superficie completa)
 
 | Grupo | Tools | Qué hacen |
-|---|---|---|
+| --- | --- | --- |
 | Cockpit del chat | `conductor_feature` · `conductor_continue` | lanzar el pipeline y responder sus pausas EN la conversación (modelo heredable del chat) |
 | App y entregables | `conductor_app` · `conductor_receipt` · `conductor_drive` | abrir/consultar el panel · recibo de PR del run verificado · pipeline entero en una llamada (CI/jobs, con modo async) |
 | Gates y análisis | `conductor_gate` · `conductor_contract` · `conductor_trace` · `conductor_cost` · `conductor_explain` · `conductor_drift` | el gate determinista a demanda · contrato de API · traza requisito→código→test · coste · explicación de un run · deriva spec↔código |
@@ -237,7 +244,7 @@ Cada fase corre en su **propia sesión efímera** que muere al terminar — y el
 
 ### Dónde vive cada cosa (y por qué)
 
-```
+```text
 openspec/                          COMMITTEABLE — tu equipo lo hereda al clonar
   project.md                       contexto del proyecto: tu parte + bloque auto-detectado (stack real)
   conductor.json                   gobierno: modelos por rol/fase, preset, checks, fallback, budget
@@ -272,7 +279,7 @@ El detalle completo y auditado (harness, primitivas, contratos internos) vive en
 ## 📖 Comandos de referencia
 
 | Diario | |
-|---|---|
+| --- | --- |
 | `conductor` | abre la miniweb en este repo (la arranca si está apagada) |
 | `conductor setup` | **imprescindible una vez por máquina** tras instalar: conecta tus CLIs de chat y crea la plantilla de credenciales |
 | `conductor init` | inicializa el proyecto (una vez por repo) |
@@ -282,7 +289,7 @@ El detalle completo y auditado (harness, primitivas, contratos internos) vive en
 | `conductor receipt <changeDir>` | descripción de PR del run verificado (ruta del change, p.ej. `openspec/changes/mi-cambio`) |
 
 | Cuando lo necesites | |
-|---|---|
+| --- | --- |
 | `conductor setup` (de nuevo) | re-conectar un CLI nuevo o regenerar la plantilla de credenciales |
 | `conductor init-config . --smart` | relleno semántico de project.md/checks/rules leyendo TU repo (un one-shot de agente) |
 | `conductor litellm status` | estado de tus credenciales del proxy |
