@@ -34,7 +34,7 @@ cumple lo especificado — antes de dar nada por hecho.*
 
 ## Índice
 
-**[¿Qué es?](#-qué-es)** · **[Instalación](#-instalación-una-vez-por-máquina)** · **[Por proyecto](#-por-proyecto-una-vez-por-repo)** · **[Uso diario](#-uso-diario--dos-vías-mismo-motor)** · **[Modelos y coste](#-modelos-y-coste)** · **[Por qué fiarte](#-por-qué-fiarte-calidad-y-seguridad)** · **[Arquitectura](#%EF%B8%8F-arquitectura-cómo-funciona-por-dentro)** · **[Comandos](#-comandos-de-referencia)** · **[¿Algo no va?](#-algo-no-va)**
+**[¿Qué es?](#-qué-es)** · **[Instalación](#-instalación-una-vez-por-máquina)** · **[Por proyecto](#-por-proyecto-una-vez-por-repo)** · **[Uso diario](#-uso-diario--dos-vías-mismo-motor)** · **[Modelos y coste](#-modelos-y-coste)** · **[Por qué fiarte](#-por-qué-fiarte-calidad-y-seguridad)** · **[Arquitectura](#%EF%B8%8F-arquitectura-cómo-funciona-por-dentro)** · **[FAQ](#-preguntas-frecuentes-las-que-nos-hacen-de-verdad)** · **[Comandos](#-comandos-de-referencia)** · **[¿Algo no va?](#-algo-no-va)**
 
 ---
 
@@ -202,6 +202,8 @@ flowchart LR
 
 Tu petición entra (web o chat) → el **driver determinista** (código, no un modelo) resuelve el plan de fases según complejidad y preset → lanza **un agente por fase** con su papel, su modelo y su toolset recortado → cada artefacto pasa el **gate sin LLM** → tú decides en las pausas → en GREEN, el run queda **sellado** y su evidencia archivada. Si algo no cumple, no avanza — da igual lo convincente que suene el modelo.
 
+En la taxonomía actual del sector — **Agent = Model + Harness** — conductor es el **harness**: el arnés de código que sujeta al modelo. La orquestación, los gates, los permisos y la evidencia viven en el arnés; el modelo solo rellena el contenido de cada fase. AGENTS.md audita las 11 primitivas del harness una a una.
+
 ### Quién decide el plan (y por qué sin LLM)
 
 La complejidad y las fases las resuelve **código puro** (`resolvePlan`), 0 tokens: señales de contenido en tu petición — «sustancial» (varias capacidades, arquitectura, integración, migración, refactor amplio) y «ambiguo» (corta o con preguntas abiertas). Sustancial → medium; sustancial+ambiguo → complex; resto → simple. ¿Puede equivocarse una heurística de texto? Sí — y está diseñada para que **el fallo sea barato y visible**: equivocarse solo cambia cuántas fases previas corren (apply + verify + gates están SIEMPRE, no son negociables), el plan se enseña **antes** de ejecutar (banner en el chat, fases en la web) y lo corriges en un clic (checkboxes de fases, preset, o pidiéndolo en la petición). La alternativa — un LLM clasificador — cuesta tokens, no es reproducible y convierte al portero en otro agente que puede alucinar. Aquí dos peticiones iguales dan siempre el mismo plan, y eso es testeable (el golden-set lo certifica).
@@ -276,6 +278,94 @@ openspec/                          COMMITTEABLE — tu equipo lo hereda al clona
 Suite de **más de 600 tests** (gates, driver, servidor, MCP, CLI), un **golden-set** de escenarios extremo-a-extremo offline (`conductor evals`, 0 tokens) cuyo pass-rate queda versionado, y un **gate de prompts**: cambiar un prompt del pipeline exige re-certificar en verde. Criptografía de la evidencia con `node:crypto` (SHA-256, HMAC, **Ed25519**); config validada con **JSON Schema** (draft-07); estructura de specs conforme al estándar **OpenSpec** (el CLI oficial reconoce los repos).
 
 El detalle completo y auditado (harness, primitivas, contratos internos) vive en **AGENTS.md**.
+
+---
+
+## ❓ Preguntas frecuentes (las que nos hacen de verdad)
+
+<details>
+<summary><b>¿Cada fase arrastra la conversación de la anterior?</b></summary>
+
+No. Cada fase es una sesión nueva que recibe **solo su contexto**: la petición, `project.md`, las instrucciones del repo y **los artefactos en disco** de las fases previas (`proposal.md`, `spec.md`…) — nunca la conversación interna de otra sesión. Detalle: [El contexto entre fases](#el-contexto-entre-fases-por-qué-sesiones-separadas-no-pierden-memoria).
+
+</details>
+
+<details>
+<summary><b>¿Dónde corre el servidor MCP? No veo ningún proceso ni fichero del servidor.</b></summary>
+
+**No hay nada corriendo.** Al abrir el chat, tu CLI **enciende** `conductor mcp` como proceso hijo — como quien abre una calculadora — y le habla por dentro (JSON por stdin/stdout). Al cerrar el chat, muere. Lo único «instalado» es una línea en la config del CLI que dice **qué comando encender**: el `mcp.json` es la agenda de contactos del CLI; conductor solo sabe contestar al teléfono. Detalle: [Con qué se integra](#con-qué-se-integra).
+
+</details>
+
+<details>
+<summary><b>«El código generado por IA hay que cogerlo con pinzas» — ¿por qué aquí no?</b></summary>
+
+Porque con pinzas hay que coger **la palabra del modelo** — y aquí el veredicto no lo da el modelo. Lo dan un **gate determinista** (coherencia, trazabilidad requisito→código→test, secretos…), tus **tests reales** si los autorizas, y un **sello** atado al árbol git exacto. Un GREEN no significa «el modelo dice que está bien»: significa que el código cumplió comprobaciones que no obedecen prompts. Lo que sigue mereciendo tus pinzas — el diff — te lo ponemos delante para que lo revises tú.
+
+</details>
+
+<details>
+<summary><b>¿Por qué el orquestador no es un agente LLM, como en otros frameworks?</b></summary>
+
+Lo es — pero de la clase correcta: en la jerga actual, **Agent = Model + Harness**, y conductor pone la orquestación en el **harness** (código determinista), no en un modelo. Resultado: mismo plan ante la misma petición (testeable), inmune a prompt injection («sáltate la verificación» no funciona contra un array), 0 tokens por decisión de control, y respuesta auditable a «¿quién decidió esto?». La inteligencia va en las hojas: planner, coder y reviewer. Detalle: [Quién decide el plan](#quién-decide-el-plan-y-por-qué-sin-llm).
+
+</details>
+
+<details>
+<summary><b>¿Y si uso un modelo débil?</b></summary>
+
+Da peor **contenido**, nunca rompe el **proceso**: no puede saltarse fases, ni aprobar pausas, ni entregar sin verificar — el gate lo frena (más fix, o BLOCKED escalando a ti). Y las garantías cambian por vía: la miniweb no tiene ningún LLM entre tu clic y el motor; el chat añade un mensajero. Detalle: el aviso de [Uso diario](#-uso-diario--dos-vías-mismo-motor).
+
+</details>
+
+<details>
+<summary><b>¿Cómo sé qué leyó y qué hizo exactamente el agente en mi repo?</b></summary>
+
+Botón **Ver sesión** del run: la traza paso a paso (tools ejecutadas, ficheros leídos, permisos, subagentes) — incluidas las instrucciones de contexto que consumió. Y el **contexto del agente** por fase enseña qué se le inyectó. Cero tokens: se lee de la evidencia en disco.
+
+</details>
+
+<details>
+<summary><b>¿Cuánto me va a costar un run? ¿Me fundirá los AI credits?</b></summary>
+
+Lo sabes **antes de lanzar**: la estimación de tokens por fase se calcula en local, sin llamar a ninguna API. Y tienes tres frenos: modelos de tu proxy LiteLLM a **0 créditos premium** (mezclables por fase), `budget` como techo duro por run, y `conductor stats` con el consumo real por día × modelo × proveedor para cuadrarlo con la factura. Detalle: [Modelos y coste](#-modelos-y-coste).
+
+</details>
+
+<details>
+<summary><b>¿Es seguro dejarle escribir en mi repo?</b></summary>
+
+Solo el **coder** escribe código (las fases de planificación y revisión no pueden), hay **checkpoint git antes de cada fase de código** con «↩ Deshacer» selectivo — con índice propio, sin tocar tu HEAD ni tu staging —, **por defecto jamás commitea** (eso es tuyo), y el diff completo te espera en «Cambios» antes de que decidas nada. Peor caso real: deshaces la fase y tu árbol queda como estaba.
+
+</details>
+
+<details>
+<summary><b>¿Tengo que escribir specs yo? Esto suena a burocracia…</b></summary>
+
+No escribes specs: **el pipeline las redacta desde tu petición de dos líneas** y tú las apruebas o editas en la pausa (en titulares, no el muro técnico). Y el gobierno escala con el riesgo: un arreglo rápido pasa 1 lente de review y sin exigencia de test nuevo; una migración pasa 4 y spec congelada. La spec no es papeleo — es lo que permite que el gate verifique algo en vez de fiarse. Detalle: [presets](#-modelos-y-coste).
+
+</details>
+
+<details>
+<summary><b>¿Qué pasa si se corta a mitad — cierro el portátil, se cae la sesión?</b></summary>
+
+El run queda **INTERRUMPIDO** (el motor lo detecta en ≤75 segundos vía latido) y **↻ Reanudar** continúa desde la última fase completada: lo ya pagado no se vuelve a pagar. La única excepción deliberada es `verify`, que se re-ejecuta siempre — el veredicto no se hereda.
+
+</details>
+
+<details>
+<summary><b>¿Mi código sale de mi máquina?</b></summary>
+
+La app, el MCP, la evidencia y toda la web viven en `127.0.0.1` — nada escucha fuera. Lo único que viaja es lo de siempre al programar con IA: los prompts de cada fase hacia **tu** proveedor (tu licencia Copilot o tu proxy LiteLLM), igual que cuando usas el chat a mano. Tu key jamás la ve un modelo y solo viaja a tu proxy. Conductor no tiene backend, ni telemetría, ni cuenta.
+
+</details>
+
+<details>
+<summary><b>¿Sirve para un repo grande y viejo, o solo para proyectos nuevos?</b></summary>
+
+Está pensado para brownfield: `init` **detecta** tu stack real (versiones, workspace, comandos de build/test), el **mapa de código** le da al modelo las dependencias sin re-leer N ficheros, `conductor explain` hace ingeniería inversa código→spec de lo que ya existe, y el preset `migration` añade el gobierno duro (clarify obligatorio, spec congelada, gate de datos SQL) para tocar lo delicado. Detalle: [Por proyecto](#-por-proyecto-una-vez-por-repo).
+
+</details>
 
 ---
 
